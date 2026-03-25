@@ -45,7 +45,7 @@ class Memo_Manager:
         n_chunks: int = 5,
         max_logs: Optional[int] = None,
         qa_sample_size: Optional[int] = None,
-        max_concurrent: int = 5,
+        max_concurrent: int = 6,
         n_score_bins: int = 3,
         samples_per_bin: int = 3,
         judge_model: str = "gpt-5-mini",

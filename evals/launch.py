@@ -201,7 +201,7 @@ async def main(
     train_size: int = 6,
     status: str = "train",
     qa_sample_size: Optional[int] = None,
-    max_concurrent: int = 5,
+    max_concurrent: int = 6,
     mode: str = "eval",
     n_score_bins: int = 3,
     samples_per_bin: int = 3,
@@ -266,7 +266,7 @@ if __name__ == "__main__":
     parser.add_argument("--status", default="train", choices=["train", "eval"])
     parser.add_argument("--qa_sample_size", type=int, default=None,
                         help="QA pairs per user (None = use all, recommended for eval)")
-    parser.add_argument("--max_concurrent", type=int, default=5)
+    parser.add_argument("--max_concurrent", type=int, default=6)
     parser.add_argument("--mode", default="eval", choices=["eval", "test"])
     parser.add_argument("--n_score_bins", type=int, default=3,
                         help="Number of equal-width bins over score range 1–10")

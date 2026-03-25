@@ -69,7 +69,7 @@ class DynamicMem_Workflow:
         self,
         task_list: List[str],
         mode: str = "eval",
-        max_concurrent: int = 5,
+        max_concurrent: int = 6,
     ) -> Tuple[List[Any], int]:
         """Run Phase 1 + Phase 2 for every user in task_list.
 

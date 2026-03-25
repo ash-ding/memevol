@@ -69,7 +69,7 @@ if __name__ == "__main__":
                         help="Model used by the downstream QA agent")
     parser.add_argument("--steps", type=int, default=10,
                         help="Number of meta-learning iterations")
-    parser.add_argument("--max_container_concurrent", type=int, default=5,
+    parser.add_argument("--max_container_concurrent", type=int, default=2,
                         help="Max parallel memo evaluations in meta-learning loop")
     parser.add_argument("--result_dir", type=str, default="check",
                         help="Prefix for checkpoint JSON filenames in logs/")
@@ -97,7 +97,7 @@ if __name__ == "__main__":
     # QA evaluation settings
     parser.add_argument("--qa_sample_size", type=int, default=None,
                         help="QA pairs per user (default None = use all; set e.g. 20 during training to control cost)")
-    parser.add_argument("--max_concurrent", type=int, default=5,
+    parser.add_argument("--max_concurrent", type=int, default=6,
                         help="Max parallel users within a single evaluation subprocess")
     parser.add_argument("--n_score_bins", type=int, default=3,
                         help="Number of equal-width bins over score range 1–10 for trajectory sampling")
