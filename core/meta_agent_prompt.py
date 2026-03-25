@@ -33,7 +33,7 @@ db.add_texts(
 
 - metadatas must be **flat list**: each value must be a single primitive type (str, int, float, bool, or None).
 - You cannot pass lists, nested dicts, or other complex objects.
-- If you need to store structured data, serialize it to a JSON string:
+- If you need to store structured data, serialize it to a JSON string.
 
 ### Retrieve Memory
 
@@ -44,8 +44,8 @@ db.similarity_search(
 
 return List[Document]: [
   Document(
-    page_content="the agent found a key",
-    metadata={"type": "item"}
+    page_content="User walks 5.68km every morning at 6:30 starting from Wexford Residence",
+    metadata={"domain": "Health & Fitness", "frequency": "daily"}
   )
 ]
 
@@ -178,21 +178,33 @@ def build_analysis_prompt(memo_info):
         },
         "trajectory_score_assessment": {
             "type": "array",
-            "description": "Analyse each retrieved memory item based on the QA trajectories and benchmark scores.",
+            "description": "Per-QA gap analysis for each sampled example. Compare relevant_app_logs (ground truth) against retrieved_memory (what memory returned) to diagnose failures.",
             "items": {
                 "type": "object",
                 "properties": {
-                    "label": {
+                    "query": {
                         "type": "string",
-                        "enum": ["Useful", "Potentially Useful", "Irrelevant", "Empty/BadFormat"],
-                        "description": "Categorization of the memory item's relevance: did it contain the facts needed to answer the question?"
+                        "description": "The question being analyzed (copied from the example for reference)."
                     },
-                    "how_it_can_help": {
+                    "score": {
+                        "type": "integer",
+                        "description": "The judge score (0–10) for this QA pair."
+                    },
+                    "gap_diagnosis": {
                         "type": "string",
-                        "description": "If Useful/Potentially Useful: how it supports the answer. If Irrelevant/Empty: reason (wrong keying, over-specific, missing pattern, poor formatting)."
+                        "description": "What key information exists in relevant_app_logs but is missing, incomplete, or wrong in retrieved_memory. For high-score examples, note what the memory got right."
+                    },
+                    "failure_phase": {
+                        "type": "string",
+                        "enum": ["Phase1_Storage", "Phase2_Retrieval", "Both", "N/A"],
+                        "description": "Root cause: Phase1_Storage = info was never extracted/stored from app_logs during general_update; Phase2_Retrieval = info was stored but general_retrieve failed to surface it; Both = partial storage + partial retrieval failure; N/A = for high-score examples."
+                    },
+                    "judge_insight": {
+                        "type": "string",
+                        "description": "What judge_reason reveals about which specific key points were missed or incorrect in the predicted answer."
                     }
                 },
-                "required": ["label", "how_it_can_help"]
+                "required": ["query", "score", "gap_diagnosis", "failure_phase", "judge_insight"]
             }
         },
         "content_quality_issues": {
@@ -245,6 +257,9 @@ def build_analysis_prompt(memo_info):
           `recorder.init['query']` = current question; `recorder.init['app_logs']` = all logs (reference).
           Returns Dict passed to the answering agent.
           Expected behaviour: retrieve facts relevant to the query from the stored user profile.
+          NOTE: the downstream QA agent only sees the returned Dict and the question — it does NOT
+          have access to user_profile or app_logs directly. If demographic context matters for the
+          answer, general_retrieve must include it in the returned Dict.
 
 2. **examples**
     - Each example is one sampled QA pair, containing:
@@ -276,16 +291,16 @@ Step 1 — Learn from past suggestions
     3. Extract 2–5 general principles and 2–5 pitfalls.
 
 Step 2 — Inspect QA trajectories and diagnose failures
-    1. For each low-score example (score ≤ 5):
-        - Read `judge_reason` to understand which key points the answer missed or got wrong.
-        - Look at `relevant_app_logs`: these are the ground-truth log entries that contain the answer.
-        - Look at `retrieved_memory`: this is what the memory actually returned.
-        - Identify the gap: did the memory fail to store the right information in Phase 1, or fail to retrieve it in Phase 2?
-    2. For each retrieved memory item, label it as Useful / Potentially Useful / Irrelevant / Empty/BadFormat.
-    3. For high-score examples, note what the memory did well to avoid breaking it.
+    For each sampled example, perform a gap analysis:
+    1. Read `judge_reason` to understand which key points the answer missed or got wrong.
+    2. Compare `relevant_app_logs` (ground-truth evidence) against `retrieved_memory` (what memory returned):
+        - What facts are in the logs but absent from retrieved memory? (→ gap_diagnosis)
+        - Is this because the info was never stored in Phase 1 (Phase1_Storage), or stored but not
+          retrieved in Phase 2 (Phase2_Retrieval)? (→ failure_phase)
+    3. For high-score examples, note what the memory did well to avoid breaking it (failure_phase = N/A).
 
 Step 3 — Inspect memory source and produce concrete suggestions
-    1. Using Step 1 principles and Step 2 labels, propose specific code-level changes.
+    1. Using Step 1 principles and Step 2 gap diagnoses, propose specific code-level changes.
     2. For each suggestion: what to change, why it will help, priority (High/Medium/Low).
     3. Link to benchmark performance: which structural weaknesses correlate with low QA accuracy?
 
@@ -309,7 +324,7 @@ Return a JSON object following this schema:
 <CURRENT QA TRAJECTORY EXAMPLES>
 {json.dumps(memo_info["examples"], indent=2, ensure_ascii=False)}
 </CURRENT QA TRAJECTORY EXAMPLES>
-<CURRENT BENCHMARK SCORE>
+<CURRENT BENCHMARK SCORE (0–10 scale, higher is better)>
 {memo_info.get('benchmark_eval_score', {}).get('benchmark_overall_eval_score', 0.0)}
 </CURRENT BENCHMARK SCORE>
 """
@@ -367,6 +382,9 @@ def build_generate_new_code_prompt(
       Return value: Dict  — memory context passed directly to the answering agent.
       Expected behaviour: retrieve facts relevant to the query from the stored user profile.
       The returned dict is sent verbatim to the agent — keep it clean, structured, and non-redundant.
+      IMPORTANT: the downstream QA agent ONLY sees the returned Dict and the question.
+      It does NOT have access to user_profile or app_logs. If demographic context is needed
+      to answer the question, include it in the returned Dict.
     """
 
     system_prompt = f"""You are a senior AI software engineer. Your task is to build an agent memory system composed of multiple specialised memory layers and a coordinating memory structure.
@@ -468,7 +486,7 @@ and retrieves the right facts for any personalisation question.
         {memo_info.get('source_code', '')}
         </CURRENT_CODE>
 
-        Here is the score of current code:
+        Here is the score of current code (0–10 scale, higher is better):
         <REWARD>
         {memo_info.get('benchmark_eval_score', {}).get('benchmark_overall_eval_score', 0.0)}
         </REWARD>
@@ -505,6 +523,7 @@ def build_reflection_prompt(code_str: str, recorder: Basic_Recorder, error_msg: 
       recorder.init['app_logs']     = List[dict]   — all logs (reference)
       recorder.init['user_profile'] = dict          — user demographics
       Must return a Dict for the downstream agent.
+      NOTE: the QA agent only sees the returned Dict + question, NOT user_profile or app_logs.
     """
 
     system_prompt = f"""You are a senior AI software engineer and code repair expert.
