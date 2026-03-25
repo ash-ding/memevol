@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import random
+import time
 import traceback
 from typing import Any, Dict, List, Optional, Tuple, Type
 
@@ -34,6 +35,25 @@ except Exception:
 
 from agents.memo_structure import MemoStructure
 from eval_envs.base_envs import Basic_Recorder
+
+
+class _QAProgressTracker:
+    """Shared counter for QA progress across concurrent users."""
+
+    def __init__(self, total: int):
+        self.total = total
+        self.completed = 0
+        self._lock = asyncio.Lock()
+        self._last_pct = -1  # track last logged percentage to avoid spam
+
+    async def increment(self) -> None:
+        async with self._lock:
+            self.completed += 1
+            pct = int(self.completed / self.total * 100) if self.total > 0 else 100
+            # Log every 10% milestone
+            if pct // 10 > self._last_pct // 10:
+                self._last_pct = pct
+                log.info(f"[Phase 2] QA Progress: {self.completed}/{self.total} ({pct}%)")
 
 
 class DynamicMem_Workflow:
@@ -83,25 +103,34 @@ class DynamicMem_Workflow:
             random.seed(42)
             task_list = random.sample(task_list, min(1, len(task_list)))
 
+        # Compute total QA count for progress tracking
+        qa_per_user = 5 if mode == "test" else (self.qa_sample_size or 94)  # 94 ≈ all refined QA
+        total_qa = len(task_list) * qa_per_user
+        qa_tracker = _QAProgressTracker(total_qa)
+        log.info(f"Starting evaluation: {len(task_list)} users × ~{qa_per_user} QA = ~{total_qa} total")
+
         semaphore = asyncio.Semaphore(max_concurrent)
 
         async def run_one(user_dir: str):
             async with semaphore:
                 try:
-                    return await self.run_single_user(user_dir, mode=mode)
+                    return await self.run_single_user(user_dir, mode=mode, qa_tracker=qa_tracker)
                 except Exception as exc:
                     log.error(f"[ERROR] User {user_dir} failed: {exc}\n{traceback.format_exc()}")
                     return exc
 
+        t0 = time.time()
         results = await asyncio.gather(*[run_one(u) for u in task_list])
+        elapsed = time.time() - t0
         valid_count = sum(1 for r in results if not isinstance(r, Exception))
+        log.info(f"Evaluation complete: {valid_count}/{len(task_list)} users succeeded in {elapsed:.1f}s")
         return list(results), valid_count
 
     # ------------------------------------------------------------------
     # Single-user execution
     # ------------------------------------------------------------------
 
-    async def run_single_user(self, user_dir: str, mode: str = "eval"):
+    async def run_single_user(self, user_dir: str, mode: str = "eval", qa_tracker: _QAProgressTracker = None):
         """Run Phase 1 (update) then Phase 2 (retrieve + QA) for one user.
 
         Returns a DynamicMemRecorder with all QA steps recorded.
@@ -111,6 +140,8 @@ class DynamicMem_Workflow:
         from envs.prompts.dynamicmem_prompt import get_dynamicmem_prompt
         from utils.hire_agent import Agent
 
+        user_tag = user_dir[-15:]
+
         # 1. Load data — test mode uses only 5 QA pairs for quick sanity check
         qa_size = 5 if mode == "test" else self.qa_sample_size
         app_logs, user_profile, qa_pairs = load_user_data(user_dir, qa_size)
@@ -119,9 +150,13 @@ class DynamicMem_Workflow:
         memo = self.memo_class()
 
         # 3. Phase 1: build user profile from app logs
+        t1 = time.time()
         await self._phase1_update(memo, app_logs, user_profile, DynamicMemRecorder)
+        t1_elapsed = time.time() - t1
+        log.info(f"[Phase 1] User {user_tag} update complete ({len(app_logs)} logs, {t1_elapsed:.1f}s)")
 
         # 4. Phase 2: answer QA questions with retrieved memory
+        t2 = time.time()
         recorder = DynamicMemRecorder()
         await recorder.log_init(app_logs, user_profile)
 
@@ -191,10 +226,14 @@ class DynamicMem_Workflow:
                 relevant_app_logs=relevant_app_logs,
             )
 
+            if qa_tracker:
+                await qa_tracker.increment()
+
+        t2_elapsed = time.time() - t2
         scores = [s["score"] for s in recorder.steps]
         avg = sum(scores) / len(scores) if scores else 0.0
         await recorder.set_reward(avg)
-        log.info(f"[User {user_dir[-15:]}] reward={avg:.2f}/10 ({len(scores)} QA)")
+        log.info(f"[Phase 2] User {user_tag} QA complete: reward={avg:.2f}/10 ({len(scores)} QA, {t2_elapsed:.1f}s)")
         return recorder
 
     # ------------------------------------------------------------------
