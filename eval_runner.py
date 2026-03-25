@@ -107,6 +107,7 @@ async def run_evaluation(
         "OPENAI_API_KEY": api_key,
         "EVALS_LOG_DIR": evals_log_dir,
         "DYNAMICMEM_DATA": dynamicmem_data,
+        "PYTHONPATH": str(PROJECT_ROOT) + os.pathsep + os.environ.get("PYTHONPATH", ""),
     }
 
     log.info(f"Running evaluation: SHA={memory_SHA} mode={mode} update_type={update_type}")
