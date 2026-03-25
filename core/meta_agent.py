@@ -258,6 +258,11 @@ class MetaAgent:
             self.memo_manager.no_memo_reward = (
                 eval_result.get('benchmark_eval_score', {}).get('benchmark_overall_eval_score', 0.0)
             )
+            # Record baseline score in memo_db for visibility (no final_score → won't be selected for evolution)
+            self.memo_manager.memo_db['no_mem'] = {
+                'reward': self.memo_manager.no_memo_reward,
+                'role': 'baseline',
+            }
 
             tracker = init_global_tracker()
 
