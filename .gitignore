@@ -29,3 +29,8 @@ docs/
 
 # Claude Code local settings
 .claude/
+
+# Baseline runtime artifacts (regenerated on each run)
+baselines/*/outputs/
+baselines/*/logs/
+baselines/*/results/*_dryrun.json
