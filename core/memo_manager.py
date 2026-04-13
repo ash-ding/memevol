@@ -15,7 +15,7 @@ import json
 
 
 class Memo_Manager:
-    def __init__(self, archive_root_dir: str = "memo_archive/", status: str = 'train', history_ckpt_path: Optional[str] = None):
+    def __init__(self, archive_root_dir: str = "memo_archive/", status: str = 'search', history_ckpt_path: Optional[str] = None):
         self.project_root = Path(__file__).resolve().parent.parent
         self.ARCHIVE_ROOT = self.project_root / Path(archive_root_dir) / "dynamicmem"
         self.ARCHIVE_ROOT.mkdir(parents=True, exist_ok=True)
@@ -25,6 +25,9 @@ class Memo_Manager:
         else:
             with open(self.project_root / 'logs' / history_ckpt_path, encoding="utf-8") as f:
                 self.memo_db = json.load(f)
+            # Restore baseline reward from checkpoint so normalized_reward stays calibrated
+            if 'no_mem' in self.memo_db and 'reward' in self.memo_db['no_mem']:
+                self.no_memo_reward = self.memo_db['no_mem']['reward']
 
     def save_memo_structure(self, code_str: str, memo_SHA: str):
         """Register a MemoStructure from code string: save to file and register in memo_db."""
@@ -37,26 +40,28 @@ class Memo_Manager:
         self,
         code_str: str = None,
         target_sha: str = None,
-        mode: str = 'test',
+        mode: str = 'check',
         model: str = 'gpt-5-mini',
-        train_size: int = 6,
-        status: str = 'train',
+        eval_n_users: int = 6,
+        status: str = 'search',
         update_type: str = 'all_at_once',
         n_chunks: int = 5,
         max_logs: Optional[int] = None,
-        qa_sample_size: Optional[int] = None,
-        max_concurrent: int = 6,
+        eval_n_qa: Optional[int] = None,
+        max_user_concurrent: int = 6,
         n_score_bins: int = 3,
         samples_per_bin: int = 3,
         judge_model: str = "gpt-5-mini",
+        check_n_users: int = 3,
+        check_n_qa: int = 10,
     ):
         """
         Extract python code from markdown-like LLM output (if any), write it to disk,
         then run test/eval via eval_runner.
 
         Args:
-            mode: 'test' — quick sanity check (3 random users); 'eval' — full train_size users.
-            status: data split — 'train' or 'eval'.
+            mode: 'check' — quick sanity check (3 random users); 'eval' — full eval_n_users users.
+            status: data split — 'search' or 'test'.
             update_type: how app_logs are batched for general_update —
                 'all_at_once' | 'chunked' | 'sequential'.
         """
@@ -82,19 +87,21 @@ class Memo_Manager:
             memory_SHA=structure_sha,
             mode=mode,
             model=model,
-            train_size=train_size,
+            eval_n_users=eval_n_users,
             status=status,
             update_type=update_type,
             n_chunks=n_chunks,
             max_logs=max_logs,
-            qa_sample_size=qa_sample_size,
-            max_concurrent=max_concurrent,
+            eval_n_qa=eval_n_qa,
+            max_user_concurrent=max_user_concurrent,
             n_score_bins=n_score_bins,
             samples_per_bin=samples_per_bin,
             judge_model=judge_model,
+            check_n_users=check_n_users,
+            check_n_qa=check_n_qa,
         )
 
-        json_path = Path(f"evals/logs/dynamicmem/{structure_sha}_{mode}.json")
+        json_path = Path(f"evals/logs/dynamicmem/{structure_sha}_{status}_{mode}.json")
         if not json_path.exists():
             raise FileNotFoundError(f"can't find: {json_path}, examination failed with unknown error.")
 
@@ -126,10 +133,10 @@ class Memo_Manager:
                 raise FileNotFoundError(f"The file {file_path} does not exist or is not a file.")
         return file_path.read_text(encoding="utf-8")
 
-    def read_eval_result(self, memo_SHA: str, mode: str) -> Dict:
+    def read_eval_result(self, memo_SHA: str, mode: str, status: str = 'search') -> Dict:
         store_path = Path('evals/logs/')
         store_path.mkdir(parents=True, exist_ok=True)
-        eval_path = self.project_root / store_path / 'dynamicmem' / f"{memo_SHA}_{mode}.json"
+        eval_path = self.project_root / store_path / 'dynamicmem' / f"{memo_SHA}_{status}_{mode}.json"
         with open(eval_path, "r", encoding="utf-8") as f:
             eval_result = json.load(f)
         return eval_result
@@ -169,7 +176,9 @@ class Memo_Manager:
         self.memo_db[memo_sha]['final_score'] = self.memo_db[memo_sha]['normalized_reward'] - alpha * penalty
 
     def select_structure(self, maximum_size: int = 5, seed: int = 42, tau: float = 0.5):
-        np.random.seed(seed)
+        # Use a local RandomState so we don't pollute the global numpy random
+        # state — generated memo code or other libraries may rely on it.
+        rng = np.random.RandomState(seed)
 
         valid_items = [(k, v["final_score"]) for k, v in self.memo_db.items() if "final_score" in v]
         if not valid_items:
@@ -183,5 +192,5 @@ class Memo_Manager:
         probs = exp_score / np.sum(exp_score)
 
         k = min(maximum_size, len(scores))
-        selected_indices = np.random.choice(len(scores), size=k, replace=False, p=probs)
+        selected_indices = rng.choice(len(scores), size=k, replace=False, p=probs)
         return [keys[i] for i in selected_indices]

@@ -182,6 +182,10 @@ def build_analysis_prompt(memo_info):
             "items": {
                 "type": "object",
                 "properties": {
+                    "user_id": {
+                        "type": "string",
+                        "description": "Which user this QA pair belongs to (copied from the example)."
+                    },
                     "query": {
                         "type": "string",
                         "description": "The question being analyzed (copied from the example for reference)."
@@ -204,7 +208,7 @@ def build_analysis_prompt(memo_info):
                         "description": "What judge_reason reveals about which specific key points were missed or incorrect in the predicted answer."
                     }
                 },
-                "required": ["query", "score", "gap_diagnosis", "failure_phase", "judge_insight"]
+                "required": ["user_id", "query", "score", "gap_diagnosis", "failure_phase", "judge_insight"]
             }
         },
         "content_quality_issues": {
@@ -251,18 +255,18 @@ def build_analysis_prompt(memo_info):
         - **general_retrieve**: Phase 2 — called once per QA question to retrieve relevant memory.
     - Two-phase protocol:
         - `general_update(recorder)`: called during Phase 1 with chunks of app logs.
-          `recorder.init['app_logs']` = current batch of log entries; `recorder.init['user_profile']` = demographics.
+          `recorder.init['app_logs']` = current batch of log entries.
           Expected behaviour: extract and store user habits, preferences, and behavioural patterns.
         - `general_retrieve(recorder)`: called during Phase 2 before each QA question.
           `recorder.init['query']` = current question; `recorder.init['app_logs']` = all logs (reference).
           Returns Dict passed to the answering agent.
-          Expected behaviour: retrieve facts relevant to the query from the stored user profile.
+          Expected behaviour: retrieve facts relevant to the query from the stored memory.
           NOTE: the downstream QA agent only sees the returned Dict and the question — it does NOT
-          have access to user_profile or app_logs directly. If demographic context matters for the
-          answer, general_retrieve must include it in the returned Dict.
+          have access to app_logs directly.
 
 2. **examples**
     - Each example is one sampled QA pair, containing:
+        - `user_id`: which user this QA pair belongs to (e.g. "user_001"). Examples are sampled per-user to preserve user-level patterns.
         - `query`: the natural-language question asked
         - `retrieved_memory`: the dict returned by `general_retrieve` for this question
         - `predicted`: the agent's answer
@@ -274,8 +278,9 @@ def build_analysis_prompt(memo_info):
             - 9–10: Fully covers all key points from the reference accurately. No factual errors or contradictions. (Extra details beyond the reference are acceptable.)
         - `judge_reason`: the LLM judge's brief explanation of why it gave that score — highlights which key points were hit or missed
         - `relevant_app_logs`: the specific app log entries that contain the ground-truth evidence for this question
-    - Examples are sampled across score bins. Low-score examples are the primary diagnostic signal —
-      compare `relevant_app_logs` against `retrieved_memory` to identify what the memory should have stored but didn't.
+    - Examples are sampled per-user across score bins. Analyze failure patterns both globally and per-user —
+      some failures may be user-specific (e.g. a user with unusual data patterns) while others are systematic.
+      Compare `relevant_app_logs` against `retrieved_memory` to identify what the memory should have stored but didn't.
       Use `judge_reason` to understand exactly which key points were missing or incorrect.
     - High-score examples are provided as contrast — they show what the memory does well; avoid breaking these.
 
@@ -366,9 +371,8 @@ def build_generate_new_code_prompt(
     == DynamicMem Two-Phase Protocol ==
 
     Phase 1 — general_update(recorder):
-      Called N times to build the user profile from app logs.
+      Called N times to build user memory from app logs.
       recorder.init['app_logs']     = List[dict]  — current batch of app log entries
-      recorder.init['user_profile'] = dict         — user demographic info (age, occupation, industry, etc.)
       Each app_log entry has: app_log_id, timestamp, app_name, api_name, request, response.
       Expected behaviour: extract and store user habits, preferences, and behavioural patterns into internal DB.
       NOTE: general_update may be called multiple times (once per chunk of logs); your internal DB must be
@@ -378,13 +382,11 @@ def build_generate_new_code_prompt(
       Called once per QA question (after Phase 1 is complete).
       recorder.init['query']        = str          — current natural-language question
       recorder.init['app_logs']     = List[dict]   — all app logs (reference only)
-      recorder.init['user_profile'] = dict          — user demographic info
       Return value: Dict  — memory context passed directly to the answering agent.
-      Expected behaviour: retrieve facts relevant to the query from the stored user profile.
+      Expected behaviour: retrieve facts relevant to the query from the stored memory.
       The returned dict is sent verbatim to the agent — keep it clean, structured, and non-redundant.
       IMPORTANT: the downstream QA agent ONLY sees the returned Dict and the question.
-      It does NOT have access to user_profile or app_logs. If demographic context is needed
-      to answer the question, include it in the returned Dict.
+      It does NOT have access to app_logs.
     """
 
     system_prompt = f"""You are a senior AI software engineer. Your task is to build an agent memory system composed of multiple specialised memory layers and a coordinating memory structure.
@@ -517,13 +519,11 @@ def build_reflection_prompt(code_str: str, recorder: Basic_Recorder, error_msg: 
     == DynamicMem Two-Phase Protocol ==
     Phase 1 — general_update(recorder):
       recorder.init['app_logs']     = List[dict]  — current batch of app log entries
-      recorder.init['user_profile'] = dict         — user demographics
     Phase 2 — general_retrieve(recorder):
       recorder.init['query']        = str          — current question
       recorder.init['app_logs']     = List[dict]   — all logs (reference)
-      recorder.init['user_profile'] = dict          — user demographics
       Must return a Dict for the downstream agent.
-      NOTE: the QA agent only sees the returned Dict + question, NOT user_profile or app_logs.
+      NOTE: the QA agent only sees the returned Dict + question, NOT app_logs.
     """
 
     system_prompt = f"""You are a senior AI software engineer and code repair expert.

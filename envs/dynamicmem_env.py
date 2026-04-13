@@ -68,7 +68,6 @@ class DynamicMemRecorder(Basic_Recorder):
     init:   loaded once in load_user_data / set by workflow.
         {
             'app_logs':     List[dict],   # entries from app_log_large.json
-            'user_profile': dict,         # from user_basic_profile.json
             'query':        str,          # injected before each general_retrieve call
         }
         Each app_log entry: app_log_id, timestamp, app_name, api_name, request, response.
@@ -92,9 +91,8 @@ class DynamicMemRecorder(Basic_Recorder):
         default_factory=dict,
         metadata={
             "description": (
-                "App logs and user profile loaded at session start. "
+                "App logs loaded at session start. "
                 "'app_logs' is a list of app-log dicts (app_log_large.json). "
-                "'user_profile' is a demographic dict (user_basic_profile.json). "
                 "'query' is injected before each general_retrieve call."
             ),
             "type": "Dict[str, Any]",
@@ -109,11 +107,6 @@ class DynamicMemRecorder(Basic_Recorder):
                         "response": {"calories_burned": 312},
                     }
                 ],
-                "user_profile": {
-                    "age": 45,
-                    "occupation": "Senior Coatings Consultant",
-                    "industry": "Industrial Coatings and Infrastructure",
-                },
                 "query": "When does the user usually exercise?",
             },
         },
@@ -152,6 +145,14 @@ class DynamicMemRecorder(Basic_Recorder):
         },
     )
 
+    user_id: str = field(
+        default="",
+        metadata={
+            "description": "User identifier (e.g. 'user_001') for per-user tracking.",
+            "type": "str",
+        },
+    )
+
     reward: float = field(
         default=0.0,
         metadata={
@@ -160,11 +161,23 @@ class DynamicMemRecorder(Basic_Recorder):
         },
     )
 
+    failure_info: Optional[str] = field(
+        default=None,
+        metadata={
+            "description": (
+                "Populated when Phase 2 terminated early due to retrieve failure "
+                "(break out of the QA loop, partial recorder preserved). "
+                "None for fully-completed users."
+            ),
+            "type": "Optional[str]",
+        },
+    )
+
     _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False, metadata={"internal": True})
 
-    async def log_init(self, app_logs: List[Dict], user_profile: Dict) -> None:
+    async def log_init(self, app_logs: List[Dict]) -> None:
         async with self._lock:
-            self.init = {"app_logs": app_logs, "user_profile": user_profile}
+            self.init = {"app_logs": app_logs}
 
     async def log_step(
         self,
@@ -222,28 +235,28 @@ def _get_qa_path_for_user(user_dir: str) -> Path:
     return qa_dir / qa_files[user_idx - 1]
 
 
-def get_task_list(status: str, train_size: int) -> List[str]:
+def get_task_list(status: str, eval_n_users: int) -> List[str]:
     """Return user-directory paths for the requested split.
 
     status:
-      'train' → first train_size users from the train split (users 001–006)
-      'eval'  → held-out eval users (users 007–010)
+      'search' → first eval_n_users users from the search split (users 001–006)
+      'test'   → held-out test users (users 007–010)
     """
     all_dirs = _get_all_user_dirs()
     train_dirs = all_dirs[:TRAIN_USERS]
     eval_dirs = all_dirs[TRAIN_USERS:]
 
-    if status == "train":
-        return train_dirs[:int(train_size)]
+    if status == "search":
+        return train_dirs[:int(eval_n_users)]
     else:  # eval
         return eval_dirs
 
 
-def load_user_data(user_dir: str, qa_sample_size: Optional[int] = None) -> Tuple[List[Dict], Dict, List[Dict]]:
+def load_user_data(user_dir: str, eval_n_qa: Optional[int] = None) -> Tuple[List[Dict], Dict, List[Dict]]:
     """Load app logs, user profile, and QA pairs.
 
-    qa_sample_size=None (default): use all available QA pairs (for evaluation).
-    qa_sample_size=N: deterministically sample N pairs (for training, cost control).
+    eval_n_qa=None (default): use all available QA pairs (for evaluation).
+    eval_n_qa=N: deterministically sample N pairs (for training, cost control).
 
     Returns (app_logs, user_profile, qa_pairs).
     """
@@ -258,15 +271,11 @@ def load_user_data(user_dir: str, qa_sample_size: Optional[int] = None) -> Tuple
     with open(str(_get_qa_path_for_user(user_dir)), encoding="utf-8") as fh:
         all_qa: List[Dict] = json.load(fh)
 
-    refined = [q for q in all_qa if q.get("metadata", {}).get("refined", False)]
-
-    if qa_sample_size is None:
-        # Use all available QA pairs (refined if sufficient, otherwise all)
-        qa_pairs = refined if refined else all_qa
+    if eval_n_qa is None:
+        qa_pairs = all_qa
     else:
-        pool = refined if len(refined) >= qa_sample_size else all_qa
         rng = random.Random(user_dir)
-        qa_pairs = rng.sample(pool, min(qa_sample_size, len(pool)))
+        qa_pairs = rng.sample(all_qa, min(eval_n_qa, len(all_qa)))
 
     return app_logs, user_profile, qa_pairs
 
@@ -316,15 +325,25 @@ async def judge_answer(query: str, predicted: str, reference: str, judge_model: 
         "required": ["reason", "score"],
     }
     judge_user = BASIC_JUDGE_PROMPT.format(query=query, reference=reference, prediction=predicted)
-    try:
-        agent = Agent(system_prompt="", output_schema=judge_schema, model=judge_model)
-        result = await asyncio.wait_for(agent.ask(judge_user), timeout=60)
-        if isinstance(result, dict) and "error" not in result:
-            score = int(result.get("score", 1))
-            score = max(0, min(10, score))
-            reason = str(result.get("reason", ""))
-            return score, reason
-        return 0, "Judge returned invalid result"
-    except Exception as exc:
-        log.warning(f"Judge failed: {exc}")
-        return 0, f"Judge error: {exc}"
+    import openai
+    for attempt in range(3):
+        try:
+            agent = Agent(system_prompt="", output_schema=judge_schema, model=judge_model, timeout=150)
+            result = await agent.ask(judge_user, reasoning_effort="low")
+            if isinstance(result, dict) and "error" not in result:
+                score = int(result.get("score", 1))
+                score = max(0, min(10, score))
+                reason = str(result.get("reason", ""))
+                return score, reason
+            return 0, "Judge returned invalid result"
+        except (asyncio.TimeoutError, openai.APITimeoutError, openai.APIConnectionError, openai.InternalServerError) as exc:
+            if attempt < 2:
+                delay = 2 ** (attempt + 1)
+                log.warning(f"Judge retry {attempt+1}/3: {repr(exc)}")
+                await asyncio.sleep(delay)
+                continue
+            log.warning(f"Judge failed after 3 attempts: {repr(exc)}")
+            return 0, f"Judge error: {exc}"
+        except Exception as exc:
+            log.warning(f"Judge failed: {repr(exc)}")
+            return 0, f"Judge error: {exc}"

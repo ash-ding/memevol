@@ -1,4 +1,5 @@
 import logging
+import os
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 import threading
@@ -9,8 +10,11 @@ try:
 except ImportError:
     USE_RICH = False
 
-LOG_DIR = Path("./logs")
+LOG_DIR = Path(os.environ.get("EVALS_LOG_DIR", "./logs"))
 LOG_DIR.mkdir(exist_ok=True)
+
+# Allow per-run log file via environment variable (e.g. "train_all_at_once.log")
+_DEFAULT_LOG_FILE = os.environ.get("MEMEVOL_LOG_FILE", ".log")
 
 DEFAULT_LEVEL_STYLES = {
     "DEBUG": {"color": "cyan"},
@@ -21,10 +25,11 @@ DEFAULT_LEVEL_STYLES = {
 }
 
 _initialized_loggers = {} 
-console = Console(force_terminal=True, soft_wrap=True)
-log_lock = threading.Lock()
+console = Console(force_terminal=True, soft_wrap=True) if USE_RICH else None
 
-def get_logger(name="", level=logging.INFO, log_file=".log", level_styles=None):
+def get_logger(name="", level=logging.INFO, log_file=None, level_styles=None):
+    if log_file is None:
+        log_file = _DEFAULT_LOG_FILE
     if name in _initialized_loggers:
         return _initialized_loggers[name]
 

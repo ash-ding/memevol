@@ -40,21 +40,33 @@ except Exception:
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 
+# Wall-clock ceiling for the launch.py subprocess, by mode. Past this we assume
+# the subprocess is hung (e.g. langchain_chroma cleanup deadlock, generated code
+# leaving background tasks alive) and force-kill it. Numbers are deliberately
+# loose: the longest healthy run we have observed is ~78 min for sanity check
+# and ~6.4 h for full eval, so 2 h / 8 h give ~1.5x and ~1.25x headroom.
+SUBPROCESS_TIMEOUT = {
+    "check": 2 * 3600,   # 2 hours for sanity check
+    "eval":  8 * 3600,   # 8 hours for full eval
+}
+
 
 async def run_evaluation(
     memory_SHA: str,
     mode: str = "eval",
     model: str = "gpt-5-mini",
-    train_size: int = 6,
-    status: str = "train",
+    eval_n_users: int = 6,
+    status: str = "search",
     update_type: str = "all_at_once",
     n_chunks: int = 5,
     max_logs: Optional[int] = None,
-    qa_sample_size: Optional[int] = None,
-    max_concurrent: int = 6,
+    eval_n_qa: Optional[int] = None,
+    max_user_concurrent: int = 6,
     n_score_bins: int = 3,
     samples_per_bin: int = 3,
     judge_model: str = "gpt-5-mini",
+    check_n_users: int = 3,
+    check_n_qa: int = 10,
 ):
     """Copy memo code to evals/memo_test/ and run launch.py in a subprocess."""
 
@@ -89,18 +101,20 @@ async def run_evaluation(
         "--update_type", update_type,
         "--n_chunks", str(n_chunks),
         "--model", model,
-        "--train_size", str(train_size),
+        "--eval_n_users", str(eval_n_users),
         "--status", status,
-        "--max_concurrent", str(max_concurrent),
+        "--max_user_concurrent", str(max_user_concurrent),
         "--mode", mode,
         "--n_score_bins", str(n_score_bins),
         "--samples_per_bin", str(samples_per_bin),
         "--judge_model", judge_model,
+        "--check_n_users", str(check_n_users),
+        "--check_n_qa", str(check_n_qa),
     ]
     if max_logs is not None:
         launch_args += ["--max_logs", str(max_logs)]
-    if qa_sample_size is not None:
-        launch_args += ["--qa_sample_size", str(qa_sample_size)]
+    if eval_n_qa is not None:
+        launch_args += ["--eval_n_qa", str(eval_n_qa)]
 
     env = {
         **os.environ,
@@ -116,10 +130,40 @@ async def run_evaluation(
         *launch_args,
         cwd=str(evals_dir),
         env=env,
+        stderr=asyncio.subprocess.PIPE,
     )
-    await process.wait()
+
+    timeout_s = SUBPROCESS_TIMEOUT.get(mode, 8 * 3600)
+    try:
+        _, stderr_bytes = await asyncio.wait_for(
+            process.communicate(),
+            timeout=timeout_s,
+        )
+    except asyncio.TimeoutError:
+        log.error(
+            f"Evaluation subprocess HUNG for SHA={memory_SHA} mode={mode} "
+            f"after {timeout_s}s — killing"
+        )
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass  # already dead, communicate just hadn't observed it
+        # Give the kernel a few seconds to reap the killed process so we don't
+        # leak a zombie. If wait() also hangs, log and move on.
+        try:
+            await asyncio.wait_for(process.wait(), timeout=5)
+        except asyncio.TimeoutError:
+            log.error(f"Failed to reap subprocess for SHA={memory_SHA} within 5s")
+        raise RuntimeError(
+            f"Subprocess for SHA={memory_SHA} mode={mode} timed out "
+            f"past {timeout_s}s and was killed"
+        )
 
     if process.returncode != 0:
-        log.error(f"Evaluation subprocess exited with code {process.returncode} for SHA={memory_SHA}")
+        stderr_text = stderr_bytes.decode(errors="replace").strip() if stderr_bytes else ""
+        log.error(
+            f"Evaluation subprocess exited with code {process.returncode} for SHA={memory_SHA}"
+            + (f"\nstderr:\n{stderr_text[-2000:]}" if stderr_text else "")
+        )
     else:
         log.info(f"Evaluation finished: SHA={memory_SHA}")

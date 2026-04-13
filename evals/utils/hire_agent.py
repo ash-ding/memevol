@@ -1,5 +1,6 @@
 import asyncio
 from typing import List, Dict, Any, Optional
+import httpx
 import openai
 from openai import AsyncOpenAI
 import json
@@ -18,16 +19,21 @@ class Agent:
     Allows custom system prompt, user prompt, and optional JSON schema validation.
     """
     def __init__(
-        self, 
-        system_prompt: str, 
+        self,
+        system_prompt: str,
         output_schema: Optional[Dict] = None,
         model: Optional[str] = 'gpt-4.1',
+        timeout: float = 300.0,
     ):
         self.model = model
         self.messages: List[Dict] = [{'role':'system','content':system_prompt + (f"""ONLY output a valid JSON object conforming to the schema. The json schema is given below: {json.dumps(output_schema, ensure_ascii=False, indent = 1)}""" if output_schema else "")}]
         self.output_schema = output_schema or None
         api_key = os.getenv("OPENAI_API_KEY")
-        self.client = AsyncOpenAI(api_key = api_key)
+        self.client = AsyncOpenAI(
+            api_key=api_key,
+            timeout=httpx.Timeout(timeout, connect=10.0),
+            max_retries=0,
+        )
 
     def get_agent_config(self) -> Dict[str, Any]:
         """Return the current configuration for the agent."""
@@ -73,11 +79,20 @@ class Agent:
             kwargs['temperature'] = temperature
         if reasoning_effort:
             kwargs['reasoning_effort'] = reasoning_effort
-        try:
-            resp = await self.client.chat.completions.create(**kwargs)
-        except Exception as e:
-            print(e)
-            raise
+        max_app_retries = 5
+        for app_attempt in range(max_app_retries + 1):
+            try:
+                resp = await self.client.chat.completions.create(**kwargs)
+                break
+            except (openai.APITimeoutError, openai.APIConnectionError, openai.InternalServerError) as e:
+                if app_attempt == max_app_retries:
+                    raise
+                delay = 2 ** (app_attempt + 1)
+                log.warning(f"[Agent] Retryable error (attempt {app_attempt+1}/{max_app_retries}): {e}, retrying in {delay}s")
+                await asyncio.sleep(delay)
+            except Exception as e:
+                print(e)
+                raise
         # print(resp)
         from agents.base import GLOBAL_TOKEN_TRACKER
         if GLOBAL_TOKEN_TRACKER is not None and hasattr(resp, "usage"):
@@ -128,8 +143,12 @@ class Embedding:
         self.retry_delay = retry_delay
         
         api_key = os.getenv("OPENAI_API_KEY")
-        self.client = AsyncOpenAI(api_key = api_key)
-    
+        self.client = AsyncOpenAI(
+            api_key=api_key,
+            timeout=httpx.Timeout(30.0, connect=10.0),
+            max_retries=0,
+        )
+
     def __call__(self, texts: List[str]) -> List[List[float]]:
         """
         Safe synchronous entry point that works both inside and outside async loops.
@@ -173,33 +192,43 @@ class Embedding:
                 attempt += 1
                 log.error(f"[EmbeddingManager] Attempt {attempt} failed: {e}")
                 final_error = e
-                await asyncio.sleep(self.retry_delay)
+                await asyncio.sleep(self.retry_delay * (2 ** (attempt - 1)))
         raise RuntimeError(f"Failed to get embedding after {self.retries} attempts, with error: {final_error}")
 
     async def get_batch_embeddings(self, texts: List[str]) -> List[List[float]]:
         """
         Compute embeddings for a batch of texts asynchronously.
         Updates global token tracker automatically.
+        Automatically chunks inputs to stay within OpenAI's 2048-item limit.
         """
-        attempt = 0
-        final_error = ''
-        while attempt < self.retries:
-            try:
-                resp = await self.client.embeddings.create(model=self.model, input=texts)
+        MAX_BATCH = 2048
+        all_embeddings: List[List[float]] = []
 
-                # Update global token tracker
-                from agents.base import GLOBAL_TOKEN_TRACKER
-                if GLOBAL_TOKEN_TRACKER is not None and hasattr(resp, "usage"):
-                    await GLOBAL_TOKEN_TRACKER.update(model_name=self.model, usage=resp.usage)
+        for start in range(0, len(texts), MAX_BATCH):
+            chunk = texts[start:start + MAX_BATCH]
+            attempt = 0
+            final_error = ''
+            while attempt < self.retries:
+                try:
+                    resp = await self.client.embeddings.create(model=self.model, input=chunk)
 
-                return [item.embedding for item in resp.data]
-            except Exception as e:
-                attempt += 1
-                log.error(f"[EmbeddingManager] Batch attempt {attempt} failed: {e}")
-                final_error = e
-                await asyncio.sleep(self.retry_delay)
-        log.error(f"Failed to get batch embeddings after {self.retries} attempts. With error: {final_error}")
-        raise RuntimeError(f"Failed to get batch embeddings after {self.retries} attempts. With error: {final_error}")
+                    # Update global token tracker
+                    from agents.base import GLOBAL_TOKEN_TRACKER
+                    if GLOBAL_TOKEN_TRACKER is not None and hasattr(resp, "usage"):
+                        await GLOBAL_TOKEN_TRACKER.update(model_name=self.model, usage=resp.usage)
+
+                    all_embeddings.extend([item.embedding for item in resp.data])
+                    break
+                except Exception as e:
+                    attempt += 1
+                    # log.error(f"[EmbeddingManager] Batch attempt {attempt} failed: {e}")
+                    final_error = e
+                    await asyncio.sleep(self.retry_delay * (2 ** (attempt - 1)))
+            else:
+                log.error(f"Failed to get batch embeddings after {self.retries} attempts. With error: {final_error}")
+                raise RuntimeError(f"Failed to get batch embeddings after {self.retries} attempts. With error: {final_error}")
+
+        return all_embeddings
 
     @staticmethod
     async def compute_similarity(emb1: List[float], emb2: List[float], metric: str = "cosine") -> float:

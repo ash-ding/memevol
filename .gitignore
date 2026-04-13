@@ -23,3 +23,9 @@ memo_archive/dynamicmem/*
 
 # Environment secrets
 .env
+
+# Local scratch docs (not part of the project)
+docs/
+
+# Claude Code local settings
+.claude/

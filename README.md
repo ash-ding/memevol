@@ -67,15 +67,15 @@ dynamicmem/
 # Smoke test — 2 users, 2 steps, 10 QA per user
 python run_main.py \
     --status train \
-    --train_size 2 \
-    --qa_sample_size 10 \
+    --eval_n_users 2 \
+    --eval_n_qa 10 \
     --steps 2
 
 # Full training — 6 users, 10 steps, 20 QA per user
 python run_main.py \
     --status train \
-    --train_size 6 \
-    --qa_sample_size 20 \
+    --eval_n_users 6 \
+    --eval_n_qa 20 \
     --steps 10
 
 # Evaluate a learned structure on held-out users (007–010)
@@ -100,7 +100,7 @@ See `training.sh` and `evaluation.sh` for more examples.
 | Argument | Default | Description |
 |---|---|---|
 | `--status` | `train` | `train` — run evolution loop on users 001–006; `eval` — evaluate a single structure on held-out users 007–010 |
-| `--train_size` | `6` | Number of train users per evaluation round (max 6) |
+| `--eval_n_users` | `6` | Number of train users per evaluation round (max 6) |
 | `--memo_SHA` | — | SHA of a memo structure to evaluate (required for `--status eval`) |
 | `--history_ckpt_path` | — | Checkpoint JSON in `logs/` to resume training from |
 
@@ -126,7 +126,7 @@ Controls how app logs are batched for `general_update()` in Phase 1.
 
 | Argument | Default | Description |
 |---|---|---|
-| `--qa_sample_size` | all | QA pairs per user; set to e.g. `20` during training to control cost |
+| `--eval_n_qa` | all | QA pairs per user; set to e.g. `20` during training to control cost |
 | `--steps` | `10` | Number of meta-learning iterations |
 | `--max_container_concurrent` | `5` | Parallel memo evaluations in the meta-loop |
 | `--max_concurrent` | `5` | Parallel users within one evaluation subprocess |
