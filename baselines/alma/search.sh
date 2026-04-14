@@ -1,12 +1,13 @@
 #!/bin/bash
 
 # ===========================================================================
-# memevol — Search examples (meta-learning memory designs for DynamicMem)
+# alma baseline — Search examples (meta-learning memory designs for DynamicMem)
+# Run from the project root.
 # ===========================================================================
 
 # --- Full search run (default settings) ---
 # 6 search users, 10 meta-learning steps, 20 QA per user per round
-python run_main.py \
+python baselines/alma/run_main.py \
     --meta_model gpt-5 \
     --execution_model gpt-5-mini \
     --judge_model gpt-5-mini \
@@ -21,7 +22,7 @@ python run_main.py \
 
 # --- Quick smoke test (minimal workload, verify end-to-end) ---
 # 2 users, 2 steps, 10 QA per user
-python run_main.py \
+python baselines/alma/run_main.py \
     --meta_model gpt-5 \
     --execution_model gpt-5-mini \
     --judge_model gpt-5-mini \
@@ -34,7 +35,7 @@ python run_main.py \
 
 # --- Chunked update mode ---
 # Feed app_logs in 10 chunks instead of all at once
-python run_main.py \
+python baselines/alma/run_main.py \
     --meta_model gpt-5 \
     --execution_model gpt-5-mini \
     --judge_model gpt-5-mini \
@@ -46,8 +47,7 @@ python run_main.py \
     --steps 10
 
 # --- Sequential update mode ---
-# Feed app_logs one by one (most expensive, most fine-grained)
-python run_main.py \
+python baselines/alma/run_main.py \
     --meta_model gpt-5 \
     --execution_model gpt-5-mini \
     --judge_model gpt-5-mini \
@@ -58,8 +58,8 @@ python run_main.py \
     --steps 5
 
 # --- Resume from checkpoint ---
-# Continue a previous search run from a saved checkpoint in logs/
-python run_main.py \
+# Checkpoint files live under baselines/alma/logs/ after the first step.
+python baselines/alma/run_main.py \
     --meta_model gpt-5 \
     --execution_model gpt-5-mini \
     --judge_model gpt-5-mini \

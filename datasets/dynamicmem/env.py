@@ -1,24 +1,29 @@
 """
-DynamicMem environment for memevol.
+DynamicMem environment — dataset-layer utilities shared by all methods
+(alma, cc, hipporag2, future meta-harness).
+
+Kept deliberately free of any method-layer dependencies: this module imports
+only from the standard library, openai, and optionally jsonschema. Method
+packages may inject a token tracker at runtime via `set_token_tracker`.
 
 Provides:
-  - DynamicMemRecorder: records one user's app-log ingestion + QA session
-  - get_task_list(): returns user directory paths for a given split
-  - load_user_data(): loads app_logs, user_profile, sampled QA pairs for a user
-  - judge_answer(): LLM judge that scores a predicted answer against reference
+  - Basic_Recorder:       minimal async recorder base class
+  - DynamicMemRecorder:   records one user's app-log ingestion + QA session
+  - get_task_list():      user directory paths for a split
+  - load_user_data():     app_logs, user_profile, sampled QA pairs for a user
+  - judge_answer():       LLM judge that scores a predicted answer (raw openai, no Agent dep)
+  - set_token_tracker():  inject a tracker (from a method package) to record judge usage
 
 Design note: the interaction protocol is two-phase (per user):
   Phase 1  — general_update is called N times with app_log chunks to build a user profile
   Phase 2  — general_retrieve is called once per QA question; agent answers using the profile
-
-recorder.init['query'] is injected by DynamicMem_Workflow before each general_retrieve call
-so that memory code can do query-aware retrieval.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import random
 import re
@@ -26,40 +31,81 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from eval_envs.base_envs import Basic_Recorder
+log = logging.getLogger("main")
 
 try:
-    from logger import get_logger
-    log = get_logger("main")
-except Exception:
-    import logging
-    log = logging.getLogger("main")
+    import httpx
+    import openai
+    from openai import AsyncOpenAI
+except ImportError:  # openai is a hard dependency of the project, but keep import guarded
+    openai = None  # type: ignore
+    AsyncOpenAI = None  # type: ignore
 
-try:
-    from utils.hire_agent import Agent
-except Exception:
-    Agent = None  # type: ignore
+
+# OpenAI rejects `reasoning_effort` for non-reasoning models. Keep a
+# narrow allowlist by name prefix; add new model families as they appear.
+_REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
+
+
+def _supports_reasoning(model: str) -> bool:
+    return any(model.startswith(p) for p in _REASONING_MODEL_PREFIXES)
+
+# ---------------------------------------------------------------------------
+# Optional token-tracker injection (set by the calling method package)
+# ---------------------------------------------------------------------------
+
+_token_tracker: Optional[Any] = None
+
+
+def set_token_tracker(tracker: Any) -> None:
+    """Inject a TokenTracker-like object. The tracker must expose an
+    async update(model_name: str, usage) coroutine. Pass None to disable.
+    """
+    global _token_tracker
+    _token_tracker = tracker
+
 
 # ---------------------------------------------------------------------------
 # Data-path resolution
+#
+# Data (user_data/, user_qa/) sits directly under this package directory:
+#     datasets/dynamicmem/user_data/
+#     datasets/dynamicmem/user_qa/
+# Override with the DYNAMICMEM_DATA env var if you want to point elsewhere.
 # ---------------------------------------------------------------------------
 
-def _find_project_root() -> Path:
-    for p in Path(__file__).resolve().parents:
-        if (p / "run_main.py").exists():
-            return p
-    return Path(__file__).resolve().parent.parent
-
-
 _data_env = os.environ.get("DYNAMICMEM_DATA", "")
-DATA_DIR: Path = Path(_data_env) if _data_env else (_find_project_root() / "dynamicmem")
+DATA_DIR: Path = Path(_data_env) if _data_env else Path(__file__).resolve().parent
 
 TRAIN_USERS = 6
 EVAL_USERS = 4
 
+
 # ---------------------------------------------------------------------------
-# Recorder
+# Recorder base + domain-specific recorder
 # ---------------------------------------------------------------------------
+
+@dataclass
+class Basic_Recorder:
+    """Base class for task recorders. Domain-specific recorders inherit from this."""
+
+    init: Dict[str, Any] = field(default_factory=dict)
+    steps: list = field(default_factory=list)
+    reward: float = 0.0
+    _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
+
+    async def log_init(self, *args, **kwargs):
+        async with self._lock:
+            self.init = kwargs
+
+    async def log_step(self, **kwargs):
+        async with self._lock:
+            self.steps.append(kwargs)
+
+    async def set_reward(self, reward: float):
+        async with self._lock:
+            self.reward = reward
+
 
 @dataclass
 class DynamicMemRecorder(Basic_Recorder):
@@ -210,7 +256,7 @@ class DynamicMemRecorder(Basic_Recorder):
 
 
 # ---------------------------------------------------------------------------
-# Data helpers (free functions, no class needed)
+# Data helpers
 # ---------------------------------------------------------------------------
 
 def _get_all_user_dirs() -> List[str]:
@@ -248,7 +294,7 @@ def get_task_list(status: str, eval_n_users: int) -> List[str]:
 
     if status == "search":
         return train_dirs[:int(eval_n_users)]
-    else:  # eval
+    else:  # test
         return eval_dirs
 
 
@@ -280,6 +326,10 @@ def load_user_data(user_dir: str, eval_n_qa: Optional[int] = None) -> Tuple[List
     return app_logs, user_profile, qa_pairs
 
 
+# ---------------------------------------------------------------------------
+# Judge (raw openai, no Agent dependency)
+# ---------------------------------------------------------------------------
+
 BASIC_JUDGE_PROMPT = """You are an expert evaluator. Your task is to rate the quality of an AI-generated answer based on a standard reference.
 
 [Question]: {query}
@@ -308,42 +358,75 @@ Output format(JSON):
 """
 
 
-async def judge_answer(query: str, predicted: str, reference: str, judge_model: str = "gpt-5-mini") -> Tuple[int, str]:
+async def judge_answer(
+    query: str,
+    predicted: str,
+    reference: str,
+    judge_model: str = "gpt-5-mini",
+) -> Tuple[int, str]:
     """Score a predicted answer against the reference using an LLM judge.
+
+    Uses the openai SDK directly (no Agent wrapper) so this module stays
+    free of method-layer dependencies. If a token tracker has been injected
+    via `set_token_tracker`, per-call usage is reported to it.
 
     Returns (score, reason) where score is 0–10 and reason is a brief explanation.
     """
-    if Agent is None:
-        return 0, "Agent unavailable"
+    if AsyncOpenAI is None:
+        return 0, "openai SDK unavailable"
 
-    judge_schema = {
-        "type": "object",
-        "properties": {
-            "reason": {"type": "string", "description": "Brief explanation for the score."},
-            "score": {"type": "integer", "minimum": 0, "maximum": 10, "description": "Score from 0 to 10."},
-        },
-        "required": ["reason", "score"],
+    user_msg = BASIC_JUDGE_PROMPT.format(query=query, reference=reference, prediction=predicted)
+
+    api_key = os.getenv("OPENAI_API_KEY", "")
+    client = AsyncOpenAI(
+        api_key=api_key,
+        timeout=httpx.Timeout(150.0, connect=10.0),
+        max_retries=0,
+    )
+
+    chat_kwargs = {
+        "model": judge_model,
+        "messages": [{"role": "user", "content": user_msg}],
+        "response_format": {"type": "json_object"},
     }
-    judge_user = BASIC_JUDGE_PROMPT.format(query=query, reference=reference, prediction=predicted)
-    import openai
-    for attempt in range(3):
+    if _supports_reasoning(judge_model):
+        chat_kwargs["reasoning_effort"] = "low"
+
+    # 6 attempts with exponential backoff capped at 60s covers ~15 min of
+    # sustained OpenAI-side flakiness — chosen to match the robustness of the
+    # pre-reorganization judge (which stacked judge_answer's retries on top of
+    # Agent.ask's internal retries for an effective ~18 attempts).
+    MAX_JUDGE_ATTEMPTS = 6
+    for attempt in range(MAX_JUDGE_ATTEMPTS):
         try:
-            agent = Agent(system_prompt="", output_schema=judge_schema, model=judge_model, timeout=150)
-            result = await agent.ask(judge_user, reasoning_effort="low")
-            if isinstance(result, dict) and "error" not in result:
-                score = int(result.get("score", 1))
-                score = max(0, min(10, score))
-                reason = str(result.get("reason", ""))
-                return score, reason
-            return 0, "Judge returned invalid result"
+            resp = await client.chat.completions.create(**chat_kwargs)
+            if _token_tracker is not None and hasattr(resp, "usage") and resp.usage is not None:
+                try:
+                    await _token_tracker.update(model_name=judge_model, usage=resp.usage)
+                except Exception as tracker_exc:
+                    log.debug(f"token tracker update failed: {tracker_exc}")
+
+            raw = resp.choices[0].message.content or ""
+            try:
+                result = json.loads(raw)
+            except json.JSONDecodeError:
+                return 0, f"Judge returned non-JSON: {raw[:200]}"
+
+            score = int(result.get("score", 0))
+            score = max(0, min(10, score))
+            reason = str(result.get("reason", ""))
+            return score, reason
+
         except (asyncio.TimeoutError, openai.APITimeoutError, openai.APIConnectionError, openai.InternalServerError) as exc:
-            if attempt < 2:
-                delay = 2 ** (attempt + 1)
-                log.warning(f"Judge retry {attempt+1}/3: {repr(exc)}")
+            if attempt < MAX_JUDGE_ATTEMPTS - 1:
+                delay = min(60, 2 ** (attempt + 1))  # 2, 4, 8, 16, 32, (cap) 60
+                log.warning(f"Judge retry {attempt+1}/{MAX_JUDGE_ATTEMPTS}: {repr(exc)}")
                 await asyncio.sleep(delay)
                 continue
-            log.warning(f"Judge failed after 3 attempts: {repr(exc)}")
+            log.warning(f"Judge failed after {MAX_JUDGE_ATTEMPTS} attempts: {repr(exc)}")
             return 0, f"Judge error: {exc}"
         except Exception as exc:
             log.warning(f"Judge failed: {repr(exc)}")
             return 0, f"Judge error: {exc}"
+
+    return 0, "Judge exhausted retries"

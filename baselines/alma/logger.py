@@ -2,7 +2,6 @@ import logging
 import os
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-import threading
 try:
     from rich.console import Console
     from rich.logging import RichHandler
@@ -11,7 +10,7 @@ except ImportError:
     USE_RICH = False
 
 LOG_DIR = Path(os.environ.get("EVALS_LOG_DIR", "./logs"))
-LOG_DIR.mkdir(exist_ok=True)
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 # Allow per-run log file via environment variable (e.g. "train_all_at_once.log")
 _DEFAULT_LOG_FILE = os.environ.get("MEMEVOL_LOG_FILE", ".log")
@@ -24,8 +23,9 @@ DEFAULT_LEVEL_STYLES = {
     "CRITICAL": {"icon": "🔥", "color": "bold magenta"},
 }
 
-_initialized_loggers = {} 
+_initialized_loggers = {}
 console = Console(force_terminal=True, soft_wrap=True) if USE_RICH else None
+
 
 def get_logger(name="", level=logging.INFO, log_file=None, level_styles=None):
     if log_file is None:
@@ -74,4 +74,3 @@ def get_logger(name="", level=logging.INFO, log_file=None, level_styles=None):
 
         _initialized_loggers[name] = logger
     return logger
-

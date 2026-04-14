@@ -1,27 +1,23 @@
-from pathlib import Path
-import sys
-from typing import Any, Dict, List, Optional
-from evals.agents.memo_structure import MemoStructure
-from evals.agents.base import init_global_tracker
-from evals.utils.hire_agent import Agent
-from core.memo_manager import Memo_Manager
-from core.meta_agent_prompt import build_analysis_prompt, build_generate_new_code_prompt, build_reflection_prompt
-import os
+from __future__ import annotations
+
 import asyncio
 import json
-from evals.logger import get_logger
 from datetime import datetime
-from rich.progress import Progress, BarColumn, TextColumn, TimeElapsedColumn
-import importlib
+from pathlib import Path
+from typing import Any, Dict, Optional
+
+from baselines.alma.harness_base import MemoStructure
+from baselines.alma.llm import Agent
+from baselines.alma.logger import get_logger
+from baselines.alma.memo_manager import Memo_Manager
+from baselines.alma.meta_agent_prompt import (
+    build_analysis_prompt,
+    build_generate_new_code_prompt,
+    build_reflection_prompt,
+)
+from baselines.alma.tokens import init_global_tracker
 
 log = get_logger("main")
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-LOG_DIR = PROJECT_ROOT / "evals" / "logs"
-
-RECORDER = {
-    'dynamicmem': "DynamicMemRecorder",
-}
 
 
 class MetaAgent:
@@ -42,14 +38,23 @@ class MetaAgent:
         self.execution_model = execution_model
 
     def _get_recorder_class(self):
-        from envs.dynamicmem_env import DynamicMemRecorder
+        from datasets.dynamicmem.env import DynamicMemRecorder
         return DynamicMemRecorder
 
-    def read_memo_info(self, memo_SHA: str, mode: str = 'check'):
+    def read_memo_info(
+        self,
+        memo_SHA: str,
+        mode: str = 'check',
+        n_score_bins: int = 3,
+        samples_per_bin: int = 3,
+    ):
         assert memo_SHA in self.memo_manager.memo_db
 
         source_code: str = self.memo_manager.read_source_code(memo_SHA)
-        evals = self.memo_manager.read_eval_result(memo_SHA, mode)
+        evals = self.memo_manager.read_eval_result(
+            memo_SHA, mode, status='search',
+            n_score_bins=n_score_bins, samples_per_bin=samples_per_bin,
+        )
         evals["source_code"] = source_code
         parent = self.memo_manager.memo_db[memo_SHA].get('parent')
         if parent:
@@ -63,9 +68,17 @@ class MetaAgent:
                 log.warning(f"Fail to form improve sample: {e}")
         return evals
 
-    async def analyze_memo_structure(self, memo_SHA: str):
+    async def analyze_memo_structure(
+        self,
+        memo_SHA: str,
+        n_score_bins: int = 3,
+        samples_per_bin: int = 3,
+    ):
         """Analyze current MemoStructure and return suggestions."""
-        memo_info = self.read_memo_info(memo_SHA, mode='eval')
+        memo_info = self.read_memo_info(
+            memo_SHA, mode='eval',
+            n_score_bins=n_score_bins, samples_per_bin=samples_per_bin,
+        )
         sys_msg, user_msg, output_schema = build_analysis_prompt(memo_info)
         analysis_agent = Agent(
             system_prompt=sys_msg,
@@ -104,16 +117,14 @@ class MetaAgent:
         n_score_bins: int = 3,
         samples_per_bin: int = 3,
         judge_model: str = "gpt-5-mini",
-        check_n_users: int = 3,
-        check_n_qa: int = 10,
+        check_n_users: int = 6,
+        check_n_qa: int = 3,
     ):
-        """
-        Sanity-check (gating step) for LLM-generated code: verify it runs without crashing.
-        Retries up to self.examine_trial times, using build_reflection_prompt to fix errors.
-        On success, returns (memo_SHA, code_str).
-        """
+        """Sanity-check gating: run generated code; on failure, reflect + retry."""
         memo_SHA = None
         recorder = self._get_recorder_class()
+        success = False
+        examine_log: Any = None
         for attempt in range(self.examine_trial):
             log.info(f"Start examination for round {attempt}")
             try:
@@ -148,8 +159,12 @@ class MetaAgent:
                     error_msg=examine_log,
                 )
                 reflect_fix_agent = Agent(system_prompt=sys_msg, model=self.meta_model, timeout=600)
+                # Surface the reflection LLM call — without this, the main log
+                # has a multi-minute silent gap between "Fail examination" and
+                # "Retry finished" while gpt-5 is reasoning over the fix.
+                log.info(f"Reflection started for round {attempt} (model={self.meta_model})")
                 code_str = await reflect_fix_agent.ask(user_msg)
-                log.info(f"Retry finished for round {attempt}")
+                log.info(f"Reflection finished for round {attempt}; re-examining...")
             except Exception as e:
                 log.warning(f"Reflection LLM failed for round {attempt}: {e}")
         if not success:
@@ -176,8 +191,15 @@ class MetaAgent:
             self.memo_manager.update_visit_time(memo_SHA)
 
             log.info("[blue]━━━━━━━━━━━━━━━ STRUCTURE REFLECTION ━━━━━━━━━━━━━━━[/blue]")
-            analysis_result, memo_info = await self.analyze_memo_structure(memo_SHA=memo_SHA)
-            log.info(f"[blue][FINISH STRUCTURE REFLECTION]: {analysis_result.get('suggested_changes', [{}])[0].get('what', '')[:50]}...[/blue]")
+            analysis_result, memo_info = await self.analyze_memo_structure(
+                memo_SHA=memo_SHA,
+                n_score_bins=n_score_bins,
+                samples_per_bin=samples_per_bin,
+            )
+            log.info(
+                f"[blue][FINISH STRUCTURE REFLECTION]: "
+                f"{analysis_result.get('suggested_changes', [{}])[0].get('what', '')[:50]}...[/blue]"
+            )
 
             log.info("[blue]━━━━━━━━━━━━━━━ CODE GENERATION ━━━━━━━━━━━━━━━[/blue]")
             new_code = await self.generate_new_code(
@@ -246,10 +268,10 @@ class MetaAgent:
         n_score_bins: int = 3,
         samples_per_bin: int = 3,
         judge_model: str = "gpt-5-mini",
-        check_n_users: int = 3,
-        check_n_qa: int = 10,
+        check_n_users: int = 6,
+        check_n_qa: int = 3,
     ):
-        project_root = Path(__file__).resolve().parent.parent
+        logs_root = self.memo_manager.LOGS_ROOT
 
         if self.history_ckpt_path is None:
             # Run no_mem baseline to calibrate normalized reward
@@ -271,7 +293,6 @@ class MetaAgent:
             self.memo_manager.no_memo_reward = (
                 eval_result.get('benchmark_eval_score', {}).get('benchmark_overall_eval_score', 0.0)
             )
-            # Record baseline score in memo_db for visibility (no final_score → won't be selected for evolution)
             self.memo_manager.memo_db['no_mem'] = {
                 'reward': self.memo_manager.no_memo_reward,
                 'role': 'baseline',
@@ -332,13 +353,40 @@ class MetaAgent:
         else:
             file_name = self.history_ckpt_path
 
-        semaphore = asyncio.Semaphore(max_memo_concurrent)
-        for step in range(steps):
-            with open(project_root / "logs" / file_name, "w", encoding="utf-8") as f:
+        # --- Idempotent step loop -------------------------------------------
+        # `completed_steps` is persisted in the checkpoint (as a reserved
+        # top-level key) and reflects the number of evolution steps the
+        # for-loop has actually finished. On a fresh run it starts at 0; on
+        # resume it is read from the ckpt, and `--steps N` means "target N
+        # total steps" (not "N more steps"), so re-running with the same
+        # --steps twice is a no-op instead of double-counting.
+        completed_steps = int(self.memo_manager.memo_db.get("completed_steps", 0))
+        remaining = steps - completed_steps
+
+        if remaining <= 0:
+            log.info(
+                f"Checkpoint already has completed_steps={completed_steps} ≥ "
+                f"target --steps {steps}; nothing to do. "
+                f"(Pass a larger --steps to extend the run.)"
+            )
+            # Still refresh the token_usage summary + touch the ckpt so the
+            # file reflects the most recent view.
+            self.memo_manager.memo_db['token_usage'] = tracker.summary()
+            with open(logs_root / file_name, "w", encoding="utf-8") as f:
                 json.dump(self.memo_manager.memo_db, f, ensure_ascii=False, indent=2)
-            result_path = project_root / "logs" / file_name
-            log.info(f"[LOG RESULT] Results saved to: {result_path}")
-            log.info(f"[blue]\n━━━━━━━━━━━━━━━ STEP [{step + 1}] ━━━━━━━━━━━━━━━[/blue]")
+            tracker.print_summary()
+            return
+
+        if completed_steps > 0:
+            log.info(
+                f"Resuming: {completed_steps} steps already completed per checkpoint; "
+                f"will run {remaining} more to reach target total {steps}."
+            )
+
+        semaphore = asyncio.Semaphore(max_memo_concurrent)
+        for rel_step in range(remaining):
+            absolute_step = completed_steps + rel_step + 1
+            log.info(f"[blue]\n━━━━━━━━━━━━━━━ STEP [{absolute_step}/{steps}] ━━━━━━━━━━━━━━━[/blue]")
             memo_SHA_list = self.memo_manager.select_structure()
             log.info(f"Select memos {memo_SHA_list}")
 
@@ -375,9 +423,14 @@ class MetaAgent:
 
             await asyncio.gather(*(sem_task(sha) for sha in memo_SHA_list))
 
-        self.memo_manager.memo_db['token_usage'] = tracker.summary()
-        with open(project_root / "logs" / file_name, "w", encoding="utf-8") as f:
-            json.dump(self.memo_manager.memo_db, f, ensure_ascii=False, indent=2)
-        result_path = project_root / "logs" / file_name
-        log.info(f"Results saved to: {result_path}")
+            # Persist progress AFTER the step finishes so completed_steps
+            # reflects actually-completed iterations (mid-step crash ⇒
+            # ckpt unchanged ⇒ step re-runs on resume).
+            self.memo_manager.memo_db["completed_steps"] = absolute_step
+            self.memo_manager.memo_db['token_usage'] = tracker.summary()
+            with open(logs_root / file_name, "w", encoding="utf-8") as f:
+                json.dump(self.memo_manager.memo_db, f, ensure_ascii=False, indent=2)
+            log.info(f"[LOG RESULT] Results saved to: {logs_root / file_name}")
+
+        log.info(f"Reached target --steps {steps}; done.")
         tracker.print_summary()

@@ -1,10 +1,11 @@
 import asyncio
-from typing import List, Dict, Any, Optional
 from collections import defaultdict
-from logger import get_logger
+from dataclasses import dataclass
+
+from baselines.alma.logger import get_logger
+
 log = get_logger("main")
-from dataclasses import dataclass, field
-import openai
+
 
 @dataclass
 class TokenTracker:
@@ -15,17 +16,15 @@ class TokenTracker:
             "completion_tokens": 0,
             "reasoning_tokens": 0
         })
-        
-    async def update(self, model_name: str, usage: dict):
-        """
-        Safely update token counts with a lock to prevent race conditions.
-        """
+
+    async def update(self, model_name: str, usage):
+        """Safely update token counts (no explicit lock; update is cheap and per-model)."""
         entry = self.model_usage[model_name]
 
         def get(v, key):
             if isinstance(v, dict):
-                return v.get(key, 0)
-            return getattr(v, key, 0)
+                return v.get(key, 0) or 0
+            return getattr(v, key, 0) or 0
 
         entry["total_tokens"] += get(usage, "total_tokens")
         entry["prompt_tokens"] += get(usage, "prompt_tokens")
@@ -35,23 +34,25 @@ class TokenTracker:
         if completion_details:
             reasoning_tokens = get(completion_details, "reasoning_tokens")
             entry["reasoning_tokens"] += reasoning_tokens
-    
+
     def summary(self):
         """Return a readable summary of token usage per model."""
         result = {}
         for model, stats in self.model_usage.items():
             result[model] = dict(stats)
         return result
-    
+
     def print_summary(self):
         log.info("[blue]━━━━━━━━━━━━━━━ Token Usage Summary ━━━━━━━━━━━━━━━[/blue]")
         for model, stats in self.model_usage.items():
             log.info(f"[purple]Model: {model} | Prompt Tokens: {stats['prompt_tokens']} | Completion Tokens: {stats['completion_tokens']}[/purple]")
 
+
 GLOBAL_TOKEN_TRACKER = None
 
+
 def init_global_tracker():
-    """Only called after all modules are imported"""
+    """Only called after all modules are imported."""
     global GLOBAL_TOKEN_TRACKER
     if GLOBAL_TOKEN_TRACKER is None:
         GLOBAL_TOKEN_TRACKER = TokenTracker()

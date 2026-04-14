@@ -7,7 +7,7 @@ general_retrieve: returns empty dict (no memory context for the agent).
 This establishes the zero-memory baseline reward used to calibrate normalized scores.
 """
 
-from agents.memo_structure import MemoStructure
+from baselines.alma.harness_base import MemoStructure
 
 
 class NoMemMemoStructure(MemoStructure):

@@ -1,10 +1,20 @@
 # memevol
 
-A meta-learning framework that **evolves memory structures** for AI agents. An LLM-driven loop automatically generates, evaluates, and iteratively improves Python code that defines how an agent stores and retrieves information from user app logs to answer personalization questions.
+A research framework for **evolving memory structures** for AI agents on the [DynamicMem](https://github.com/ash-ding/DynamicMem) benchmark.
 
-Built on the [DynamicMem](https://github.com/ash-ding/DynamicMem) benchmark.
+Each method generates Python code that defines how an agent stores and retrieves information from a user's app logs to answer personalization questions. An LLM judge scores each answer on a 0–10 scale; the framework iterates on the memory code to maximize judge score.
 
-## How It Works
+## Status
+
+This repository is being reorganized:
+
+- **`baselines/alma/`** — the original meta-learning loop (structured-prompt LLM proposer + softmax parent selection + sampled QA traces). Fully functional.
+- **Project root** — reserved for a new method inspired by [Meta-Harness](docs/meta%20hearness.pdf): a Claude Code SDK proposer with full filesystem access to all prior code, scores, and execution traces. Not yet implemented.
+- **`baselines/cc/`**, **`baselines/hipporag2/`** — alternative baselines (Claude Code as direct QA agent; HippoRAG2 RAG pipeline).
+
+The shared `datasets/dynamicmem/` layer (data loaders, recorder, LLM judge) is used by all of the above and has zero dependency on any specific method.
+
+## How alma works
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -12,17 +22,17 @@ Built on the [DynamicMem](https://github.com/ash-ding/DynamicMem) benchmark.
 │                                                         │
 │  1. Select parent structures (softmax + exploration)    │
 │  2. Analyze QA trajectories with LLM                    │
-│  3. Generate improved memory structure code              │
+│  3. Generate improved memory-structure code             │
 │  4. Sanity check on 3 users (retry up to 3×)            │
-│  5. Evaluate on full training split                      │
+│  5. Evaluate on full training split                     │
 │  6. Update rewards → repeat                             │
 └─────────────────────────────────────────────────────────┘
 ```
 
 Each generated memory structure implements a **two-phase protocol** that runs independently per user:
 
-- **Phase 1 — `general_update(recorder)`**: Ingest app logs and build a memory representation (vector DB, knowledge graph, structured profile, etc.)
-- **Phase 2 — `general_retrieve(recorder)`**: Given a question, retrieve relevant information from memory. The retrieved context is passed to a QA agent, whose answer is scored by an LLM judge (0–10).
+- **Phase 1 — `general_update(recorder)`**: ingest app logs and build a memory representation (vector DB, knowledge graph, structured profile, etc.).
+- **Phase 2 — `general_retrieve(recorder)`**: given a question, retrieve relevant information. The retrieved context is passed to a QA agent whose answer is scored by the LLM judge.
 
 The meta-agent observes which structures score well, analyzes failure patterns, and generates improved code — an evolutionary search over program space.
 
@@ -31,165 +41,77 @@ The meta-agent observes which structures score well, analyzes failure patterns, 
 **Requirements**: Python 3.12+, an OpenAI API key.
 
 ```bash
-# Clone
 git clone https://github.com/ash-ding/memevol.git
 cd memevol
 
-# Create virtual environment and install dependencies
-python -m venv venv
-source venv/bin/activate
+# The alma baseline uses its own venv under baselines/venv/.
+# (A future Meta-Harness method may use a separate environment — hence per-baseline venvs.)
+python -m venv baselines/venv
+source baselines/venv/bin/activate
 pip install -r requirements.txt
 
-# Configure API key
 cp .env.example .env
 # Edit .env and add your OPENAI_API_KEY
 ```
 
-**Data**: Place the DynamicMem dataset under `dynamicmem/` with the following structure:
+**Data**: place the DynamicMem dataset under `datasets/dynamicmem/`:
 ```
-dynamicmem/
+datasets/dynamicmem/
 ├── user_data/
 │   ├── 001_user_001/
 │   │   ├── app_log_large.json
 │   │   └── user_basic_profile.json
-│   ├── 002_user_002/
-│   │   └── ...
-│   └── ...  (users 001–010)
+│   └── ...
 └── user_qa/
     ├── 001.json
-    ├── 002.json
     └── ...
 ```
 
-## Quick Start
+(Override the default location with the `DYNAMICMEM_DATA` environment variable
+if you want to keep the data elsewhere.)
+
+## Quick start (alma baseline)
+
+All commands run from the **project root**.
 
 ```bash
 # Smoke test — 2 users, 2 steps, 10 QA per user
-python run_main.py \
-    --status train \
-    --eval_n_users 2 \
-    --eval_n_qa 10 \
+python baselines/alma/run_main.py \
+    --status search \
+    --eval_n_users 2 --eval_n_qa 10 \
     --steps 2
 
 # Full training — 6 users, 10 steps, 20 QA per user
-python run_main.py \
-    --status train \
-    --eval_n_users 6 \
-    --eval_n_qa 20 \
+python baselines/alma/run_main.py \
+    --status search \
+    --eval_n_users 6 --eval_n_qa 20 \
     --steps 10
 
 # Evaluate a learned structure on held-out users (007–010)
-python run_main.py \
-    --status eval \
-    --memo_SHA <SHA>
+python baselines/alma/run_main.py --status test --memo_SHA <SHA>
 
 # Evaluate the no-memory baseline
-python run_main.py \
-    --status eval \
-    --memo_SHA no_mem
+python baselines/alma/run_main.py --status test --memo_SHA no_mem
 ```
 
-See `training.sh` and `evaluation.sh` for more examples.
+See [`baselines/alma/search.sh`](baselines/alma/search.sh) for meta-learning
+examples, [`baselines/alma/test.sh`](baselines/alma/test.sh) for held-out
+evaluation examples, and [`baselines/alma/README.md`](baselines/alma/README.md)
+for details on alma's directory layout and output locations.
 
-## CLI Reference
+## Output locations (alma)
 
-`run_main.py` is the sole entry point. All arguments:
+- **Checkpoints** (meta-learning state): `baselines/alma/logs/*.json`
+- **Eval products** per run (scores + full traces + memory dumps):
+  `baselines/alma/results/dynamicmem/<SHA>_<status>_<mode>/`
+- **Generated memo code**: `baselines/alma/memo_archive/dynamicmem/memo_structure_<SHA>.py` (gitignored)
 
-### Mode & Data Split
+## Shared utilities
 
-| Argument | Default | Description |
-|---|---|---|
-| `--status` | `train` | `train` — run evolution loop on users 001–006; `eval` — evaluate a single structure on held-out users 007–010 |
-| `--eval_n_users` | `6` | Number of train users per evaluation round (max 6) |
-| `--memo_SHA` | — | SHA of a memo structure to evaluate (required for `--status eval`) |
-| `--history_ckpt_path` | — | Checkpoint JSON in `logs/` to resume training from |
+- **`datasets/dynamicmem/env.py`** — dataset loaders, `DynamicMemRecorder`, LLM judge. No method-layer dependencies.
+- **`datasets/dynamicmem/prompts.py`** — QA agent prompt.
 
-### Models
-
-| Argument | Default | Description |
-|---|---|---|
-| `--meta_model` | `gpt-5` | LLM for meta-agent (analysis, code generation, error reflection) |
-| `--execution_model` | `gpt-5-mini` | LLM for the downstream QA agent; supports `model/reasoning_effort` format |
-| `--judge_model` | `gpt-5-mini` | LLM judge for scoring answers (0–10) |
-
-### Update Strategy
-
-Controls how app logs are batched for `general_update()` in Phase 1.
-
-| Argument | Default | Description |
-|---|---|---|
-| `--update_type` | `all_at_once` | `all_at_once` — one call with all logs; `chunked` — split into N chunks; `sequential` — one call per log entry |
-| `--n_chunks` | `5` | Number of chunks (only for `chunked` mode) |
-| `--max_logs` | all | Max log entries to keep, truncates oldest (only for `all_at_once` mode) |
-
-### Evaluation & Sampling
-
-| Argument | Default | Description |
-|---|---|---|
-| `--eval_n_qa` | all | QA pairs per user; set to e.g. `20` during training to control cost |
-| `--steps` | `10` | Number of meta-learning iterations |
-| `--max_container_concurrent` | `5` | Parallel memo evaluations in the meta-loop |
-| `--max_concurrent` | `5` | Parallel users within one evaluation subprocess |
-| `--n_score_bins` | `3` | Equal-width bins over 0–10 score range for trajectory sampling |
-| `--samples_per_bin` | `3` | Max sampled trajectories per bin fed to meta-agent analysis |
-| `--result_dir` | `check` | Prefix for checkpoint filenames in `logs/` |
-
-## Project Structure
-
-```
-memevol/
-├── run_main.py                 # Sole CLI entry point
-├── eval_runner.py              # Spawns evaluation subprocesses
-├── core/
-│   ├── meta_agent.py           # MetaAgent: evolution loop orchestrator
-│   ├── memo_manager.py         # Memo lifecycle, reward tracking, selection
-│   └── meta_agent_prompt.py    # LLM prompts for analysis/generation/reflection
-├── evals/
-│   ├── launch.py               # Subprocess entry point for evaluation
-│   ├── agents/
-│   │   ├── memo_structure.py   # Abstract base: MemoStructure, Sub_memo_layer
-│   │   └── base.py             # TokenTracker for API usage monitoring
-│   ├── workflows/
-│   │   └── dynamicmem_workflow.py  # Two-phase per-user execution
-│   └── utils/
-│       └── hire_agent.py       # Agent (Chat API) & Embedding wrappers
-├── envs/
-│   ├── dynamicmem_env.py       # Recorder, data loaders, LLM judge
-│   └── prompts/
-│       └── dynamicmem_prompt.py
-├── memo_archive/
-│   ├── baseline/               # No-memory baseline
-│   └── dynamicmem/             # Generated structures (memo_structure_<SHA>.py)
-├── dynamicmem/                 # Dataset (not in git)
-│   ├── user_data/              # App logs & profiles per user
-│   └── user_qa/                # QA pairs per user
-├── logs/                       # Checkpoints & results (auto-created)
-├── training.sh                 # Training command examples
-├── evaluation.sh               # Evaluation command examples
-├── requirements.txt
-└── .env.example
-```
-
-## How Memory Structures Are Evolved
-
-Each generated memory structure is a Python file containing:
-
-1. One or more **`Sub_memo_layer`** subclasses — each owns a database (Chroma vector store, NetworkX graph, dict, etc.) and implements `update()` / `retrieve()`.
-2. A **`MemoStructure`** subclass that orchestrates the layers in `general_update()` and `general_retrieve()`.
-
-Available tools for generated code:
-- **Chroma** — vector similarity search
-- **NetworkX** — knowledge graphs
-- **Agent** — async LLM calls with JSON schema validation
-- **Embedding** — text embeddings with cosine similarity
-
-The meta-agent selects parent structures via softmax over:
-
-```
-final_score = sigmoid(reward - baseline) - α · log(1 + visit_count)
-```
-
-This balances exploitation (high-reward structures) with exploration (less-visited ones).
+Every method and baseline imports from `datasets.dynamicmem.env`; nothing imports from any method package into this layer.
 
 ## License
 

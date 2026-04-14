@@ -1,8 +1,9 @@
 import json
-from typing import Any, Dict, List
 from dataclasses import fields
 from pathlib import Path
-from evals.eval_envs.base_envs import Basic_Recorder
+from typing import Any, Dict
+
+from datasets.dynamicmem.env import Basic_Recorder
 
 TASK_DESCRIPTION = {
     'dynamicmem': """The evaluation of downstream agent system is based on DynamicMem:
@@ -121,7 +122,7 @@ Class: Agent
 
 - Purpose: Asynchronous wrapper around OpenAI Chat API, allows system/user prompts and optional JSON schema validation. Higher insights: this could be used to summarise information or gain new insights from them.
 - Initialization:
-    from utils.hire_agent import Agent
+    from baselines.alma.llm import Agent
     agent = Agent(model: str, system_prompt: str, output_schema: Optional[Dict] = None)
 - Key Methods:
     - agent.get_agent_config() -> Dict: Returns agent configuration and chat history.
@@ -152,7 +153,7 @@ Class: Embedding
 
 - Purpose: Async embedding manager for computing single or batch embeddings, with optional similarity calculation.
 - Initialization:
-    from utils.hire_agent import Embedding
+    from baselines.alma.llm import Embedding
     embedder = Embedding(model: str = "text-embedding-3-small", retries: int  = 3, retry_delay: float = 1.0)
 - Key Methods:
     - await embedder.get_embedding(text: str) -> List[float]:
@@ -178,7 +179,7 @@ def build_analysis_prompt(memo_info):
         },
         "trajectory_score_assessment": {
             "type": "array",
-            "description": "Per-QA gap analysis for each sampled example. Compare relevant_app_logs (ground truth) against retrieved_memory (what memory returned) to diagnose failures.",
+            "description": "Per-QA gap analysis for each sampled QA example (ONLY entries with the standard QA shape; entries whose 'error_info' key is set belong to 'execution_errors' instead). Compare relevant_app_logs (ground truth) against retrieved_memory (what memory returned) to diagnose failures.",
             "items": {
                 "type": "object",
                 "properties": {
@@ -196,19 +197,41 @@ def build_analysis_prompt(memo_info):
                     },
                     "gap_diagnosis": {
                         "type": "string",
-                        "description": "What key information exists in relevant_app_logs but is missing, incomplete, or wrong in retrieved_memory. For high-score examples, note what the memory got right."
-                    },
-                    "failure_phase": {
-                        "type": "string",
-                        "enum": ["Phase1_Storage", "Phase2_Retrieval", "Both", "N/A"],
-                        "description": "Root cause: Phase1_Storage = info was never extracted/stored from app_logs during general_update; Phase2_Retrieval = info was stored but general_retrieve failed to surface it; Both = partial storage + partial retrieval failure; N/A = for high-score examples."
+                        "description": "What key information exists in relevant_app_logs but is missing, incomplete, or wrong in retrieved_memory. For high-score examples, note what the memory got right. Do NOT attempt to attribute the gap to Phase 1 vs Phase 2 — you cannot see the full memory database, so that call is a guess."
                     },
                     "judge_insight": {
                         "type": "string",
                         "description": "What judge_reason reveals about which specific key points were missed or incorrect in the predicted answer."
                     }
                 },
-                "required": ["user_id", "query", "score", "gap_diagnosis", "failure_phase", "judge_insight"]
+                "required": ["user_id", "query", "score", "gap_diagnosis", "judge_insight"]
+            }
+        },
+        "execution_errors": {
+            "type": "array",
+            "description": "One entry per 'error_info' example in the examples list (may be empty). These are runtime crashes in the generated code — handle them separately from QA gap analysis.",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "user_id": {
+                        "type": "string",
+                        "description": "User id extracted from the error_info prefix 'User <uid> (partially )failed:'. Use 'unknown' if not present."
+                    },
+                    "phase": {
+                        "type": "string",
+                        "enum": ["Phase1_Update", "Phase2_Retrieve", "Unknown"],
+                        "description": "Read directly from the '[Phase1_Update]' or '[Phase2_Retrieve]' tag embedded in error_info. Use 'Unknown' if no tag is present."
+                    },
+                    "error_summary": {
+                        "type": "string",
+                        "description": "Short summary of the exception class and message (e.g. 'KeyError on metadata[\\\"domain\\\"] during update')."
+                    },
+                    "likely_root_cause": {
+                        "type": "string",
+                        "description": "Your best hypothesis about which part of the generated code is buggy, based on the exception and the source_code. Be concrete — name the method and the offending line pattern."
+                    }
+                },
+                "required": ["user_id", "phase", "error_summary", "likely_root_cause"]
             }
         },
         "content_quality_issues": {
@@ -264,9 +287,10 @@ def build_analysis_prompt(memo_info):
           NOTE: the downstream QA agent only sees the returned Dict and the question — it does NOT
           have access to app_logs directly.
 
-2. **examples**
-    - Each example is one sampled QA pair, containing:
-        - `user_id`: which user this QA pair belongs to (e.g. "user_001"). Examples are sampled per-user to preserve user-level patterns.
+2. **examples** — a mixed list of TWO shapes; inspect the keys on each entry to decide which shape you are looking at.
+
+    **Shape A — sampled QA pair (the usual case):**
+        - `user_id`: which user this QA pair belongs to (e.g. "user_001"). Examples are sampled from one randomly-chosen valid user, binned by judge score.
         - `query`: the natural-language question asked
         - `retrieved_memory`: the dict returned by `general_retrieve` for this question
         - `predicted`: the agent's answer
@@ -278,11 +302,17 @@ def build_analysis_prompt(memo_info):
             - 9–10: Fully covers all key points from the reference accurately. No factual errors or contradictions. (Extra details beyond the reference are acceptable.)
         - `judge_reason`: the LLM judge's brief explanation of why it gave that score — highlights which key points were hit or missed
         - `relevant_app_logs`: the specific app log entries that contain the ground-truth evidence for this question
-    - Examples are sampled per-user across score bins. Analyze failure patterns both globally and per-user —
-      some failures may be user-specific (e.g. a user with unusual data patterns) while others are systematic.
-      Compare `relevant_app_logs` against `retrieved_memory` to identify what the memory should have stored but didn't.
-      Use `judge_reason` to understand exactly which key points were missing or incorrect.
-    - High-score examples are provided as contrast — they show what the memory does well; avoid breaking these.
+
+    Analyze failure patterns both globally and per-user — some failures may be user-specific (e.g. a user with unusual data patterns) while others are systematic. Compare `relevant_app_logs` against `retrieved_memory` to identify what the memory should have stored but didn't. Use `judge_reason` to understand exactly which key points were missing or incorrect. High-score examples are provided as contrast — they show what the memory does well; avoid breaking these.
+
+    **Shape B — execution error record (appears when the generated code crashed on some users):**
+        - `error_info`: a string of the form
+             `"User <uid> failed: <repr(exception)>"`  (Phase 1 total failure — user produced no QA at all), or
+             `"User <uid> partially failed: [Phase2_Retrieve] <ExcName>: <msg> (at QA N/M, query: ...)"`  (Phase 2 crashed mid-way — some QAs completed before the crash)
+           The `[Phase1_Update]` or `[Phase2_Retrieve]` tag tells you which phase crashed. Extract `user_id` from the "User <uid>" prefix.
+        - `score`: always 0.0 (placeholder; **do not** treat this as a judge score).
+
+    An error_info entry signals a runtime crash in the generated code, not a low-quality answer. Route it to `execution_errors` in your output, NOT to `trajectory_score_assessment`. All execution errors are included (at most one per user), so if you see an error_info entry for every user the generated code is broadly broken and crash-fix is the highest priority; if only one or two users show up, the bug is user-data-specific.
 
 3. **benchmark_eval_score**
     - Mean QA score (0–10) across all users and questions. Use this to identify structural bottlenecks.
@@ -295,17 +325,28 @@ Step 1 — Learn from past suggestions
     2. Explain why that suggestion led to improvement or degradation.
     3. Extract 2–5 general principles and 2–5 pitfalls.
 
-Step 2 — Inspect QA trajectories and diagnose failures
-    For each sampled example, perform a gap analysis:
+Step 2a — Inspect QA trajectories and diagnose gaps (Shape A entries only)
+    For each sampled QA example, perform a gap analysis:
     1. Read `judge_reason` to understand which key points the answer missed or got wrong.
     2. Compare `relevant_app_logs` (ground-truth evidence) against `retrieved_memory` (what memory returned):
-        - What facts are in the logs but absent from retrieved memory? (→ gap_diagnosis)
-        - Is this because the info was never stored in Phase 1 (Phase1_Storage), or stored but not
-          retrieved in Phase 2 (Phase2_Retrieval)? (→ failure_phase)
-    3. For high-score examples, note what the memory did well to avoid breaking it (failure_phase = N/A).
+       list the facts that are in the logs but absent from retrieved memory (→ gap_diagnosis).
+    3. For high-score examples, note what the memory did well so you can avoid breaking it.
+    Do NOT try to attribute a gap to Phase 1 vs Phase 2 — you cannot see the full memory database after
+    Phase 1, so any attribution is a guess. Focus on WHAT is missing, not WHERE in the pipeline it got lost.
+
+Step 2b — Record runtime crashes (Shape B entries only)
+    For each error_info entry in the examples list, populate one `execution_errors` item:
+    - Extract the user id from the "User <uid>" prefix.
+    - Read the `[Phase1_Update]` or `[Phase2_Retrieve]` tag to fill `phase`.
+    - Summarise the exception (class + message) in `error_summary`.
+    - Cross-reference the exception with source_code to propose a `likely_root_cause` that names the
+      specific method / offending pattern.
 
 Step 3 — Inspect memory source and produce concrete suggestions
-    1. Using Step 1 principles and Step 2 gap diagnoses, propose specific code-level changes.
+    1. Using Step 1 principles, Step 2a gap diagnoses, and Step 2b root-cause hypotheses, propose
+       specific code-level changes.
+    2. If `execution_errors` is non-empty, crash fixes take priority over ergonomic changes — a
+       memo that crashes on any user is worse than one that scores poorly.
     2. For each suggestion: what to change, why it will help, priority (High/Medium/Low).
     3. Link to benchmark performance: which structural weaknesses correlate with low QA accuracy?
 
@@ -343,22 +384,30 @@ def get_metadata_dict(instance) -> dict:
     return meta_dict
 
 
+def _read_harness_base() -> str:
+    """The backbone code shown to the LLM — kept at baselines/alma/harness_base.py."""
+    path = Path(__file__).parent / "harness_base.py"
+    if not path.exists():
+        raise FileNotFoundError(f"Cannot find harness_base.py at {path.resolve()}")
+    return path.read_text(encoding="utf-8")
+
+
 def build_generate_new_code_prompt(
     memo_info: Dict[str, Any],
     analysis_result: Dict[str, Any],
     recorder: Basic_Recorder,
 ):
-    base_dir = Path(__file__).parent.parent / "evals" / "agents"
-    file_path = base_dir / "memo_structure.py"
-    if not file_path.exists():
-        raise FileNotFoundError(f"Cannot find memo_structure.py at {file_path.resolve()}")
-    basic_classes = file_path.read_text(encoding="utf-8")
+    basic_classes = _read_harness_base()
 
     interaction_recorder_info = get_metadata_dict(recorder)
-    if analysis_result:
+    # Guard against analysis LLM returning an error dict ({"error": ..., "raw_output": ...})
+    # when its JSON output fails to parse / validate. Use .get() with defaults so code-gen
+    # still runs on source_code alone instead of crashing with KeyError.
+    if isinstance(analysis_result, dict) and 'suggested_changes' in analysis_result:
         suggestion = {
-            'trajectory_score_assessment': analysis_result['trajectory_score_assessment'],
-            'suggested_changes': analysis_result['suggested_changes'],
+            'trajectory_score_assessment': analysis_result.get('trajectory_score_assessment', []),
+            'execution_errors': analysis_result.get('execution_errors', []),
+            'suggested_changes': analysis_result.get('suggested_changes', []),
         }
     else:
         suggestion = {}
@@ -402,9 +451,9 @@ You are given the following two base classes:
 
 Inherit these base classes and import as follows:
 ```python
-from agents.memo_structure import Sub_memo_layer, MemoStructure
-from eval_envs.base_envs import Basic_Recorder
-from utils.hire_agent import Agent, Embedding
+from baselines.alma.harness_base import Sub_memo_layer, MemoStructure
+from datasets.dynamicmem.env import Basic_Recorder
+from baselines.alma.llm import Agent, Embedding
 from langchain_chroma import Chroma
 ```
 
@@ -504,12 +553,8 @@ and retrieves the right facts for any personalisation question.
     return system_prompt, user_prompt
 
 
-def build_reflection_prompt(code_str: str, recorder: Basic_Recorder, error_msg: str):
-    base_dir = Path(__file__).parent.parent / "evals/agents"
-    file_path = base_dir / "memo_structure.py"
-    if not file_path.exists():
-        raise FileNotFoundError(f"Cannot find memo_structure.py at {file_path.resolve()}")
-    basic_classes = file_path.read_text(encoding="utf-8")
+def build_reflection_prompt(code_str: str, recorder: Basic_Recorder, error_msg):
+    basic_classes = _read_harness_base()
 
     interaction_recorder_info = get_metadata_dict(recorder)
     interaction_prompt = f"""

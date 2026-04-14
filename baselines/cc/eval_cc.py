@@ -32,9 +32,8 @@ import numpy as np
 # Add project root to sys.path for imports
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
-sys.path.insert(0, str(PROJECT_ROOT / "evals"))
 
-from envs.dynamicmem_env import get_task_list, load_user_data, judge_answer
+from datasets.dynamicmem.env import get_task_list, load_user_data, judge_answer
 from claude_code_sdk import query, ClaudeCodeOptions, AssistantMessage, ResultMessage, UserMessage, TextBlock, ToolUseBlock, ToolResultBlock, SystemMessage
 from claude_code_sdk._errors import MessageParseError
 

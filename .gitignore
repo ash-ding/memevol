@@ -7,19 +7,8 @@ __pycache__/
 *.pyo
 
 # Data (too large for git)
-dynamicmem/user_data/
-dynamicmem/user_qa/
-
-# Runtime artifacts
-logs/*
-!logs/.gitkeep
-evals/logs/*
-!evals/logs/.gitkeep
-evals/memo_test/memo_test.py
-
-# Evolved memo structures (generated at runtime)
-memo_archive/dynamicmem/*
-!memo_archive/dynamicmem/.gitkeep
+datasets/dynamicmem/user_data/
+datasets/dynamicmem/user_qa/
 
 # Environment secrets
 .env
@@ -30,7 +19,22 @@ docs/
 # Claude Code local settings
 .claude/
 
-# Baseline runtime artifacts (regenerated on each run)
+# --- alma baseline runtime artifacts ---
+# Checkpoints, rotating log files, archived eval logs
+baselines/alma/logs/*
+!baselines/alma/logs/.gitkeep
+
+# Generated (LLM-written) memo code is not checked in
+baselines/alma/memo_archive/dynamicmem/*
+!baselines/alma/memo_archive/dynamicmem/.gitkeep
+
+# Runtime staging for the eval subprocess (per-SHA to avoid concurrent-run races)
+baselines/alma/memo_test/memo_test_*.py
+
+# Per-run eval outputs (score.json + traces + memory dumps)
+baselines/alma/results/
+
+# --- Other baselines' runtime artifacts ---
 baselines/*/outputs/
 baselines/*/logs/
 baselines/*/results/*_dryrun.json
