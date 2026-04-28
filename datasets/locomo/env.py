@@ -58,14 +58,14 @@ class LoCoMoRecorder(Basic_Recorder):
         'query': str,
         'predicted': str,
         'reference': str,
-        'score': int,           # 0–10 (LLM judge)
+        'score': int,           # 0/1 (LoCoMo paper-aligned binary judge)
         'judge_reason': str,
         'qa_metadata': {'category': int, 'evidence': List[str]},
         'retrieved_memory': Dict,
         'relevant_turns': List[Dict],   # turns the QA's evidence (dia_ids) points to
       }
 
-    reward: mean(steps[i].score), in [0, 10].
+    reward: mean(steps[i].score), in [0, 1].
     """
 
     init: Dict[str, Any] = field(default_factory=dict)

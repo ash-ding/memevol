@@ -569,7 +569,7 @@ class BaseWorkflow(ABC):
         scores = [s["score"] for s in recorder.steps]
         avg = sum(scores) / len(scores) if scores else 0.0
         await recorder.set_reward(avg)
-        log.info(f"[Phase 2] User {user_tag} QA complete: reward={avg:.2f}/10 ({len(scores)} QA, {t2_elapsed:.1f}s)")
+        log.info(f"[Phase 2] User {user_tag} QA complete: reward={avg:.2f}/{self.judge_score_max} ({len(scores)} QA, {t2_elapsed:.1f}s)")
         return recorder
 
     # ---- Phase 1 dispatch ----
