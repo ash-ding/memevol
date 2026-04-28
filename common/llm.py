@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from scipy.spatial.distance import cosine
 
-from baselines.alma.logger import get_logger
+from common.logger import get_logger
 
 log = get_logger("main")
 load_dotenv()
@@ -37,10 +37,12 @@ class Agent:
         output_schema: Optional[Dict] = None,
         model: Optional[str] = 'gpt-4.1',
         timeout: float = 300.0,
+        max_retries: int = 5,
     ):
         self.model = model
         self.messages: List[Dict] = [{'role': 'system', 'content': system_prompt + (f"""ONLY output a valid JSON object conforming to the schema. The json schema is given below: {json.dumps(output_schema, ensure_ascii=False, indent=1)}""" if output_schema else "")}]
         self.output_schema = output_schema or None
+        self.max_retries = max_retries
         api_key = os.getenv("OPENAI_API_KEY")
         self.client = AsyncOpenAI(
             api_key=api_key,
@@ -83,22 +85,21 @@ class Agent:
         # (gpt-4*, non-reasoning OpenAI endpoints reject the field with a 400).
         if reasoning_effort and _supports_reasoning(self.model or ""):
             kwargs['reasoning_effort'] = reasoning_effort
-        max_app_retries = 5
-        for app_attempt in range(max_app_retries + 1):
+        for app_attempt in range(self.max_retries + 1):
             try:
                 resp = await self.client.chat.completions.create(**kwargs)
                 break
             except (openai.APITimeoutError, openai.APIConnectionError, openai.InternalServerError) as e:
-                if app_attempt == max_app_retries:
+                if app_attempt == self.max_retries:
                     raise
                 delay = 2 ** (app_attempt + 1)
-                log.warning(f"[Agent] Retryable error (attempt {app_attempt+1}/{max_app_retries}): {e}, retrying in {delay}s")
+                log.warning(f"[Agent] Retryable error (attempt {app_attempt+1}/{self.max_retries}): {e}, retrying in {delay}s")
                 await asyncio.sleep(delay)
             except Exception as e:
                 print(e)
                 raise
 
-        from baselines.alma.tokens import GLOBAL_TOKEN_TRACKER
+        from common.tokens import GLOBAL_TOKEN_TRACKER
         if GLOBAL_TOKEN_TRACKER is not None and hasattr(resp, "usage"):
             await GLOBAL_TOKEN_TRACKER.update(model_name=self.model, usage=resp.usage)
 
@@ -169,7 +170,7 @@ class Embedding:
             try:
                 resp = await self.client.embeddings.create(model=self.model, input=text)
 
-                from baselines.alma.tokens import GLOBAL_TOKEN_TRACKER
+                from common.tokens import GLOBAL_TOKEN_TRACKER
                 if GLOBAL_TOKEN_TRACKER is not None and hasattr(resp, "usage"):
                     await GLOBAL_TOKEN_TRACKER.update(model_name=self.model, usage=resp.usage)
 
@@ -194,7 +195,7 @@ class Embedding:
                 try:
                     resp = await self.client.embeddings.create(model=self.model, input=chunk)
 
-                    from baselines.alma.tokens import GLOBAL_TOKEN_TRACKER
+                    from common.tokens import GLOBAL_TOKEN_TRACKER
                     if GLOBAL_TOKEN_TRACKER is not None and hasattr(resp, "usage"):
                         await GLOBAL_TOKEN_TRACKER.update(model_name=self.model, usage=resp.usage)
 

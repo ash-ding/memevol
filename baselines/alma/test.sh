@@ -55,4 +55,4 @@ python baselines/alma/run_main.py \
     --status test \
     --memo_SHA no_mem \
     --eval_n_qa 3 \
-    --max_user_concurrent 1
+    --max_sample_concurrent 1

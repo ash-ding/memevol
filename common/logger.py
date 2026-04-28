@@ -1,5 +1,18 @@
+"""Shared logger used by alma-style code.
+
+Log directory resolution (lazy — happens inside `get_logger`, not at import):
+  1. `EVALS_LOG_DIR` env var if set (forge sets this to the per-eval out_dir
+     via the Singularity --env binding; alma's run_main.py sets it to
+     `baselines/alma/logs/`). Inside containers, `/out` is bound R/W.
+  2. `<project_root>/baselines/alma/logs/` IF that directory is reachable and
+     writable (host-side use; on stripped-bind containers it isn't).
+  3. `tempfile.gettempdir() / "memevol_logs"` — always works on any container.
+
+Importing `common.logger` has no filesystem side effects.
+"""
 import logging
 import os
+import tempfile
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 try:
@@ -9,8 +22,21 @@ try:
 except ImportError:
     USE_RICH = False
 
-LOG_DIR = Path(os.environ.get("EVALS_LOG_DIR", "./logs"))
-LOG_DIR.mkdir(parents=True, exist_ok=True)
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent
+_HOST_DEFAULT_LOG_DIR = _PROJECT_ROOT / "baselines" / "alma" / "logs"
+
+
+def _resolve_log_dir() -> Path:
+    """Pick a writable log dir lazily. See module docstring for the chain."""
+    env_dir = os.environ.get("EVALS_LOG_DIR")
+    if env_dir:
+        return Path(env_dir)
+    # Host-side: alma path is conventional and parent exists.
+    if _HOST_DEFAULT_LOG_DIR.parent.is_dir() and os.access(_HOST_DEFAULT_LOG_DIR.parent, os.W_OK):
+        return _HOST_DEFAULT_LOG_DIR
+    # Container-side fallback: /tmp is always writable.
+    return Path(tempfile.gettempdir()) / "memevol_logs"
+
 
 # Allow per-run log file via environment variable (e.g. "train_all_at_once.log")
 _DEFAULT_LOG_FILE = os.environ.get("MEMEVOL_LOG_FILE", ".log")
@@ -66,7 +92,9 @@ def get_logger(name="", level=logging.INFO, log_file=None, level_styles=None):
             ))
             logger.addHandler(console_handler)
 
-        file_handler = RotatingFileHandler(LOG_DIR / log_file, maxBytes=5*1024*1024, backupCount=3, encoding="utf-8")
+        log_dir = _resolve_log_dir()
+        log_dir.mkdir(parents=True, exist_ok=True)
+        file_handler = RotatingFileHandler(log_dir / log_file, maxBytes=5*1024*1024, backupCount=3, encoding="utf-8")
         file_handler.setFormatter(logging.Formatter(
             "[%(asctime)s] [%(levelname)s] %(name)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
         ))

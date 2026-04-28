@@ -42,7 +42,8 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from datasets.dynamicmem.env import get_task_list, load_user_data, judge_answer
+from common.judge import Judge
+from datasets.dynamicmem.env import get_task_list, load_user_data
 from hipporag import HippoRAG
 from hipporag.utils.config_utils import BaseConfig
 
@@ -130,7 +131,7 @@ async def evaluate(
     embedding_short = embedding_model.replace("/", "_").replace("nvidia_", "")
     _init_file_logger(embedding_short, dry_run)
 
-    task_list = get_task_list(status="test", eval_n_users=4)
+    task_list = get_task_list(status="test", eval_n_samples=4)
 
     log.info(f"\n{'='*60}")
     log.info(f"HippoRAG2 Baseline Evaluation")
@@ -190,6 +191,8 @@ async def evaluate(
         log.info(f"  Phase 2: Answering {len(qa_pairs)} questions...")
         user_scores = []
 
+        judge = Judge(model=judge_model)
+
         for i, qa in enumerate(qa_pairs):
             t0 = time.time()
 
@@ -206,8 +209,8 @@ async def evaluate(
                 retrieved_docs = []
 
             # Judge with same judge as meta-learning
-            score, reason = await judge_answer(
-                qa["query"], answer, qa.get("reference", ""), judge_model
+            score, reason = await judge.score(
+                qa["query"], answer, qa.get("reference", "")
             )
 
             elapsed = time.time() - t0

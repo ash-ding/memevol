@@ -13,13 +13,13 @@ Run from the **project root**:
 # Smoke test — 2 users, 2 steps, 10 QA per user
 python baselines/alma/run_main.py \
     --status search \
-    --eval_n_users 2 --eval_n_qa 10 \
+    --eval_n_samples 2 --eval_n_qa 10 \
     --steps 2
 
 # Full training — 6 users, 10 steps, 20 QA per user
 python baselines/alma/run_main.py \
     --status search \
-    --eval_n_users 6 --eval_n_qa 20 \
+    --eval_n_samples 6 --eval_n_qa 20 \
     --steps 10
 
 # Evaluate a saved memo on held-out users (007–010)

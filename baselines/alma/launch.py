@@ -3,7 +3,7 @@ Alma subprocess entry point.
 
 Invoked by baselines/alma/eval_runner.py. Steps:
   1. Dynamically load the MemoStructure subclass from the staged memo file.
-  2. Run DynamicMem_Workflow across all users.
+  2. Run DynamicMemWorkflow across all users.
   3. Write score.json, full traces (per-user), memory dumps, and token usage
      to the caller-supplied output_run_dir.
 
@@ -37,11 +37,11 @@ _project_root = Path(__file__).resolve().parents[2]
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
-from baselines.alma.harness_base import MemoStructure
-from baselines.alma.workflow import DynamicMem_Workflow
-from baselines.alma.tokens import init_global_tracker
-from baselines.alma.logger import get_logger
-from datasets.dynamicmem.env import get_task_list, set_token_tracker
+from common.harness_base import MemoStructure
+from datasets.dynamicmem.workflow import DynamicMemWorkflow
+from common.tokens import init_global_tracker
+from common.logger import get_logger
+from datasets.dynamicmem.env import get_task_list
 
 log = get_logger("main", level_styles={
     "INFO": {"icon": "🚀", "color": "green"},
@@ -128,13 +128,13 @@ async def main(
     n_chunks: int = 5,
     max_logs: Optional[int] = None,
     model: str = "gpt-5-mini",
-    eval_n_users: int = 6,
+    eval_n_samples: int = 6,
     status: str = "search",
     eval_n_qa: Optional[int] = None,
-    max_user_concurrent: int = 6,
+    max_sample_concurrent: int = 6,
     mode: str = "eval",
     judge_model: str = "gpt-5-mini",
-    check_n_users: int = 6,
+    check_n_samples: int = 6,
     check_n_qa: int = 3,
 ):
     run_dir = Path(output_run_dir)
@@ -151,16 +151,15 @@ async def main(
 
     log.info(f"Start evaluation for Memory Structure: {memory_id} → {run_dir}")
 
-    # 2. Init token tracker and wire it into the dataset-layer judge
+    # 2. Init token tracker (Judge picks it up via GLOBAL_TOKEN_TRACKER)
     tracker = init_global_tracker()
-    set_token_tracker(tracker)
 
     # 3. Get task list
-    task_list = get_task_list(status=status, eval_n_users=int(eval_n_users))
+    task_list = get_task_list(status=status, eval_n_samples=int(eval_n_samples))
     log.info(f"Task list ({status}, size={len(task_list)}): {[t[-15:] for t in task_list]}")
 
     # 4. Build workflow and run
-    workflow = DynamicMem_Workflow(
+    workflow = DynamicMemWorkflow(
         memo_class=memo_class,
         model=model,
         update_type=update_type,
@@ -176,8 +175,8 @@ async def main(
     records, record_len = await workflow.run_all_users(
         task_list=task_list,
         mode=mode,
-        max_user_concurrent=max_user_concurrent,
-        check_n_users=check_n_users,
+        max_sample_concurrent=max_sample_concurrent,
+        check_n_samples=check_n_samples,
         check_n_qa=check_n_qa,
     )
 
@@ -216,13 +215,13 @@ if __name__ == "__main__":
     parser.add_argument("--n_chunks", type=int, default=5)
     parser.add_argument("--max_logs", type=int, default=None)
     parser.add_argument("--model", default="gpt-5-mini")
-    parser.add_argument("--eval_n_users", type=int, default=6)
+    parser.add_argument("--eval_n_samples", type=int, default=6)
     parser.add_argument("--status", default="search", choices=["search", "test"])
     parser.add_argument("--eval_n_qa", type=int, default=None)
-    parser.add_argument("--max_user_concurrent", type=int, default=3)
+    parser.add_argument("--max_sample_concurrent", type=int, default=3)
     parser.add_argument("--mode", default="eval", choices=["eval", "check"])
     parser.add_argument("--judge_model", default="gpt-5-mini")
-    parser.add_argument("--check_n_users", type=int, default=3)
+    parser.add_argument("--check_n_samples", type=int, default=3)
     parser.add_argument("--check_n_qa", type=int, default=10)
 
     args = parser.parse_args()
@@ -234,13 +233,13 @@ if __name__ == "__main__":
         n_chunks=args.n_chunks,
         max_logs=args.max_logs,
         model=args.model,
-        eval_n_users=args.eval_n_users,
+        eval_n_samples=args.eval_n_samples,
         status=args.status,
         eval_n_qa=args.eval_n_qa,
-        max_user_concurrent=args.max_user_concurrent,
+        max_sample_concurrent=args.max_sample_concurrent,
         mode=args.mode,
         judge_model=args.judge_model,
-        check_n_users=args.check_n_users,
+        check_n_samples=args.check_n_samples,
         check_n_qa=args.check_n_qa,
     ))
 

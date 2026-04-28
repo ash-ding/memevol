@@ -1,44 +1,43 @@
-"""
-DynamicMem_Workflow: per-user Phase 1 + Phase 2 execution protocol (alma-specific).
+"""Benchmark-agnostic per-user two-phase execution scaffold.
 
-Each user goes through two phases:
+Subclass `BaseWorkflow` for each benchmark; implement the abstract hooks.
+The base class handles (all unchanged from the prior DynamicMem_Workflow):
 
-  Phase 1 (Update) — controlled by update_type:
-    sequential  : call general_update once per app_log entry
-    chunked     : split app_logs into n_chunks blocks, call general_update per block
-    all_at_once : call general_update once with all logs (truncated to max_logs if set)
+  - concurrency over users (semaphore) + per-user Exception capture
+  - QA progress tracking (`_QAProgressTracker`)
+  - Phase 1 dispatch: `all_at_once` / `chunked` / `sequential`
+  - Phase 2 QA loop with timeout + partial-preservation + failure_info
+  - `save_full_traces` (one JSON per user under traces/)
+  - memory dumping (Chroma / NetworkX / dict introspection)
+  - per-user isolation (fresh MemoStructure instance per user)
 
-  Phase 2 (Retrieve) — one call per QA question:
-    - build a retrieve recorder with recorder.init['query'] = current question
-    - call general_retrieve(recorder) → retrieved_memo dict
-    - agent answers the question using retrieved_memo
-    - LLM judge scores the answer
-
-IMPORTANT: each user gets a FRESH MemoStructure instance (per-user isolation).
-Memory built during Phase 1 is only used for that same user's Phase 2.
-
-All output (memory dumps, full traces) is written under ``self.output_run_dir``,
-which should be set by the caller (typically ``baselines/alma/launch.py``).
+To add a new benchmark, subclass `BaseWorkflow` and override the hooks listed
+under "subclass hooks" below. `DynamicMemWorkflow` in
+`datasets/dynamicmem/workflow.py` is the reference implementation.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import os
 import random
 import time
 import traceback
+from abc import ABC, abstractmethod
 from collections import Counter, defaultdict
-from datetime import datetime, date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Type
 
-from baselines.alma.harness_base import MemoStructure, Sub_memo_layer
-from baselines.alma.logger import get_logger
+from common.harness_base import Basic_Recorder, MemoStructure, Sub_memo_layer
+from common.logger import get_logger
 
 log = get_logger("main")
 
+
+# ---------------------------------------------------------------------------
+# JSON / memory-dump helpers (unchanged — benchmark-agnostic)
+# ---------------------------------------------------------------------------
 
 class _MemoryEncoder(json.JSONEncoder):
     """JSON encoder that handles common non-serializable types in memory databases."""
@@ -191,7 +190,59 @@ class _QAProgressTracker:
                 log.info(f"[Phase 2] QA Progress: {self.completed}/{self.total} ({pct}%)")
 
 
-class DynamicMem_Workflow:
+# ---------------------------------------------------------------------------
+# BaseWorkflow
+# ---------------------------------------------------------------------------
+
+class BaseWorkflow(ABC):
+    """Per-user two-phase scheduler. Subclass per benchmark."""
+
+    # ---- Subclass overrides (class attributes) ----
+
+    recorder_class: Type[Basic_Recorder]
+    """Recorder class used for both the accumulator recorder and per-QA
+    retrieve recorders. Must be set by subclass."""
+
+    _phase1_item_label: str = "items"
+    """Human-readable label for init_data elements, used in Phase 1 log
+    messages. DynamicMem uses "logs"; LoCoMo might use "sessions"."""
+
+    _default_qa_per_user_hint: int = 178
+    """Progress-bar hint when eval_n_qa is None (purely cosmetic)."""
+
+    judge_score_max: int = 10
+    """Maximum integer score the judge can produce for this benchmark.
+    Single source of truth for the score range — `_make_judge` reads it,
+    and the host orchestrator reads it (via score.json) to normalize each
+    benchmark's accuracy to [0, 1] before averaging across benchmarks
+    (so DynamicMem 0-10 and LoCoMo 0-1 carry equal weight in the mean).
+    Override per benchmark: 10 for DynamicMem (partial credit), 1 for
+    LoCoMo / LongMemEval (binary)."""
+
+    def _qa_per_user_estimate(self, mode: str, check_n_qa: int) -> int:
+        """Expected number of QAs per user/sample — drives the Phase-2 progress-tracker total.
+
+        Default honours `--eval-n-qa` (or `--check-n-qa` via `check_n_qa`
+        in check mode). Benchmarks where the QA count per sample is fixed
+        (e.g. LongMemEval, always 1) should override this to ignore
+        user-supplied `--*-n-qa`."""
+        if mode == "check":
+            return check_n_qa
+        return self.eval_n_qa or self._default_qa_per_user_hint
+
+    def _phase1_item_count(self, init_data) -> "int | str":
+        """Return the count of "items" in Phase 1's init_data — used purely
+        for the end-of-Phase-1 log message. Default: `len(init_data)` when
+        sized (works for list-shaped init like DynamicMem). Subclasses whose
+        init_data is a container of sub-items should override (e.g.
+        LoCoMo returns the session count, not the dict key count)."""
+        try:
+            return len(init_data)  # type: ignore[arg-type]
+        except TypeError:
+            return "?"
+
+    # ---- Constructor ----
+
     def __init__(
         self,
         memo_class: Type[MemoStructure],
@@ -201,18 +252,33 @@ class DynamicMem_Workflow:
         max_logs: Optional[int] = None,
         eval_n_qa: Optional[int] = None,
         judge_model: str = "gpt-5-mini",
+        memory_dumps: str = "full",
     ):
         self.memo_class = memo_class
         self.memo_sha = ""                  # set by caller (for logging only)
-        self.status = "search"              # 'search' → summary dump, 'test' → full dump
+        self.status = "search"
         self.update_type = update_type
         self.n_chunks = n_chunks
         self.max_logs = max_logs
         self.eval_n_qa = eval_n_qa
         self.judge_model = judge_model
+        # memory_dumps controls what (if anything) is written under
+        # output_run_dir/memory_dumps/<user>.json after Phase 1 completes.
+        # Only honoured when mode="eval"; mode="check" always skips dumps.
+        #   "full"  — full contents (Chroma docs+metas, NetworkX nodes+edges, dict/list raw)
+        #   "stats" — only sizes + small samples (cheap; matches alma's search-mode behavior)
+        #   "none"  — skip the dump entirely
+        if memory_dumps not in ("full", "stats", "none"):
+            raise ValueError(
+                f"memory_dumps must be one of full/stats/none, got {memory_dumps!r}"
+            )
+        self.memory_dumps = memory_dumps
         # Output directory — set by launch.py before run_all_users. Memory dumps
         # go to {output_run_dir}/memory_dumps/, full traces to {output_run_dir}/traces/.
         self.output_run_dir: Optional[Path] = None
+        # Lazy-constructed Judge (per common.judge.Judge). Subclasses can
+        # override `_make_judge` to customize prompt / score range.
+        self._judge_instance = None
 
         # Parse "model/reasoning_effort" format (e.g. "gpt-4o-mini/low")
         if "/" in model:
@@ -221,35 +287,143 @@ class DynamicMem_Workflow:
             self.model = model
             self.reasoning_effort = None
 
-    # ------------------------------------------------------------------
-    # Main entry point: run all users
-    # ------------------------------------------------------------------
+    # ---- Subclass hooks (must implement) ----
+
+    @abstractmethod
+    async def load_user_data(
+        self, user_dir: str, eval_n_qa: Optional[int]
+    ) -> Tuple[Any, List[Dict]]:
+        """Load raw data for one user.
+
+        Returns (init_data, qa_pairs):
+          init_data: opaque payload passed back to `phase1_log_init` and
+                     `build_query_recorder_init`. For DynamicMem, the
+                     full `app_logs` list.
+          qa_pairs:  list of QA dicts. Each is expected to have at least
+                     `query`, `reference`, and an optional `metadata` dict.
+        """
+
+    @abstractmethod
+    async def phase1_log_init(self, recorder: Basic_Recorder, chunk: Any) -> None:
+        """Populate `recorder.init` with a Phase 1 chunk of init_data.
+
+        For DynamicMem:  `await recorder.log_init(chunk)`   (chunk is a list of
+        app_log dicts, possibly a singleton for sequential mode).
+        """
+
+    @abstractmethod
+    def build_query_recorder_init(self, init_data: Any, qa: Dict) -> Dict:
+        """Build the `recorder.init` dict for a single Phase 2 retrieve call.
+
+        For DynamicMem:  {"app_logs": init_data, "query": qa["query"]}
+        """
+
+    @abstractmethod
+    def build_qa_prompt(
+        self,
+        query: str,
+        retrieved: Dict,
+        qa_metadata: Dict,
+        reference: str = "",
+    ) -> List[Dict]:
+        """Two-message prompt (system + user) for the QA agent.
+
+        `reference` is the gold answer; most benchmarks ignore it (they shouldn't
+        leak gold to the QA agent), but LoCoMo's category-5 adversarial QAs use
+        it to construct a binary-choice prompt per the LoCoMo paper / A-mem
+        baseline (the model is shown two options including the truth and asked
+        which is correct — testing whether it hallucinates or correctly says
+        "Not mentioned in the conversation").
+
+        `qa_metadata` is the dict returned by `build_qa_metadata(qa)` for this
+        step — benchmarks that need extra context (e.g. LongMemEval uses the
+        question_date for temporal reasoning) can pull fields from here.
+        Simple benchmarks can ignore it.
+        """
+
+    @abstractmethod
+    def extract_relevant_context(self, qa: Dict, init_data: Any) -> Any:
+        """Ground-truth context relevant to this QA (logged in the trace).
+
+        For DynamicMem: look up app_log_ids listed in qa['metadata'].
+        """
+
+    @abstractmethod
+    def build_qa_metadata(self, qa: Dict) -> Dict:
+        """Per-step metadata to persist in the trace."""
+
+    @abstractmethod
+    async def log_qa_step(
+        self,
+        recorder: Basic_Recorder,
+        query: str,
+        predicted: str,
+        reference: str,
+        score: int,
+        judge_reason: str,
+        qa_metadata: Dict,
+        retrieved_memory: Dict,
+        relevant_context: Any,
+    ) -> None:
+        """Call `recorder.log_step(...)` with the benchmark-specific field
+        names. DynamicMem maps `relevant_context` to `relevant_app_logs`."""
+
+    def _make_judge(self):
+        """Construct the judge for this workflow. Override to customize
+        prompt template / score range / model — e.g. for benchmark-specific
+        judges (LoCoMo binary, LongMemEval per-question-type, ...)."""
+        from common.judge import Judge
+        return Judge(
+            model=self.judge_model,
+            timeout=180,        # match Agent in this workflow (a bit longer than Judge default 150)
+            max_retries=5,      # match Agent's retry budget
+        )
+
+    async def judge(
+        self,
+        query: str,
+        predicted: str,
+        reference: str,
+        qa_metadata: Optional[Dict] = None,
+    ) -> Tuple[int, str]:
+        """Default impl uses self._make_judge() lazily. Subclasses with a
+        single benchmark-wide prompt only need to override `_make_judge`.
+
+        `qa_metadata` carries per-question fields (question_type, etc.) and
+        is unused by the default impl; LongMemEval overrides this method to
+        dispatch among multiple prompts based on question_type.
+        """
+        if self._judge_instance is None:
+            self._judge_instance = self._make_judge()
+        return await self._judge_instance.score(query, predicted, reference)
+
+    # ---- Main entry point: run all users ----
 
     async def run_all_users(
         self,
         task_list: List[str],
         mode: str = "eval",
-        max_user_concurrent: int = 6,
-        check_n_users: int = 6,
+        max_sample_concurrent: int = 6,
+        check_n_samples: int = 6,
         check_n_qa: int = 3,
     ) -> Tuple[List[Any], int]:
         """Run Phase 1 + Phase 2 for every user in task_list.
 
-        mode='check' samples check_n_users users with check_n_qa QA pairs each.
+        mode='check' samples check_n_samples users with check_n_qa QA pairs each.
 
         Returns (results_list, results_len). Failed users appear as Exception
         objects (with `.user_id` attribute) in the list. The returned length
         equals len(results_list); downstream filters out Exceptions itself.
         """
         if mode == "check":
-            task_list = random.sample(task_list, min(check_n_users, len(task_list)))
+            task_list = random.sample(task_list, min(check_n_samples, len(task_list)))
 
-        qa_per_user = check_n_qa if mode == "check" else (self.eval_n_qa or 178)
+        qa_per_user = self._qa_per_user_estimate(mode, check_n_qa)
         total_qa = len(task_list) * qa_per_user
         qa_tracker = _QAProgressTracker(total_qa)
         log.info(f"Starting evaluation: {len(task_list)} users × ~{qa_per_user} QA = ~{total_qa} total")
 
-        semaphore = asyncio.Semaphore(max_user_concurrent)
+        semaphore = asyncio.Semaphore(max_sample_concurrent)
 
         async def run_one(user_dir: str):
             async with semaphore:
@@ -271,51 +445,59 @@ class DynamicMem_Workflow:
         log.info(f"Evaluation complete: {valid_count}/{len(task_list)} users succeeded in {elapsed:.1f}s")
         return list(results), len(results)
 
-    # ------------------------------------------------------------------
-    # Single-user execution
-    # ------------------------------------------------------------------
+    # ---- Single-user execution ----
 
-    async def run_single_user(self, user_dir: str, mode: str = "eval", qa_tracker: _QAProgressTracker = None, check_n_qa: int = 3):
-        """Run Phase 1 (update) then Phase 2 (retrieve + QA) for one user.
-
-        Returns a DynamicMemRecorder with all QA steps recorded.
-        """
-        # Lazy imports so module-load order stays cheap and avoids cycles
-        from datasets.dynamicmem.env import DynamicMemRecorder, load_user_data, judge_answer
-        from datasets.dynamicmem.prompts import get_dynamicmem_prompt
-        from baselines.alma.llm import Agent
+    async def run_single_user(
+        self,
+        user_dir: str,
+        mode: str = "eval",
+        qa_tracker: Optional[_QAProgressTracker] = None,
+        check_n_qa: int = 3,
+    ) -> Basic_Recorder:
+        """Run Phase 1 (update) then Phase 2 (retrieve + QA) for one user."""
+        # Agent is lazy-imported so module load stays cheap & avoids cycles.
+        from common.llm import Agent
 
         user_tag = user_dir[-15:]
 
         qa_size = check_n_qa if mode == "check" else self.eval_n_qa
-        app_logs, _user_profile, qa_pairs = load_user_data(user_dir, qa_size)
+        init_data, qa_pairs = await self.load_user_data(user_dir, qa_size)
 
         memo = self.memo_class()
 
         t1 = time.time()
-        await self._phase1_update(memo, app_logs, DynamicMemRecorder)
+        await self._phase1_update(memo, init_data)
         t1_elapsed = time.time() - t1
-        log.info(f"[Phase 1] User {user_tag} update complete ({len(app_logs)} logs, {t1_elapsed:.1f}s)")
+        item_count = self._phase1_item_count(init_data)
+        log.info(
+            f"[Phase 1] User {user_tag} update complete "
+            f"({item_count} {self._phase1_item_label}, {t1_elapsed:.1f}s)"
+        )
 
-        # Dump memory database for post-hoc inspection (only in eval mode)
-        if mode == "eval" and self.output_run_dir is not None:
-            _dump_memory(memo, user_tag, self.output_run_dir / "memory_dumps", full=(self.status == "test"))
+        # Dump memory database for post-hoc inspection. Policy:
+        #   - mode=="check": never dump (smoke/sanity runs stay cheap + clean)
+        #   - mode=="eval":  dump per self.memory_dumps (full / stats / none)
+        if (
+            mode == "eval"
+            and self.memory_dumps != "none"
+            and self.output_run_dir is not None
+        ):
+            _dump_memory(
+                memo, user_tag,
+                self.output_run_dir / "memory_dumps",
+                full=(self.memory_dumps == "full"),
+            )
 
         t2 = time.time()
-        recorder = DynamicMemRecorder()
+        recorder = self.recorder_class()
         recorder.user_id = user_tag
-        await recorder.log_init(app_logs)
+        await self.phase1_log_init(recorder, init_data)
 
-        app_log_lookup = {log["app_log_id"]: log for log in app_logs}
-
-        agent = Agent(system_prompt="", model=self.model, timeout=300)
+        agent = Agent(system_prompt="", model=self.model, timeout=180, max_retries=5)
 
         for qa in qa_pairs:
-            retrieve_recorder = DynamicMemRecorder()
-            retrieve_recorder.init = {
-                "app_logs": app_logs,
-                "query": qa["query"],
-            }
+            retrieve_recorder = self.recorder_class()
+            retrieve_recorder.init = self.build_query_recorder_init(init_data, qa)
 
             try:
                 retrieved = await asyncio.wait_for(
@@ -342,12 +524,13 @@ class DynamicMem_Workflow:
                 )
                 break
 
-            app_log_ids = qa.get("metadata", {}).get("app_log_ids", [])
-            relevant_app_logs = [
-                app_log_lookup[lid] for lid in app_log_ids if lid in app_log_lookup
-            ]
+            relevant_context = self.extract_relevant_context(qa, init_data)
+            qa_metadata = self.build_qa_metadata(qa)
 
-            prompt = get_dynamicmem_prompt(qa["query"], retrieved)
+            prompt = self.build_qa_prompt(
+                qa["query"], retrieved, qa_metadata,
+                reference=qa.get("reference", ""),
+            )
             system_msg = prompt[0]["content"]
             user_msg = prompt[1]["content"]
 
@@ -362,21 +545,21 @@ class DynamicMem_Workflow:
                 log.warning(f"Agent ask failed for {user_dir}: {exc}")
                 answer = ""
 
-            score, judge_reason = await judge_answer(qa["query"], answer, qa.get("reference", ""), self.judge_model)
+            score, judge_reason = await self.judge(
+                qa["query"], answer, qa.get("reference", ""),
+                qa_metadata=qa_metadata,
+            )
 
-            await recorder.log_step(
+            await self.log_qa_step(
+                recorder=recorder,
                 query=qa["query"],
                 predicted=answer,
                 reference=qa.get("reference", ""),
                 score=score,
                 judge_reason=judge_reason,
-                qa_metadata={
-                    "domain": qa.get("metadata", {}).get("domain", ""),
-                    "belonged": qa.get("metadata", {}).get("belonged", ""),
-                    "app_log_ids": app_log_ids,
-                },
+                qa_metadata=qa_metadata,
                 retrieved_memory=retrieved,
-                relevant_app_logs=relevant_app_logs,
+                relevant_context=relevant_context,
             )
 
             if qa_tracker:
@@ -389,51 +572,53 @@ class DynamicMem_Workflow:
         log.info(f"[Phase 2] User {user_tag} QA complete: reward={avg:.2f}/10 ({len(scores)} QA, {t2_elapsed:.1f}s)")
         return recorder
 
-    # ------------------------------------------------------------------
-    # Phase 1 helper
-    # ------------------------------------------------------------------
+    # ---- Phase 1 dispatch ----
 
-    async def _phase1_update(
-        self,
-        memo: MemoStructure,
-        app_logs: List[Dict],
-        recorder_class,
-    ) -> None:
-        """Dispatch general_update calls according to update_type."""
+    async def _phase1_update(self, memo: MemoStructure, init_data: Any) -> None:
+        """Dispatch general_update calls according to update_type.
 
-        async def _call_update(logs_chunk: List[Dict]) -> None:
-            r = recorder_class()
-            await r.log_init(logs_chunk)
+        Default impl assumes `init_data` is a list whose elements can be
+        passed to `phase1_log_init`. Subclasses may override entirely if
+        their init_data is not list-shaped.
+        """
+
+        async def _call_update(chunk: Any) -> None:
+            r = self.recorder_class()
+            await self.phase1_log_init(r, chunk)
             try:
                 await memo.general_update(r)
             except Exception as exc:
                 log.warning(f"general_update failed: {exc}")
                 raise RuntimeError(f"[Phase1_Update] {type(exc).__name__}: {exc}") from exc
 
+        if not isinstance(init_data, list):
+            raise TypeError(
+                f"{type(self).__name__}: default _phase1_update expects init_data to be a list; "
+                f"got {type(init_data).__name__}. Override _phase1_update for non-list init."
+            )
+
+        total = len(init_data)
+
         if self.update_type == "sequential":
-            total = len(app_logs)
-            for idx, log_entry in enumerate(app_logs, 1):
+            for idx, item in enumerate(init_data, 1):
                 if idx == 1 or idx % max(1, total // 10) == 0 or idx == total:
                     log.info(f"[Phase 1] general_update progress: {idx}/{total} ({idx*100//total}%)")
-                await _call_update([log_entry])
+                await _call_update([item])
 
         elif self.update_type == "chunked":
             n = max(1, self.n_chunks)
-            total = len(app_logs)
             chunk_size = max(1, (total + n - 1) // n)
             chunks = list(range(0, total, chunk_size))
             for chunk_idx, i in enumerate(chunks, 1):
                 log.info(f"[Phase 1] general_update progress: chunk {chunk_idx}/{len(chunks)}")
-                await _call_update(app_logs[i: i + chunk_size])
+                await _call_update(init_data[i: i + chunk_size])
 
         else:  # all_at_once
-            logs = app_logs[-self.max_logs:] if self.max_logs else app_logs
-            log.info(f"[Phase 1] general_update started ({len(logs)} logs, mode=all_at_once)")
-            await _call_update(logs)
+            items = init_data[-self.max_logs:] if self.max_logs else init_data
+            log.info(f"[Phase 1] general_update started ({len(items)} {self._phase1_item_label}, mode=all_at_once)")
+            await _call_update(items)
 
-    # ------------------------------------------------------------------
-    # Full-trace persistence (no sampling)
-    # ------------------------------------------------------------------
+    # ---- Full-trace persistence (no sampling) ----
 
     def save_full_traces(self, recorder_list: List[Any]) -> None:
         """Write every user's full QA trajectory to output_run_dir/traces/<user_id>.json.

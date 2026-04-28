@@ -33,7 +33,7 @@ except ImportError:
             pass
         return result
 
-from baselines.alma.logger import get_logger
+from common.logger import get_logger
 
 log = get_logger("main")
 
@@ -55,31 +55,45 @@ async def run_evaluation(
     memory_SHA: str,
     mode: str = "eval",
     model: str = "gpt-5-mini",
-    eval_n_users: int = 6,
+    eval_n_samples: int = 6,
     status: str = "search",
     update_type: str = "all_at_once",
     n_chunks: int = 5,
     max_logs: Optional[int] = None,
     eval_n_qa: Optional[int] = None,
-    max_user_concurrent: int = 6,
+    max_sample_concurrent: int = 6,
     judge_model: str = "gpt-5-mini",
-    check_n_users: int = 6,
+    check_n_samples: int = 6,
     check_n_qa: int = 3,
+    source_path: Optional[Path] = None,
+    output_run_dir: Optional[Path] = None,
 ) -> Path:
     """Copy memo code to alma/memo_test/ and run launch.py in a subprocess.
 
     Returns the per-run output directory path.
+
+    By default the source .py file is looked up at
+    ``alma/memo_archive/{dynamicmem,baseline}/memo_structure_<SHA>.py`` and the
+    output directory is ``alma/results/dynamicmem/<SHA>_<status>_<mode>/``.
+    Both defaults can be overridden via ``source_path`` / ``output_run_dir`` so
+    callers outside alma (e.g. baselines/meta-harness) can reuse this runner
+    without touching alma's archive layout.
     """
 
     memo_test_dir = ALMA_ROOT / "memo_test"
     memo_test_dir.mkdir(parents=True, exist_ok=True)
 
-    memo_archive = ALMA_ROOT / "memo_archive"
-    memo_path = memo_archive / "dynamicmem" / f"memo_structure_{memory_SHA}.py"
-    if not memo_path.exists():
-        memo_path = memo_archive / "baseline" / f"memo_structure_{memory_SHA}.py"
-    if not memo_path.exists():
-        raise FileNotFoundError(f"Memo structure file not found for SHA: {memory_SHA}")
+    if source_path is not None:
+        memo_path = Path(source_path)
+        if not memo_path.exists():
+            raise FileNotFoundError(f"source_path does not exist: {memo_path}")
+    else:
+        memo_archive = ALMA_ROOT / "memo_archive"
+        memo_path = memo_archive / "dynamicmem" / f"memo_structure_{memory_SHA}.py"
+        if not memo_path.exists():
+            memo_path = memo_archive / "baseline" / f"memo_structure_{memory_SHA}.py"
+        if not memo_path.exists():
+            raise FileNotFoundError(f"Memo structure file not found for SHA: {memory_SHA}")
 
     # Per-SHA staging filename — previous `memo_test.py` shared slot caused a
     # race when `max_memo_concurrent > 1`: two concurrent subprocesses would
@@ -91,7 +105,10 @@ async def run_evaluation(
     env_vals = dotenv_values(str(PROJECT_ROOT / ".env"))
     api_key = env_vals.get("OPENAI_API_KEY", os.environ.get("OPENAI_API_KEY", ""))
 
-    output_run_dir = get_output_run_dir(memory_SHA, status, mode)
+    if output_run_dir is None:
+        output_run_dir = get_output_run_dir(memory_SHA, status, mode)
+    else:
+        output_run_dir = Path(output_run_dir)
     # Send the subprocess's own rotating log to its per-run output dir so every
     # memo's subprocess log is isolated from the main-process log and from
     # other concurrent subprocesses. Pre-create the dir so the logger's
@@ -121,12 +138,12 @@ async def run_evaluation(
         "--update_type", update_type,
         "--n_chunks", str(n_chunks),
         "--model", model,
-        "--eval_n_users", str(eval_n_users),
+        "--eval_n_samples", str(eval_n_samples),
         "--status", status,
-        "--max_user_concurrent", str(max_user_concurrent),
+        "--max_sample_concurrent", str(max_sample_concurrent),
         "--mode", mode,
         "--judge_model", judge_model,
-        "--check_n_users", str(check_n_users),
+        "--check_n_samples", str(check_n_samples),
         "--check_n_qa", str(check_n_qa),
     ]
     if max_logs is not None:

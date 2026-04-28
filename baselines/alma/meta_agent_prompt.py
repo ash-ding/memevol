@@ -122,7 +122,7 @@ Class: Agent
 
 - Purpose: Asynchronous wrapper around OpenAI Chat API, allows system/user prompts and optional JSON schema validation. Higher insights: this could be used to summarise information or gain new insights from them.
 - Initialization:
-    from baselines.alma.llm import Agent
+    from common.llm import Agent
     agent = Agent(model: str, system_prompt: str, output_schema: Optional[Dict] = None)
 - Key Methods:
     - agent.get_agent_config() -> Dict: Returns agent configuration and chat history.
@@ -153,7 +153,7 @@ Class: Embedding
 
 - Purpose: Async embedding manager for computing single or batch embeddings, with optional similarity calculation.
 - Initialization:
-    from baselines.alma.llm import Embedding
+    from common.llm import Embedding
     embedder = Embedding(model: str = "text-embedding-3-small", retries: int  = 3, retry_delay: float = 1.0)
 - Key Methods:
     - await embedder.get_embedding(text: str) -> List[float]:
@@ -451,9 +451,9 @@ You are given the following two base classes:
 
 Inherit these base classes and import as follows:
 ```python
-from baselines.alma.harness_base import Sub_memo_layer, MemoStructure
+from common.harness_base import Sub_memo_layer, MemoStructure
 from datasets.dynamicmem.env import Basic_Recorder
-from baselines.alma.llm import Agent, Embedding
+from common.llm import Agent, Embedding
 from langchain_chroma import Chroma
 ```
 

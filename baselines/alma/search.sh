@@ -12,11 +12,11 @@ python baselines/alma/run_main.py \
     --execution_model gpt-5-mini \
     --judge_model gpt-5-mini \
     --status search \
-    --eval_n_users 6 \
+    --eval_n_samples 6 \
     --eval_n_qa 20 \
     --update_type all_at_once \
     --steps 10 \
-    --max_user_concurrent 5 \
+    --max_sample_concurrent 5 \
     --n_score_bins 3 \
     --samples_per_bin 3
 
@@ -27,11 +27,11 @@ python baselines/alma/run_main.py \
     --execution_model gpt-5-mini \
     --judge_model gpt-5-mini \
     --status search \
-    --eval_n_users 2 \
+    --eval_n_samples 2 \
     --eval_n_qa 10 \
     --update_type all_at_once \
     --steps 2 \
-    --max_user_concurrent 3
+    --max_sample_concurrent 3
 
 # --- Chunked update mode ---
 # Feed app_logs in 10 chunks instead of all at once
@@ -40,7 +40,7 @@ python baselines/alma/run_main.py \
     --execution_model gpt-5-mini \
     --judge_model gpt-5-mini \
     --status search \
-    --eval_n_users 4 \
+    --eval_n_samples 4 \
     --eval_n_qa 20 \
     --update_type chunked \
     --n_chunks 10 \
@@ -52,7 +52,7 @@ python baselines/alma/run_main.py \
     --execution_model gpt-5-mini \
     --judge_model gpt-5-mini \
     --status search \
-    --eval_n_users 2 \
+    --eval_n_samples 2 \
     --eval_n_qa 10 \
     --update_type sequential \
     --steps 5
@@ -64,7 +64,7 @@ python baselines/alma/run_main.py \
     --execution_model gpt-5-mini \
     --judge_model gpt-5-mini \
     --status search \
-    --eval_n_users 6 \
+    --eval_n_samples 6 \
     --eval_n_qa 20 \
     --update_type all_at_once \
     --steps 10 \

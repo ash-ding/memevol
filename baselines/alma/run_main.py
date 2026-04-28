@@ -38,7 +38,7 @@ def parse_args():
     parser.add_argument("--result_dir", type=str, default="check")
 
     parser.add_argument("--status", type=str, default='search', choices=['search', 'test'])
-    parser.add_argument("--eval_n_users", type=int, default=6)
+    parser.add_argument("--eval_n_samples", type=int, default=6)
     parser.add_argument("--memo_SHA", type=str, default=None)
     parser.add_argument("--history_ckpt_path", type=str, default=None)
 
@@ -51,12 +51,12 @@ def parse_args():
     # the full 178 QA, trades a bit of reward stability for throughput during search.
     # Pass an explicit large value (or a flag like `--eval_n_qa 178`) for full eval.
     parser.add_argument("--eval_n_qa", type=int, default=20)
-    parser.add_argument("--max_user_concurrent", type=int, default=3)
+    parser.add_argument("--max_sample_concurrent", type=int, default=3)
     parser.add_argument("--n_score_bins", type=int, default=3)
     parser.add_argument("--samples_per_bin", type=int, default=3)
     parser.add_argument("--judge_model", type=str, default="gpt-5-mini")
     # Default: 6 users × 3 QA — full user coverage for Phase 1 bugs + minimal Phase 2 probe
-    parser.add_argument("--check_n_users", type=int, default=6)
+    parser.add_argument("--check_n_samples", type=int, default=6)
     parser.add_argument("--check_n_qa", type=int, default=3)
 
     return parser.parse_args()
@@ -76,9 +76,9 @@ async def main(args):
         await meta_agent.forward(
             steps=args.steps,
             max_memo_concurrent=args.max_memo_concurrent,
-            max_user_concurrent=args.max_user_concurrent,
+            max_sample_concurrent=args.max_sample_concurrent,
             result_dir=args.result_dir,
-            eval_n_users=args.eval_n_users,
+            eval_n_samples=args.eval_n_samples,
             update_type=args.update_type,
             n_chunks=args.n_chunks,
             max_logs=args.max_logs,
@@ -86,19 +86,19 @@ async def main(args):
             n_score_bins=args.n_score_bins,
             samples_per_bin=args.samples_per_bin,
             judge_model=args.judge_model,
-            check_n_users=args.check_n_users,
+            check_n_samples=args.check_n_samples,
             check_n_qa=args.check_n_qa,
         )
     else:
         await meta_agent.run_single_memo(
             memo_SHA=args.memo_SHA,
             status=args.status,
-            eval_n_users=args.eval_n_users,
+            eval_n_samples=args.eval_n_samples,
             update_type=args.update_type,
             n_chunks=args.n_chunks,
             max_logs=args.max_logs,
             eval_n_qa=args.eval_n_qa,
-            max_user_concurrent=args.max_user_concurrent,
+            max_sample_concurrent=args.max_sample_concurrent,
             n_score_bins=args.n_score_bins,
             samples_per_bin=args.samples_per_bin,
             judge_model=args.judge_model,

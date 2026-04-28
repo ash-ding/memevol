@@ -6,16 +6,16 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from baselines.alma.harness_base import MemoStructure
-from baselines.alma.llm import Agent
-from baselines.alma.logger import get_logger
+from common.harness_base import MemoStructure
+from common.llm import Agent
+from common.logger import get_logger
 from baselines.alma.memo_manager import Memo_Manager
 from baselines.alma.meta_agent_prompt import (
     build_analysis_prompt,
     build_generate_new_code_prompt,
     build_reflection_prompt,
 )
-from baselines.alma.tokens import init_global_tracker
+from common.tokens import init_global_tracker
 
 log = get_logger("main")
 
@@ -108,16 +108,16 @@ class MetaAgent:
     async def examine_new_code(
         self,
         code_str: str,
-        eval_n_users: int = 6,
+        eval_n_samples: int = 6,
         update_type: str = 'all_at_once',
         n_chunks: int = 5,
         max_logs: Optional[int] = None,
         eval_n_qa: Optional[int] = None,
-        max_user_concurrent: int = 6,
+        max_sample_concurrent: int = 6,
         n_score_bins: int = 3,
         samples_per_bin: int = 3,
         judge_model: str = "gpt-5-mini",
-        check_n_users: int = 6,
+        check_n_samples: int = 6,
         check_n_qa: int = 3,
     ):
         """Sanity-check gating: run generated code; on failure, reflect + retry."""
@@ -133,17 +133,17 @@ class MetaAgent:
                     target_sha=memo_SHA,
                     mode='check',
                     model=self.execution_model,
-                    eval_n_users=eval_n_users,
+                    eval_n_samples=eval_n_samples,
                     status='search',
                     update_type=update_type,
                     n_chunks=n_chunks,
                     max_logs=max_logs,
                     eval_n_qa=eval_n_qa,
-                    max_user_concurrent=max_user_concurrent,
+                    max_sample_concurrent=max_sample_concurrent,
                     n_score_bins=n_score_bins,
                     samples_per_bin=samples_per_bin,
                     judge_model=judge_model,
-                    check_n_users=check_n_users,
+                    check_n_samples=check_n_samples,
                     check_n_qa=check_n_qa,
                 )
             except Exception as e:
@@ -175,13 +175,13 @@ class MetaAgent:
     async def run_single_memo(
         self,
         memo_SHA: str,
-        eval_n_users: int = 6,
+        eval_n_samples: int = 6,
         status: str = 'search',
         update_type: str = 'all_at_once',
         n_chunks: int = 5,
         max_logs: Optional[int] = None,
         eval_n_qa: Optional[int] = None,
-        max_user_concurrent: int = 6,
+        max_sample_concurrent: int = 6,
         n_score_bins: int = 3,
         samples_per_bin: int = 3,
         judge_model: str = "gpt-5-mini",
@@ -208,16 +208,16 @@ class MetaAgent:
 
             new_memo_SHA, new_code = await self.examine_new_code(
                 code_str=new_code,
-                eval_n_users=eval_n_users,
+                eval_n_samples=eval_n_samples,
                 update_type=update_type,
                 n_chunks=n_chunks,
                 max_logs=max_logs,
                 eval_n_qa=eval_n_qa,
-                max_user_concurrent=max_user_concurrent,
+                max_sample_concurrent=max_sample_concurrent,
                 n_score_bins=n_score_bins,
                 samples_per_bin=samples_per_bin,
                 judge_model=judge_model,
-                check_n_users=kargs.get('check_n_users', 3),
+                check_n_samples=kargs.get('check_n_samples', 3),
                 check_n_qa=kargs.get('check_n_qa', 10),
             )
 
@@ -231,13 +231,13 @@ class MetaAgent:
             target_sha=new_memo_SHA,
             mode='eval',
             model=self.execution_model,
-            eval_n_users=eval_n_users,
+            eval_n_samples=eval_n_samples,
             status=status,
             update_type=update_type,
             n_chunks=n_chunks,
             max_logs=max_logs,
             eval_n_qa=eval_n_qa,
-            max_user_concurrent=max_user_concurrent,
+            max_sample_concurrent=max_sample_concurrent,
             n_score_bins=n_score_bins,
             samples_per_bin=samples_per_bin,
             judge_model=judge_model,
@@ -258,9 +258,9 @@ class MetaAgent:
         self,
         steps: int = 10,
         max_memo_concurrent: int = 2,
-        max_user_concurrent: int = 6,
+        max_sample_concurrent: int = 6,
         result_dir: str = "check",
-        eval_n_users: int = 6,
+        eval_n_samples: int = 6,
         update_type: str = 'all_at_once',
         n_chunks: int = 5,
         max_logs: Optional[int] = None,
@@ -268,7 +268,7 @@ class MetaAgent:
         n_score_bins: int = 3,
         samples_per_bin: int = 3,
         judge_model: str = "gpt-5-mini",
-        check_n_users: int = 6,
+        check_n_samples: int = 6,
         check_n_qa: int = 3,
     ):
         logs_root = self.memo_manager.LOGS_ROOT
@@ -279,13 +279,13 @@ class MetaAgent:
                 target_sha='no_mem',
                 mode='eval',
                 model=self.execution_model,
-                eval_n_users=eval_n_users,
+                eval_n_samples=eval_n_samples,
                 status='search',
                 update_type=update_type,
                 n_chunks=n_chunks,
                 max_logs=max_logs,
                 eval_n_qa=eval_n_qa,
-                max_user_concurrent=max_user_concurrent,
+                max_sample_concurrent=max_sample_concurrent,
                 n_score_bins=n_score_bins,
                 samples_per_bin=samples_per_bin,
                 judge_model=judge_model,
@@ -305,16 +305,16 @@ class MetaAgent:
 
             new_memo_SHA, new_code = await self.examine_new_code(
                 code_str=new_code,
-                eval_n_users=eval_n_users,
+                eval_n_samples=eval_n_samples,
                 update_type=update_type,
                 n_chunks=n_chunks,
                 max_logs=max_logs,
                 eval_n_qa=eval_n_qa,
-                max_user_concurrent=max_user_concurrent,
+                max_sample_concurrent=max_sample_concurrent,
                 n_score_bins=n_score_bins,
                 samples_per_bin=samples_per_bin,
                 judge_model=judge_model,
-                check_n_users=check_n_users,
+                check_n_samples=check_n_samples,
                 check_n_qa=check_n_qa,
             )
             log.info(f"[blue][FINISH CODE GENERATION] Code SHA: {new_memo_SHA} | Code example: {new_code[:30]}...[/blue]")
@@ -324,13 +324,13 @@ class MetaAgent:
                 target_sha=new_memo_SHA,
                 mode='eval',
                 model=self.execution_model,
-                eval_n_users=eval_n_users,
+                eval_n_samples=eval_n_samples,
                 status='search',
                 update_type=update_type,
                 n_chunks=n_chunks,
                 max_logs=max_logs,
                 eval_n_qa=eval_n_qa,
-                max_user_concurrent=max_user_concurrent,
+                max_sample_concurrent=max_sample_concurrent,
                 n_score_bins=n_score_bins,
                 samples_per_bin=samples_per_bin,
                 judge_model=judge_model,
@@ -352,6 +352,17 @@ class MetaAgent:
             file_name = f"{result_dir}_dynamicmem_{update_type}_{steps}_{timestamp}.json"
         else:
             file_name = self.history_ckpt_path
+
+        # Persist the init-phase result BEFORE entering the step loop. Without
+        # this, a crash inside step 1 (or during a long reflection call) would
+        # discard the no_mem baseline + initial memo work and force the next
+        # run to redo ~30-60 min of evaluation. `completed_steps` stays at 0
+        # because no evolution iteration has run yet.
+        self.memo_manager.memo_db.setdefault("completed_steps", 0)
+        self.memo_manager.memo_db["token_usage"] = tracker.summary()
+        with open(logs_root / file_name, "w", encoding="utf-8") as f:
+            json.dump(self.memo_manager.memo_db, f, ensure_ascii=False, indent=2)
+        log.info(f"[LOG RESULT] Init-phase checkpoint saved to: {logs_root / file_name}")
 
         # --- Idempotent step loop -------------------------------------------
         # `completed_steps` is persisted in the checkpoint (as a reserved
@@ -397,16 +408,16 @@ class MetaAgent:
                         try:
                             await self.run_single_memo(
                                 memo_SHA,
-                                eval_n_users=eval_n_users,
+                                eval_n_samples=eval_n_samples,
                                 update_type=update_type,
                                 n_chunks=n_chunks,
                                 max_logs=max_logs,
                                 eval_n_qa=eval_n_qa,
-                                max_user_concurrent=max_user_concurrent,
+                                max_sample_concurrent=max_sample_concurrent,
                                 n_score_bins=n_score_bins,
                                 samples_per_bin=samples_per_bin,
                                 judge_model=judge_model,
-                                check_n_users=check_n_users,
+                                check_n_samples=check_n_samples,
                                 check_n_qa=check_n_qa,
                             )
                             break

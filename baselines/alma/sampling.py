@@ -29,7 +29,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
 
-from baselines.alma.logger import get_logger
+from common.logger import get_logger
 
 log = get_logger("main")
 

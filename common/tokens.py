@@ -2,7 +2,7 @@ import asyncio
 from collections import defaultdict
 from dataclasses import dataclass
 
-from baselines.alma.logger import get_logger
+from common.logger import get_logger
 
 log = get_logger("main")
 

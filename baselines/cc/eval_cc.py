@@ -33,7 +33,8 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from datasets.dynamicmem.env import get_task_list, load_user_data, judge_answer
+from common.judge import Judge
+from datasets.dynamicmem.env import get_task_list, load_user_data
 from claude_code_sdk import query, ClaudeCodeOptions, AssistantMessage, ResultMessage, UserMessage, TextBlock, ToolUseBlock, ToolResultBlock, SystemMessage
 from claude_code_sdk._errors import MessageParseError
 
@@ -237,7 +238,7 @@ async def evaluate_model(
     dry_run: bool = False,
 ):
     """Run full evaluation for one model on test users 007-010."""
-    task_list = get_task_list(status="test", eval_n_users=4)
+    task_list = get_task_list(status="test", eval_n_samples=4)
     model_short = model.replace("claude-", "").replace("-20250514", "")
     _init_file_logger(model_short, dry_run)
 
@@ -256,6 +257,8 @@ async def evaluate_model(
     completed = 0
     total_qa = 0
 
+    judge = Judge(model=judge_model)
+
     async def run_single_qa(user_short, qa, idx, n_total, tmp_dir):
         nonlocal completed
         async with semaphore:
@@ -271,8 +274,8 @@ async def evaluate_model(
                 usage = {}
                 trace = [{"error": str(e)}]
 
-            score, reason = await judge_answer(
-                qa["query"], answer, qa.get("reference", ""), judge_model
+            score, reason = await judge.score(
+                qa["query"], answer, qa.get("reference", "")
             )
 
             elapsed = time.time() - t0

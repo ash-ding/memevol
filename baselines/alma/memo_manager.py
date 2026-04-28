@@ -52,17 +52,17 @@ class Memo_Manager:
         target_sha: str = None,
         mode: str = 'check',
         model: str = 'gpt-5-mini',
-        eval_n_users: int = 6,
+        eval_n_samples: int = 6,
         status: str = 'search',
         update_type: str = 'all_at_once',
         n_chunks: int = 5,
         max_logs: Optional[int] = None,
         eval_n_qa: Optional[int] = None,
-        max_user_concurrent: int = 6,
+        max_sample_concurrent: int = 6,
         n_score_bins: int = 3,
         samples_per_bin: int = 3,
         judge_model: str = "gpt-5-mini",
-        check_n_users: int = 6,
+        check_n_samples: int = 6,
         check_n_qa: int = 3,
     ):
         """
@@ -96,15 +96,15 @@ class Memo_Manager:
             memory_SHA=structure_sha,
             mode=mode,
             model=model,
-            eval_n_users=eval_n_users,
+            eval_n_samples=eval_n_samples,
             status=status,
             update_type=update_type,
             n_chunks=n_chunks,
             max_logs=max_logs,
             eval_n_qa=eval_n_qa,
-            max_user_concurrent=max_user_concurrent,
+            max_sample_concurrent=max_sample_concurrent,
             judge_model=judge_model,
-            check_n_users=check_n_users,
+            check_n_samples=check_n_samples,
             check_n_qa=check_n_qa,
         )
 
@@ -126,7 +126,7 @@ class Memo_Manager:
         all_success = not any("error_info" in ex for ex in artifact.get("examples", []))
 
         # Aggregate subprocess token usage into the main-process global tracker.
-        from baselines.alma.tokens import GLOBAL_TOKEN_TRACKER
+        from common.tokens import GLOBAL_TOKEN_TRACKER
         if GLOBAL_TOKEN_TRACKER is not None:
             for model_name, usage_dict in artifact.get("token_usage", {}).items():
                 await GLOBAL_TOKEN_TRACKER.update(model_name=model_name, usage=usage_dict)
