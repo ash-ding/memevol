@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 import httpx
 import jsonschema
 import openai
+import tiktoken
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from scipy.spatial.distance import cosine
@@ -130,7 +131,24 @@ class Embedding:
     """
     Async embedding manager for computing single or batch embeddings,
     with optional similarity calculation. Supports token tracking.
+
+    Batch chunking respects ALL three OpenAI embedding limits:
+      • per-request items   <= 2048
+      • per-request tokens  <= 290_000  (cap is 300k; we leave 10k margin)
+      • per-input tokens    <= 8192     (text-embedding-3-*)
+    Long single inputs are SILENTLY TRUNCATED to the per-input cap with a
+    WARNING log line — common.llm.Embedding is the right place to absorb
+    this rather than make every harness handle it.
     """
+
+    # Per-process tiktoken encoder cache (cl100k_base is shared by all
+    # text-embedding-3-* models, so populated lazily once per encoding).
+    _encoder_cache: Dict[str, Any] = {}
+
+    # Class constants for OpenAI embedding API limits.
+    MAX_ITEMS_PER_REQUEST = 2048
+    MAX_TOKENS_PER_REQUEST = 290_000   # 300k cap; 10k margin for tokenizer/server drift
+    MAX_TOKENS_PER_INPUT = 8192        # text-embedding-3-* per-input cap
 
     def __init__(self, model: str = "text-embedding-3-small", retries: int = 3, retry_delay: float = 1.0):
         self.model = model
@@ -143,6 +161,18 @@ class Embedding:
             timeout=httpx.Timeout(30.0, connect=10.0),
             max_retries=0,
         )
+
+    def _get_encoder(self):
+        """Lazy-load + cache a tiktoken encoder matched to the model."""
+        if self.model not in self._encoder_cache:
+            try:
+                enc = tiktoken.encoding_for_model(self.model)
+            except KeyError:
+                # Fallback: cl100k_base covers all current text-embedding-3-* +
+                # gpt-3.5/4 families; a safe default for unknown model strings.
+                enc = tiktoken.get_encoding("cl100k_base")
+            self._encoder_cache[self.model] = enc
+        return self._encoder_cache[self.model]
 
     def __call__(self, texts: List[str]) -> List[List[float]]:
         """Safe synchronous entry point that works both inside and outside async loops."""
@@ -183,33 +213,87 @@ class Embedding:
         raise RuntimeError(f"Failed to get embedding after {self.retries} attempts, with error: {final_error}")
 
     async def get_batch_embeddings(self, texts: List[str]) -> List[List[float]]:
-        """Compute embeddings for a batch of texts asynchronously. Chunks to ≤2048 items."""
-        MAX_BATCH = 2048
-        all_embeddings: List[List[float]] = []
+        """Compute embeddings for a batch, chunked by BOTH item count AND token budget.
 
-        for start in range(0, len(texts), MAX_BATCH):
-            chunk = texts[start:start + MAX_BATCH]
+        Why both: the OpenAI embedding API caps a single request at 2048 items
+        AND ~300k tokens. Chunking only by item count fails on long inputs
+        (e.g. 2000 dialogue turns can easily exceed 300k tokens). Per-input
+        texts longer than 8192 tokens are silently truncated.
+        """
+        if not texts:
+            return []
+
+        enc = self._get_encoder()
+
+        # Pre-tokenize once. Token IDs are reused for the actual API request
+        # (sending pre-tokenized inputs guarantees the server sees exactly the
+        # token count we budgeted against — no tokenizer/server drift).
+        encoded: List[List[int]] = []
+        truncated = 0
+        for t in texts:
+            ids = enc.encode(t or " ")  # empty string -> single space (safe; some servers reject [])
+            if len(ids) > self.MAX_TOKENS_PER_INPUT:
+                ids = ids[: self.MAX_TOKENS_PER_INPUT]
+                truncated += 1
+            encoded.append(ids)
+        if truncated:
+            log.warning(
+                f"Embedding: truncated {truncated}/{len(texts)} input(s) to "
+                f"{self.MAX_TOKENS_PER_INPUT} tokens (per-input cap)."
+            )
+
+        # Pack into chunks respecting both caps.
+        chunks: List[List[int]] = []  # list of lists of indices into `texts`
+        cur: List[int] = []
+        cur_tok = 0
+        for i, ids in enumerate(encoded):
+            n = len(ids)
+            if cur and (
+                len(cur) >= self.MAX_ITEMS_PER_REQUEST
+                or cur_tok + n > self.MAX_TOKENS_PER_REQUEST
+            ):
+                chunks.append(cur)
+                cur = []
+                cur_tok = 0
+            cur.append(i)
+            cur_tok += n
+        if cur:
+            chunks.append(cur)
+
+        # Send chunks; preserve original order in output via index mapping.
+        all_embeddings: List[Optional[List[float]]] = [None] * len(texts)
+        for chunk_idx, chunk in enumerate(chunks):
+            chunk_input = [encoded[i] for i in chunk]
+            chunk_tok = sum(len(encoded[i]) for i in chunk)
+
             attempt = 0
-            final_error = ''
+            final_error: Any = None
             while attempt < self.retries:
                 try:
-                    resp = await self.client.embeddings.create(model=self.model, input=chunk)
-
+                    resp = await self.client.embeddings.create(
+                        model=self.model, input=chunk_input
+                    )
                     from common.tokens import GLOBAL_TOKEN_TRACKER
                     if GLOBAL_TOKEN_TRACKER is not None and hasattr(resp, "usage"):
                         await GLOBAL_TOKEN_TRACKER.update(model_name=self.model, usage=resp.usage)
-
-                    all_embeddings.extend([item.embedding for item in resp.data])
+                    for j, item in zip(chunk, resp.data):
+                        all_embeddings[j] = item.embedding
                     break
                 except Exception as e:
                     attempt += 1
                     final_error = e
                     await asyncio.sleep(self.retry_delay * (2 ** (attempt - 1)))
             else:
-                log.error(f"Failed to get batch embeddings after {self.retries} attempts. With error: {final_error}")
-                raise RuntimeError(f"Failed to get batch embeddings after {self.retries} attempts. With error: {final_error}")
+                log.error(
+                    f"Embedding: chunk {chunk_idx + 1}/{len(chunks)} "
+                    f"({len(chunk)} items, ~{chunk_tok} tokens) failed after "
+                    f"{self.retries} attempts. Error: {final_error}"
+                )
+                raise RuntimeError(
+                    f"Failed to get batch embeddings after {self.retries} attempts. With error: {final_error}"
+                )
 
-        return all_embeddings
+        return all_embeddings  # type: ignore[return-value]
 
     @staticmethod
     async def compute_similarity(emb1: List[float], emb2: List[float], metric: str = "cosine") -> float:
