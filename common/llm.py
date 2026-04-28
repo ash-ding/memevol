@@ -31,6 +31,16 @@ class Agent:
     """
     Asynchronous wrapper for the OpenAI Chat API.
     Allows custom system prompt, user prompt, and optional JSON schema validation.
+
+    NOTE on `max_retries`: OpenAI's API has noticeable jitter — under
+    moderate concurrency (a few hundred parallel calls), 10-20% of
+    requests can hit transient timeouts or 5xx errors. We DEFAULT to
+    `max_retries=5` for a reason: it converts almost all transient
+    failures into eventual success. Harnesses that override to a smaller
+    value (e.g. `max_retries=2`) silently drop work when the API is
+    flaky — Phase 1 fact extraction returns empty, memory is incomplete,
+    retrieval scores degrade. **Do not set `max_retries < 5` unless you
+    have a specific reason and explicitly handle the failure path.**
     """
     def __init__(
         self,
@@ -38,7 +48,7 @@ class Agent:
         output_schema: Optional[Dict] = None,
         model: Optional[str] = 'gpt-4.1',
         timeout: float = 300.0,
-        max_retries: int = 5,
+        max_retries: int = 5,  # see class docstring — keep ≥5 to absorb API jitter
     ):
         self.model = model
         self.messages: List[Dict] = [{'role': 'system', 'content': system_prompt + (f"""ONLY output a valid JSON object conforming to the schema. The json schema is given below: {json.dumps(output_schema, ensure_ascii=False, indent=1)}""" if output_schema else "")}]
@@ -207,9 +217,16 @@ class Embedding:
                 return resp.data[0].embedding
             except Exception as e:
                 attempt += 1
-                log.error(f"[EmbeddingManager] Attempt {attempt} failed: {e}")
                 final_error = e
-                await asyncio.sleep(self.retry_delay * (2 ** (attempt - 1)))
+                if attempt >= self.retries:
+                    break
+                delay = self.retry_delay * (2 ** (attempt - 1))
+                # Match Agent's retry log style: WARNING (not ERROR) since it's
+                # a transient failure we're about to retry.
+                log.warning(f"[Embedding] Retryable error (attempt {attempt}/{self.retries}): {e}, retrying in {delay}s")
+                await asyncio.sleep(delay)
+        # Exhausted all retries → genuinely failed.
+        log.error(f"[Embedding] Failed after {self.retries} attempts: {final_error}")
         raise RuntimeError(f"Failed to get embedding after {self.retries} attempts, with error: {final_error}")
 
     async def get_batch_embeddings(self, texts: List[str]) -> List[List[float]]:

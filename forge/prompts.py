@@ -247,6 +247,14 @@ artifact. Use it to understand the contract you're coding against.
       `tokens_total` telemetry permanently 0 — future iterations of you
       then can't compare cost across candidates.
 
+      **On `max_retries`: keep it ≥ 5** (the Agent default). OpenAI's API
+      has noticeable jitter under concurrent load — 10-20% of requests can
+      hit transient timeouts or 5xx errors. Smaller values (e.g.
+      `max_retries=2`) silently drop work when the API flakes: Phase 1
+      fact extraction returns empty, memory is incomplete, retrieval
+      scores degrade. The default 5 is sized to absorb realistic jitter
+      without falling back to your harness's `except` path.
+
   /app/common/logger.py
       Internal logger plumbing. You don't need to touch this.
 
