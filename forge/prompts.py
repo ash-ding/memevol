@@ -7,9 +7,12 @@ no selection heuristic in the outer loop; the agent picks priors itself.
 """
 
 
-# Internal template — DO NOT use directly; call `build_proposer_system(sanity_enabled)`.
+# Internal template — DO NOT use directly; call
+# `build_proposer_system(sanity_enabled, active_datasets)`.
 # Sentinels in the form <<NAME>> are substituted at build time so the prompt
-# accurately reflects whether the sanity-check layer will run for THIS run.
+# accurately reflects (a) whether the sanity-check layer runs for THIS run,
+# and (b) which benchmark(s) THIS run is configured for (so the dataset
+# shapes / dispatch examples / trace fields only document active benchmarks).
 _PROPOSER_SYSTEM_TEMPLATE = """\
 You are a researcher designing memory systems for AI agents. Each iteration
 you produce a "harness" — but substantively a harness IS a memory system:
@@ -19,10 +22,7 @@ questions about the user later. Encoding, retention, retrieval, and —
 optionally but importantly — consolidation, forgetting, temporal
 organization: that is the design surface.
 
-Your memory system is evaluated on MULTIPLE benchmarks (currently
-DynamicMem, LoCoMo, LongMemEval). Each benchmark exposes a different
-`recorder.init` shape, so it must handle all of them — either with
-dataset-agnostic logic, or by dispatching on the keys of `recorder.init`.
+<<EVAL_INTRO_BLOCK>>
 
 ############################################################################
 # MISSION — read this carefully; it sets the search direction
@@ -331,24 +331,11 @@ Each step in `<dataset>/traces/<user>.json::steps[]` has:
     query, predicted, reference, score, judge_reason, retrieved_memory
 
   Per-benchmark `qa_metadata` (rich diagnostic signal, group by these):
-    DynamicMem:    {domain, belonged, app_log_ids}
-    LoCoMo:        {category, evidence}
-                     • category 1-4 = factual questions
-                     • category 5   = adversarial ("Not mentioned"; tests
-                                       hallucination resistance)
-                     • evidence     = list of dia_ids (e.g. "D1:9")
-    LongMemEval:   {question_type, question_date, answer_session_ids}
-                     • question_type ∈ {single-session-user,
-                                         single-session-assistant,
-                                         multi-session,
-                                         temporal-reasoning,
-                                         knowledge-update}
+<<TRACE_QA_METADATA_BLOCK>>
 
   Per-benchmark `relevant_*` (ground-truth context lookup — what good
   retrieval *should* surface):
-    DynamicMem:    relevant_app_logs    log entries the app_log_ids point to
-    LoCoMo:        relevant_turns       conversation turns evidence resolves to
-    LongMemEval:   relevant_context     sessions answer_session_ids point to
+<<TRACE_RELEVANT_BLOCK>>
 
   These let you ask "what was the harness supposed to retrieve, and what
   did it actually retrieve?" — the most direct signal for diagnosing
@@ -425,73 +412,18 @@ user. Do NOT rely on cross-user state.
 
 # Dataset shapes (the ONLY things differing across benchmarks)
 
-## DynamicMem (`app_logs`-based)
-  Phase 1 chunk:    recorder.init = {"app_logs": List[dict]}
-                    each app_log has: app_log_id, timestamp, app_name,
-                    api_name, request, response
-  Phase 2 retrieve: recorder.init = {"app_logs": List[dict], "query": str}
-
-## LoCoMo (multi-session two-person conversation)
-  Phase 1 chunk:    recorder.init = {"conversation": dict}
-                    conversation has keys: speaker_a (str), speaker_b (str),
-                    session_1..session_N (List[turn_dict]),
-                    session_N_date_time (str)
-                    each turn_dict has: speaker, dia_id (e.g. "D1:3"), text
-                    (NOTE: only `conversation` is provided — NO summaries,
-                     observations, or event_summary.)
-  Phase 2 retrieve: recorder.init = {"conversation": dict, "query": str}
-
-## LongMemEval  (haystack of chat sessions with one question each)
-Two variants: `longmemeval_s` (~48 sessions/sample, ~120k tokens) and
-`longmemeval_m` (~475 sessions/sample, ~1.3M tokens) — same questions,
-different haystack density. The m variant exceeds any single-prompt
-context window, so memory/retrieval is mandatory.
-
-  Phase 1 chunk:    recorder.init = {"sessions": List[session_dict]}
-                    each session_dict has:
-                      session_id (str, e.g. "sharegpt_xxx" — distractor —
-                                  or "answer_xxx" — gold),
-                      date (str, e.g. "2023/05/20 (Sat) 02:21"),
-                      messages (List[{"role": "user"|"assistant", "content": str}])
-                    NOTE: `answer_` / `sharegpt_` / `ultrachat_` prefixes in
-                    session_id are a side effect of dataset construction; do
-                    NOT key off them for retrieval — the benchmark tests
-                    content-based memory, not id-based.
-  Phase 2 retrieve: recorder.init = {"sessions": List[session_dict],
-                                     "query": str,
-                                     "question_date": str   # "YYYY/MM/DD ..." }
-                    The question_date is the user's reference time at ask-
-                    time — critical for temporal-reasoning and knowledge-
-                    update questions.
-
+<<DATASET_SHAPES_BLOCK>>
 # Recommended dispatch pattern
 
 ```python
 async def general_update(self, recorder):
     init = recorder.init
-    if "app_logs" in init:
-        # DynamicMem Phase 1
-        ...
-    elif "conversation" in init:
-        # LoCoMo Phase 1
-        ...
-    elif "sessions" in init:
-        # LongMemEval Phase 1 (list of session dicts)
-        ...
+<<DISPATCH_UPDATE_BRANCHES>>
 
 async def general_retrieve(self, recorder):
     init = recorder.init
     query = init["query"]
-    if "app_logs" in init:
-        # DynamicMem Phase 2
-        ...
-    elif "conversation" in init:
-        # LoCoMo Phase 2
-        ...
-    elif "sessions" in init:
-        # LongMemEval Phase 2
-        # init["question_date"] is the user's reference time
-        ...
+<<DISPATCH_RETRIEVE_BRANCHES>>
 ```
 
 # Base image (pre-installed, import freely)
@@ -546,15 +478,183 @@ _SANITY_OFF_SUBS = {
 }
 
 
-def build_proposer_system(sanity_enabled: bool = True) -> str:
-    """Render PROPOSER_SYSTEM with sanity-related sections included or stripped.
+# Per-benchmark prompt blocks. Keys here are the canonical "shape names" —
+# longmemeval_s and longmemeval_m share the same shape doc, so both
+# normalize to "longmemeval".
+_DATASET_INFO = {
+    "dynamicmem": {
+        "display_name": "DynamicMem",
+        "qa_metadata": "    DynamicMem:    {domain, belonged, app_log_ids}",
+        "relevant": "    DynamicMem:    relevant_app_logs    log entries the app_log_ids point to",
+        "shape": """## DynamicMem (`app_logs`-based)
+  Phase 1 chunk:    recorder.init = {"app_logs": List[dict]}
+                    each app_log has: app_log_id, timestamp, app_name,
+                    api_name, request, response
+  Phase 2 retrieve: recorder.init = {"app_logs": List[dict], "query": str}
+""",
+        "dispatch_check": '"app_logs" in init',
+        "dispatch_update_comment": "# DynamicMem Phase 1",
+        "dispatch_retrieve_comment": "# DynamicMem Phase 2",
+    },
+    "locomo": {
+        "display_name": "LoCoMo",
+        "qa_metadata": """    LoCoMo:        {category, evidence}
+                     • category 1-4 = factual questions
+                     • category 5   = adversarial ("Not mentioned"; tests
+                                       hallucination resistance)
+                     • evidence     = list of dia_ids (e.g. "D1:9")""",
+        "relevant": "    LoCoMo:        relevant_turns       conversation turns evidence resolves to",
+        "shape": """## LoCoMo (multi-session two-person conversation)
+  Phase 1 chunk:    recorder.init = {"conversation": dict}
+                    conversation has keys: speaker_a (str), speaker_b (str),
+                    session_1..session_N (List[turn_dict]),
+                    session_N_date_time (str)
+                    each turn_dict has: speaker, dia_id (e.g. "D1:3"), text
+                    (NOTE: only `conversation` is provided — NO summaries,
+                     observations, or event_summary.)
+  Phase 2 retrieve: recorder.init = {"conversation": dict, "query": str}
+""",
+        "dispatch_check": '"conversation" in init',
+        "dispatch_update_comment": "# LoCoMo Phase 1",
+        "dispatch_retrieve_comment": "# LoCoMo Phase 2",
+    },
+    "longmemeval": {
+        "display_name": "LongMemEval",
+        "qa_metadata": """    LongMemEval:   {question_type, question_date, answer_session_ids}
+                     • question_type ∈ {single-session-user,
+                                         single-session-assistant,
+                                         multi-session,
+                                         temporal-reasoning,
+                                         knowledge-update}""",
+        "relevant": "    LongMemEval:   relevant_context     sessions answer_session_ids point to",
+        "shape": """## LongMemEval  (haystack of chat sessions with one question each)
+Two variants: `longmemeval_s` (~48 sessions/sample, ~120k tokens) and
+`longmemeval_m` (~475 sessions/sample, ~1.3M tokens) — same questions,
+different haystack density. The m variant exceeds any single-prompt
+context window, so memory/retrieval is mandatory.
 
-    Pass `sanity_enabled=False` when this run will NOT run the sanity layer
-    (cfg.sanity.enabled=false, or cfg.status=devtest). The prompt then
-    accurately reflects what will happen — no mentions of a sanity stage
-    that won't fire, no `<dataset>/sanity/` directory in the workspace tree.
+  Phase 1 chunk:    recorder.init = {"sessions": List[session_dict]}
+                    each session_dict has:
+                      session_id (str, e.g. "sharegpt_xxx" — distractor —
+                                  or "answer_xxx" — gold),
+                      date (str, e.g. "2023/05/20 (Sat) 02:21"),
+                      messages (List[{"role": "user"|"assistant", "content": str}])
+                    NOTE: `answer_` / `sharegpt_` / `ultrachat_` prefixes in
+                    session_id are a side effect of dataset construction; do
+                    NOT key off them for retrieval — the benchmark tests
+                    content-based memory, not id-based.
+  Phase 2 retrieve: recorder.init = {"sessions": List[session_dict],
+                                     "query": str,
+                                     "question_date": str   # "YYYY/MM/DD ..." }
+                    The question_date is the user's reference time at ask-
+                    time — critical for temporal-reasoning and knowledge-
+                    update questions.
+""",
+        "dispatch_check": '"sessions" in init',
+        "dispatch_update_comment": "# LongMemEval Phase 1 (list of session dicts)",
+        "dispatch_retrieve_comment": "# LongMemEval Phase 2\n        # init[\"question_date\"] is the user's reference time",
+    },
+}
+
+# Order to render datasets in (canonical: dynamicmem → locomo → longmemeval).
+_DATASET_RENDER_ORDER = ["dynamicmem", "locomo", "longmemeval"]
+
+
+def _normalize_active_datasets(active_datasets):
+    """Map dataset registration names → canonical shape group keys, in render order.
+
+    longmemeval_s + longmemeval_m share the same shape doc → both → "longmemeval".
+    Unknown names are silently dropped (defensive against typos / future names).
+    None / empty → all three (back-compat: render full prompt).
     """
-    subs = _SANITY_ON_SUBS if sanity_enabled else _SANITY_OFF_SUBS
+    if not active_datasets:
+        return list(_DATASET_RENDER_ORDER)
+    seen = set()
+    for ds in active_datasets:
+        key = "longmemeval" if ds.startswith("longmemeval") else ds
+        if key in _DATASET_INFO:
+            seen.add(key)
+    return [k for k in _DATASET_RENDER_ORDER if k in seen]
+
+
+def _build_dataset_subs(active):
+    """Compute the 6 dataset-conditional sentinel substitutions."""
+    n = len(active)
+    names_csv = ", ".join(_DATASET_INFO[k]["display_name"] for k in active)
+
+    if n == 0:
+        # Defensive: shouldn't happen since _normalize falls back to all three,
+        # but if it does, leave intro vague.
+        eval_intro = (
+            "Your memory system is evaluated on long-context QA benchmarks. "
+            "It must handle the `recorder.init` shape provided at runtime."
+        )
+    elif n == 1:
+        eval_intro = (
+            f"Your memory system is evaluated on the {names_csv} benchmark. "
+            f"See the dataset shape and dispatch pattern below."
+        )
+    else:
+        eval_intro = (
+            f"Your memory system is evaluated on MULTIPLE benchmarks "
+            f"(currently {names_csv}). Each benchmark exposes a different "
+            f"`recorder.init` shape, so it must handle all of them — either "
+            f"with dataset-agnostic logic, or by dispatching on the keys of "
+            f"`recorder.init`."
+        )
+
+    qa_meta = "\n".join(_DATASET_INFO[k]["qa_metadata"] for k in active)
+    relevant = "\n".join(_DATASET_INFO[k]["relevant"] for k in active)
+    shapes = "\n".join(_DATASET_INFO[k]["shape"] for k in active)
+
+    update_lines = []
+    retrieve_lines = []
+    for i, k in enumerate(active):
+        kw = "if" if i == 0 else "elif"
+        info = _DATASET_INFO[k]
+        update_lines.append(
+            f"    {kw} {info['dispatch_check']}:\n"
+            f"        {info['dispatch_update_comment']}\n"
+            f"        ..."
+        )
+        retrieve_lines.append(
+            f"    {kw} {info['dispatch_check']}:\n"
+            f"        {info['dispatch_retrieve_comment']}\n"
+            f"        ..."
+        )
+
+    return {
+        "<<EVAL_INTRO_BLOCK>>": eval_intro,
+        "<<TRACE_QA_METADATA_BLOCK>>": qa_meta,
+        "<<TRACE_RELEVANT_BLOCK>>": relevant,
+        "<<DATASET_SHAPES_BLOCK>>": shapes,
+        "<<DISPATCH_UPDATE_BRANCHES>>": "\n".join(update_lines),
+        "<<DISPATCH_RETRIEVE_BRANCHES>>": "\n".join(retrieve_lines),
+    }
+
+
+def build_proposer_system(sanity_enabled: bool = True, active_datasets=None) -> str:
+    """Render PROPOSER_SYSTEM with sanity-related AND dataset-specific sections
+    included or stripped according to the run config.
+
+    Args:
+      sanity_enabled  — pass False when this run will NOT run the sanity layer
+                        (cfg.sanity.enabled=false, or cfg.status=devtest).
+      active_datasets — list of dataset registration names from cfg["datasets"]
+                        keys (e.g. ["dynamicmem", "locomo", "longmemeval_s"]).
+                        Pass None / empty to render the full 3-benchmark prompt
+                        (back-compat).
+
+    The two `_SANITY_*_SUBS` dicts cover sanity sentinels; `_build_dataset_subs`
+    computes the dataset sentinels. Empty / unknown active_datasets defensively
+    fall back to all three (so callers that don't yet wire this through still
+    get a valid prompt).
+    """
+    active = _normalize_active_datasets(active_datasets)
+    subs = {
+        **(_SANITY_ON_SUBS if sanity_enabled else _SANITY_OFF_SUBS),
+        **_build_dataset_subs(active),
+    }
     out = _PROPOSER_SYSTEM_TEMPLATE
     for sentinel, replacement in subs.items():
         out = out.replace(sentinel, replacement)

@@ -265,6 +265,7 @@ async def propose(
     timeout_s: int = 25 * 60,
     disallowed_tools: Optional[List[str]] = None,
     sanity_enabled: bool = True,
+    active_datasets: Optional[List[str]] = None,
 ) -> Path:
     """Run a sandboxed proposer; return the new harness directory on success.
 
@@ -293,6 +294,7 @@ async def propose(
         "--timeout-s", str(timeout_s),
         "--disallowed-tools", ",".join(disallowed_tools or []),
         "--sanity-enabled", "true" if sanity_enabled else "false",
+        "--active-datasets", ",".join(active_datasets or []),
     ]
     cmd = _build_singularity_cmd(propose_args=propose_args, proposer_home=proposer_home)
 
@@ -320,6 +322,7 @@ async def propose_with_fix(
     timeout_s: int = 25 * 60,
     disallowed_tools: Optional[List[str]] = None,
     sanity_enabled: bool = True,
+    active_datasets: Optional[List[str]] = None,
 ) -> Path:
     """Ask CC to Read + Edit the existing harness to fix a sanity-check failure.
 
@@ -353,6 +356,7 @@ async def propose_with_fix(
         "--timeout-s", str(timeout_s),
         "--disallowed-tools", ",".join(disallowed_tools or []),
         "--sanity-enabled", "true" if sanity_enabled else "false",
+        "--active-datasets", ",".join(active_datasets or []),
     ]
     cmd = _build_singularity_cmd(propose_args=propose_args, proposer_home=proposer_home)
     try:

@@ -848,6 +848,7 @@ async def propose_eval_one(
                 timeout_s=cfg["proposer"]["timeout_s"],
                 disallowed_tools=cfg["proposer"]["disallowed_tools"],
                 sanity_enabled=sanity_enabled,
+                active_datasets=list(cfg.get("datasets", {}).keys()),
             )
         except (TimeoutError, RuntimeError) as exc:
             log.error(f"proposer failed: {exc}")
@@ -906,6 +907,7 @@ async def propose_eval_one(
                     timeout_s=cfg["proposer"]["timeout_s"],
                     disallowed_tools=cfg["proposer"]["disallowed_tools"],
                     sanity_enabled=sanity_enabled,
+                    active_datasets=list(cfg.get("datasets", {}).keys()),
                 )
             except (TimeoutError, RuntimeError) as exc:
                 log.error(f"propose_with_fix failed for {new_id}: {exc}")

@@ -115,9 +115,16 @@ async def _run(args: argparse.Namespace) -> int:
     # Empty string / unset = no restrictions = allow all tools.
     disallowed_tools = [t.strip() for t in (args.disallowed_tools or "").split(",") if t.strip()]
 
+    # Active datasets (comma-separated; empty = render full 3-benchmark prompt
+    # for back-compat with older orchestrators that don't yet wire this).
+    active_datasets = [d.strip() for d in (args.active_datasets or "").split(",") if d.strip()]
+
     options = ClaudeCodeOptions(
         cwd=str(workspace),
-        system_prompt=build_proposer_system(sanity_enabled=args.sanity_enabled),
+        system_prompt=build_proposer_system(
+            sanity_enabled=args.sanity_enabled,
+            active_datasets=active_datasets or None,
+        ),
         permission_mode="bypassPermissions",
         model=args.model,
         max_turns=args.max_turns,
@@ -189,6 +196,11 @@ def main() -> None:
                    choices=["true", "false"],
                    help="Whether the orchestrator will run a sanity check after this propose. "
                         "Controls whether sanity-related sections appear in PROPOSER_SYSTEM.")
+    p.add_argument("--active-datasets", default="",
+                   help="Comma-separated dataset names this run is configured for "
+                        "(e.g. 'dynamicmem,locomo'). Empty = full 3-benchmark prompt. "
+                        "Controls which dataset shapes / dispatch examples / trace "
+                        "field listings appear in PROPOSER_SYSTEM.")
     args = p.parse_args()
     # Convert string flag → bool (argparse choices keep it stringly-typed for
     # CLI symmetry with the host launcher).
