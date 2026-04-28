@@ -1,0 +1,38 @@
+# Fast iteration: small per-benchmark coverage.
+# Usage:
+#   python -m forge.orchestrator --config configs/search_mini.yaml
+steps: 3
+status: search            # train/explore on search split (full eval size, sanity respected)
+max_sample_concurrent: 3
+memory_dumps: full        # full | stats | none
+
+model: gpt-5-mini
+judge_model: gpt-5-mini
+update_type: all_at_once
+
+proposer:
+  model: claude-opus-4-7
+  max_turns: 80
+  timeout_s: 1500          # seconds
+
+propose:
+  k_per_step: 2            # candidates per step
+
+selection:
+  tau: 0.5                 # only used for held-out test top-K
+
+sanity:
+  enabled: true
+  max_retries: 2
+
+datasets:
+  dynamicmem:
+    eval_n_samples: 2
+    eval_n_qa: 10
+    # check_n_samples / check_n_qa default to 1 / 3
+  locomo:
+    eval_n_samples: 2
+    eval_n_qa: 10
+  longmemeval_s:
+    eval_n_samples: 10
+    # eval_n_qa & check_n_qa ignored — LongMemEval has exactly 1 QA per sample

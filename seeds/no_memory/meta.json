@@ -1,0 +1,4 @@
+{
+  "parent_ids": [],
+  "description": "Seed: no memory baseline. Phase 1 is a no-op; Phase 2 returns an empty dict so the QA agent answers from the question alone with no retrieved context."
+}

@@ -1,0 +1,38 @@
+# Top-level requirements for forge eval-base
+# Transitive deps resolved by pip
+
+# LLM APIs
+openai>=1.107
+anthropic
+claude-code-sdk>=0.0.25
+tiktoken
+
+# Vector store / embeddings
+chromadb>=1.5
+langchain-chroma>=1.1
+sentence-transformers>=5.0
+
+# ML foundations (CPU only - torch pulled as CPU wheel from PyPI default)
+torch>=2.6,<2.8
+numpy
+scipy
+pandas
+scikit-learn
+
+# Graph
+networkx
+
+# Retrieval
+rank_bm25
+
+# Text processing
+nltk
+
+# Utilities
+python-dotenv
+pydantic>=2
+rich
+tenacity
+tqdm
+jsonschema
+pyyaml

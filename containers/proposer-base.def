@@ -1,0 +1,33 @@
+Bootstrap: localimage
+From: /export/scratch_large/ding/forge_images/eval-base.sif
+
+# Proposer-side container. Bootstraps from eval-base.sif so the proposer's
+# Python env is IDENTICAL to the evaluator's (chromadb, sentence-transformers,
+# networkx, rank_bm25, etc. all preinstalled — including claude_code_sdk).
+# This lets CC `python -c "from harness import ..."` for sub-second import
+# validation against the same stack the evaluator will use.
+#
+# Adds only: jq + tree (paper-style filesystem queries over JSON / dir tree).
+# All Python deps come from eval-base's pip install — proposer_requirements.txt
+# is no longer needed (kept on disk for reference; not copied in).
+#
+# The `claude` CLI binary itself is NOT installed here — it's bind-mounted
+# from the host at runtime (see forge/proposer.py launcher).
+
+%post
+    set -e
+    apt-get update && apt-get install -y --no-install-recommends \
+        jq \
+        tree \
+        && rm -rf /var/lib/apt/lists/*
+
+%environment
+    export PYTHONUNBUFFERED=1
+    export PYTHONDONTWRITEBYTECODE=1
+    export HOME=/root
+
+%labels
+    Author ding
+    Purpose forge-proposer-base
+    Python 3.12
+    Inherits eval-base.sif

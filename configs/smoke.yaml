@@ -1,0 +1,17 @@
+# Minimal config for a quick end-to-end smoke test (<1 min on the host).
+# Usage:
+#   venv/bin/python -m forge.orchestrator --config configs/smoke.yaml
+steps: 0                  # just evaluate the seed harness; no propose step
+status: devtest           # search split + check sizes + sanity always skipped
+
+# Smoke needs SOMETHING to evaluate (steps=0 + no seed = no work),
+# so opt into the seed harness here. The default for normal runs is off.
+seed:
+  enabled: true
+  source: no_memory
+
+datasets:
+  dynamicmem:
+    # devtest uses the check_n_* sizes (eval_n_* are ignored under devtest).
+    check_n_samples: 1
+    check_n_qa: 2

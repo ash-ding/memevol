@@ -1,0 +1,221 @@
+# =============================================================================
+# configs/example.yaml — exhaustive forge config reference.
+#
+# Lists EVERY field that can be set via YAML, with its default value and a
+# one-line note on what it does. Copy this file as a starting point and tune
+# the fields you care about; everything you omit falls back to the default
+# defined in `forge/orchestrator.py::DEFAULT_CONFIG`.
+#
+# CLI flags always override matching YAML fields (e.g. `--steps 5` wins over
+# `steps: 1` here). The launch command is:
+#
+#     venv/bin/python -m forge.orchestrator --config configs/example.yaml
+#
+# CLI-only options (no YAML equivalent):
+#   --config <path>      pick a YAML to start from
+#   --verbose            DEBUG-level console + log output
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Top-level run settings
+# -----------------------------------------------------------------------------
+
+# Per-run workspace dir name → workspace/<run_name>/. If omitted at YAML AND
+# CLI, defaults to a YYYYMMDD_HHMMSS timestamp resolved at startup.
+run_name: my_first_search
+
+# Outer-loop iterations. Each iteration runs `propose.k_per_step` candidate
+# harnesses (so total proposals = steps * k_per_step). steps=0 means
+# "evaluate the seed (if any) and exit" — useful for dry runs.
+steps: 5
+
+# search | test | devtest — what stage of work is this run?
+#   search  — training/exploration phase. Reads SEARCH split (e.g. DynamicMem
+#             users 001-006, LoCoMo conv-26..conv-44, LongMemEval 50 stratified
+#             question_ids). Uses the FULL eval sizes (`eval_n_*`). Sanity
+#             layer respects `sanity.enabled` (default on).
+#   test    — held-out evaluation phase. Reads TEST split. Uses full eval sizes.
+#             Sanity respects `sanity.enabled`.
+#   devtest — quick dev verification ("smoke / iterate"). Reads SEARCH split
+#             (devtest is for cheaply iterating on search-time work; never
+#             touches the held-out test split). Uses the small `check_n_*`
+#             sizes. Sanity is ALWAYS skipped (devtest IS the sanity-size
+#             quick check; running another sanity layer is redundant).
+status: search
+
+# OpenAI model used by the QA agent inside each harness eval (NOT the
+# proposer — see `proposer.model`). Anything supported by OpenAI's
+# /chat/completions endpoint works; gpt-5-mini / gpt-5 / gpt-4.1 / etc.
+model: gpt-5-mini
+
+# OpenAI model used by the LLM-as-judge that scores predicted vs reference
+# answers per QA. Cheaper models are usually fine; gpt-5-mini is a sensible
+# default that matches `model` for cost predictability.
+judge_model: gpt-5-mini
+
+# How Phase 1 chunks app_logs / sessions before calling general_update():
+#   all_at_once — one call with everything (default; cheapest, most context)
+#   chunked     — split into N equal chunks (uses an internal n_chunks=5)
+#   sequential  — one update per item (most fine-grained, most calls)
+update_type: all_at_once
+
+# Asyncio semaphore cap for parallel users within one Singularity exec.
+# Higher = faster eval but more concurrent OpenAI calls (rate limits) and
+# more container memory. 3-6 is sane.
+max_sample_concurrent: 3
+
+# full | stats | none — what to write under harnesses/<id>/<dataset>/memory_dumps/
+# after Phase 1, per user. `mode=check` ALWAYS skips dumps regardless of this.
+#   full  — complete memo state (Chroma docs+metas, NetworkX nodes+edges, dict raw)
+#           — can be MB-scale per user for LongMemEval_m
+#   stats — sizes + 3-5 sample entries (cheap, alma's old behavior)
+#   none  — skip the dump entirely
+memory_dumps: full
+
+# -----------------------------------------------------------------------------
+# Proposer (Claude Code SDK) — runs OUTSIDE the eval container, in its own
+# Singularity sandbox (proposer-base.sif). Authenticates via the host's
+# `claude login` subscription (no ANTHROPIC_API_KEY needed).
+# -----------------------------------------------------------------------------
+
+proposer:
+  # Anthropic model id used by the SDK proposer. opus-4-7 is the strongest
+  # available; sonnet variants are cheaper but produce simpler harnesses.
+  model: claude-opus-4-7
+
+  # Maximum agentic turns the proposer is allowed (caps Read/Bash/Write loops
+  # in case CC gets stuck). 80 leaves comfortable room for EXPLORATORY runs
+  # that browse multiple priors + WebSearch for inspiration + iterate on the
+  # harness. Meta-Harness paper reports median 82 file-reads per iteration
+  # (Appendix A.1), so this matches that scale. Tighten to ~50 only if you
+  # observe propose calls consistently finishing well under budget.
+  max_turns: 80
+
+  # Wall-clock cap for ONE propose() call (in seconds). If hit, the orchestrator
+  # logs TimeoutError and the harness is recorded as `proposer_failed`. 1500s
+  # (25 min) ≈ 80 turns × ~20s/turn — sized to the max_turns budget. WebFetch
+  # of slow papers can also push wall-clock up.
+  timeout_s: 1500
+
+  # Tools blocked inside the proposer container. Filesystem isolation is
+  # enforced by the Singularity bind list (see CLAUDE.md "Singularity & images"),
+  # so this list is only about CC's *behavioral* surface.
+  #   ["mcp__*"]                       — default; only MCP wildcard. CC can use
+  #                                       Bash / WebFetch / WebSearch / Read etc.
+  #   []                               — allow EVERYTHING (incl. MCP, if any
+  #                                       MCP server is registered on the host).
+  #   ["Bash", "WebFetch", "WebSearch", "mcp__*"]  — paranoid sandbox (pre-v6
+  #                                       behavior); CC limited to Read/Grep/Glob/Write/Edit.
+  # CLI override: --proposer-disallowed-tools "Bash,WebFetch,mcp__*"  (use ""
+  # to allow all).
+  disallowed_tools:
+    - mcp__*
+
+# -----------------------------------------------------------------------------
+# How many candidate harnesses CC proposes per outer-loop step
+# -----------------------------------------------------------------------------
+
+propose:
+  # k harnesses generated per outer-loop iteration. Default 2 follows the
+  # Meta-Harness paper. Each is an independent CC SDK call; runs serially.
+  # Total proposals per run = steps * k_per_step.
+  k_per_step: 2
+
+# -----------------------------------------------------------------------------
+# Frontier selection (currently single-axis, see PROGRESS.md)
+# -----------------------------------------------------------------------------
+
+selection:
+  # Softmax temperature for `Frontier.sample_parent` — only used by
+  # held-out test top-K selection scripts (NOT by search_loop, which delegates
+  # parent selection to the proposer agent per Meta-Harness paper).
+  # Lower tau = greedier, higher tau = closer to uniform random.
+  tau: 0.5
+
+# -----------------------------------------------------------------------------
+# Pre-eval sanity check (small mode=check run before full eval)
+# -----------------------------------------------------------------------------
+
+sanity:
+  # Run sanity before full eval when mode=eval. Disable to go straight to
+  # full eval (faster but no early failure detection).
+  enabled: true
+
+  # Maximum propose_with_fix retries when sanity fails. Each retry asks CC
+  # to Read+Edit its own harness based on the error trace. Default 2.
+  # Set to 0 to disable retries (sanity_failed → frontier with score 0).
+  max_retries: 2
+
+# -----------------------------------------------------------------------------
+# Optional seed harness (copied from seeds/<source>/ at startup)
+# -----------------------------------------------------------------------------
+
+seed:
+  # Default off — CC writes the first harness from scratch with parent_ids=[].
+  # Enable to give CC a known baseline to reference.
+  enabled: false
+
+  # Which subdir under top-level `seeds/` to copy as harnesses/0/ at startup.
+  # Currently available: "no_memory" (Phase 1 no-op, Phase 2 returns {}).
+  # Add new seeds by creating seeds/<name>/{harness.py, meta.json}.
+  source: no_memory
+
+# -----------------------------------------------------------------------------
+# GPU support for the eval container (NOT the proposer)
+# -----------------------------------------------------------------------------
+
+gpu:
+  # When true, prepends `--nv` to the evaluator's `singularity exec`,
+  # bind-mounting host's NVIDIA driver libs (libcuda.so etc.) so the
+  # container's torch+cu126 wheel can use GPUs visible at /dev/nvidia*.
+  # Default off for portability — turning on couples runs to a host with
+  # a compatible NVIDIA driver. Verified on this host with 4× L40S.
+  enabled: false
+
+# -----------------------------------------------------------------------------
+# Datasets (per-benchmark eval and sanity sizes)
+#
+# Each key under `datasets:` MUST match a workflow registered in
+# `forge/launch.py::WORKFLOWS`. Currently available:
+#   dynamicmem, locomo, longmemeval_s, longmemeval_m
+#
+# Comment out a benchmark to skip it; the entire datasets block is required
+# (orchestrator errors out if no datasets configured).
+# -----------------------------------------------------------------------------
+
+datasets:
+
+  dynamicmem:
+    # Full-eval task-list cap (# users from search/test split — total
+    # available: 6 users in search split, 4 in test).
+    eval_n_samples: 6
+    # Full-eval per-user QA cap. None or omitted = use ALL QAs available
+    # (DynamicMem users have ~178 QAs each; LoCoMo conversations have ~199).
+    eval_n_qa: 30
+    # Sanity-check task-list cap. Default 1.
+    check_n_samples: 1
+    # Sanity-check per-sample QA cap. Default 3.
+    check_n_qa: 3
+
+  locomo:
+    # 6 conversations in search split (conv-26..conv-44), 4 in test.
+    eval_n_samples: 6
+    eval_n_qa: 30
+    check_n_samples: 1
+    check_n_qa: 3
+
+  longmemeval_s:
+    # 50 question_ids in search split (stratified by question_type), 450 in test.
+    # NOTE: LongMemEval has exactly 1 QA per sample, so eval_n_qa / check_n_qa
+    # are IGNORED here (the workflow forces qa_per_user_estimate=1).
+    eval_n_samples: 50
+    check_n_samples: 1
+    # eval_n_qa and check_n_qa are ignored for longmemeval_*; omitting them
+    # is fine.
+
+  longmemeval_m:
+    # Same shape as _s but with a much bigger haystack per question (~475
+    # sessions, ~1.3M tokens). Each Singularity exec reloads the 2.7 GB
+    # JSON (~30s overhead per harness eval). See PROGRESS.md deferred work.
+    eval_n_samples: 50
+    check_n_samples: 1
