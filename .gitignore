@@ -6,9 +6,11 @@ __pycache__/
 *.pyc
 *.pyo
 
-# Data (too large for git)
+# Data (too large for git or out-of-policy to ship in repo)
 datasets/dynamicmem/user_data/
 datasets/dynamicmem/user_qa/
+datasets/locomo/locomo10.json
+datasets/longmemeval/*.json
 
 # Environment secrets
 .env
@@ -18,6 +20,9 @@ docs/
 
 # Claude Code local settings
 .claude/
+CLAUDE.md
+PROGRESS.md
+PROGRESS.zh.md
 
 # --- alma baseline runtime artifacts ---
 # Checkpoints, rotating log files, archived eval logs
@@ -38,3 +43,21 @@ baselines/alma/results/
 baselines/*/outputs/
 baselines/*/logs/
 baselines/*/results/*_dryrun.json
+
+# --- meta-harness runtime artifacts ---
+baselines/meta-harness/archive/
+baselines/meta-harness/results/
+baselines/meta-harness/logs/
+
+# --- forge runtime artifacts ---
+# Per-run workspaces (workspace/<run_id>/...) hold all generated harnesses,
+# eval outputs, and frontier snapshots. Seeds live under top-level seeds/
+# and ARE git-tracked.
+workspace/
+
+# forge rotating logs
+forge/logs/*
+!forge/logs/.gitkeep
+
+# Built Singularity images (too large for git; stored on /export/scratch_large)
+containers/*.sif
