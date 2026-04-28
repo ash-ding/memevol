@@ -191,7 +191,7 @@ datasets:
     eval_n_samples: 6
     # Full-eval per-user QA cap. None or omitted = use ALL QAs available
     # (DynamicMem users have ~178 QAs each; LoCoMo conversations have ~199).
-    eval_n_qa: 30
+    eval_n_qa: 20
     # Sanity-check task-list cap. Default 1.
     check_n_samples: 1
     # Sanity-check per-sample QA cap. Default 3.
@@ -200,7 +200,7 @@ datasets:
   locomo:
     # 6 conversations in search split (conv-26..conv-44), 4 in test.
     eval_n_samples: 6
-    eval_n_qa: 30
+    eval_n_qa: 20           
     check_n_samples: 1
     check_n_qa: 3
 
