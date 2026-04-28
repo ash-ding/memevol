@@ -81,7 +81,9 @@ def _emit(prefix: str, msg: str) -> None:
     forwards these into the orchestrator log.
 
     Tag conventions:
-      proposer·text    CC assistant text (truncated to 160 chars)
+      proposer·text    CC assistant text — emitted line-by-line, full content
+                       (one log line per source line; rendered at INFO so the
+                       reasoning is visible without --verbose)
       proposer·tool    CC tool use (truncated to 140 chars)
       proposer·info    high-level status (model, finish, usage)
       proposer·error   actionable failure
@@ -136,9 +138,13 @@ async def _run(args: argparse.Namespace) -> int:
             if isinstance(msg, AssistantMessage):
                 for block in msg.content:
                     if isinstance(block, TextBlock):
-                        snippet = block.text.strip()[:160].replace("\n", " ")
-                        if snippet:
-                            _emit("proposer·text", snippet)
+                        text = block.text.strip()
+                        if text:
+                            # Emit each line separately so orchestrator.log preserves
+                            # paragraph structure (no truncation; CC's reasoning between
+                            # tool calls is the richest signal for "why this decision").
+                            for line in text.splitlines():
+                                _emit("proposer·text", line)
                     elif isinstance(block, ToolUseBlock):
                         tool_count += 1
                         _emit("proposer·tool",

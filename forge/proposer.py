@@ -222,6 +222,8 @@ async def _stream_subprocess(cmd: List[str], timeout_s: int, label: str) -> int:
                 log.info(line)
             elif line.startswith("proposer·tool"):
                 log.info(line)
+            elif line.startswith("proposer·text"):
+                log.info(line)
             else:
                 log.debug(line)
 
