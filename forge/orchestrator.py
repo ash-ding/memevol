@@ -52,6 +52,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import shutil
 import sys
 import time
@@ -150,6 +151,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         # Proposer container does NOT honor this (CC just makes API calls).
         "enabled": False,
     },
+    # When True, search_loop's resume path scans `harnesses/` for dirs that
+    # exist on disk but aren't in frontier (e.g. orchestrator killed mid-eval),
+    # classifies them by file presence, and runs only the missing pipeline
+    # stages before adding them to frontier. Disable via `--no-adopt-orphans`
+    # if you suspect the orphan dirs are corrupt.
+    "adopt_orphans": True,
     # `run_name` defaults to a timestamp at resolve time (so the default isn't
     # frozen at import time). `datasets` intentionally omitted from defaults.
 }
@@ -222,6 +229,8 @@ def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
         cfg["seed"]["source"] = args.seed_source
     if args.gpu:
         cfg["gpu"]["enabled"] = True
+    if args.no_adopt_orphans:
+        cfg["adopt_orphans"] = False
 
     # run_name: CLI > YAML > timestamp default. Resolved here (not in
     # DEFAULT_CONFIG) so `from forge.orchestrator import DEFAULT_CONFIG`
@@ -994,6 +1003,15 @@ async def search_loop(cfg: Dict[str, Any]) -> None:
     if _cleanup_polluting_entries(frontier) > 0:
         frontier.save(paths.frontier_path)
 
+    # Resume orphan adoption: re-attach harness dirs that exist on disk but
+    # aren't in frontier (e.g. orchestrator killed mid-eval). Runs BEFORE
+    # seed-bootstrap so an orphaned 0_<hash> seed is auto-detected and the
+    # bootstrap's `seed_already_in_frontier` check below sees it.
+    if cfg.get("adopt_orphans", True):
+        n_adopted = await _adopt_orphan_dirs(cfg, frontier)
+        if n_adopted:
+            log.info(f"adoption: re-attached {n_adopted} orphan harness(es) from disk")
+
     datasets_config: Dict[str, Dict[str, Any]] = cfg["datasets"]
     dataset_names = list(datasets_config.keys())
 
@@ -1101,6 +1119,265 @@ async def search_loop(cfg: Dict[str, Any]) -> None:
             )
             + f"  [sanity={sanity_status}]  parent_ids={parent_ids}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Resume orphan adoption: re-attach harness dirs that exist on disk but
+# aren't in frontier (e.g. orchestrator killed mid-eval). Classify each by
+# file presence and run ONLY the missing pipeline stages.
+#
+# Cases handled (Case B — pre-sanity orphans — is intentionally discarded
+# rather than re-sanity'd; that requires extracting propose_eval_one's
+# sanity loop into a helper, deferred):
+#
+#   complete       hash-suffix dir + every <ds>/score.json present  →
+#                  build Entry from on-disk metrics, no eval
+#   sanity_passed  hash-suffix dir + every <ds>/sanity/score.json   →
+#                  call evaluate_harness for the missing full eval
+#   sanity_failed  hash-suffix dir + every <ds>/score.json contains
+#                  the "sanity_failed_after_retries" sentinel       →
+#                  build all-zero Entry, no eval
+#   incomplete     anything else (no harness.py, no hash suffix,
+#                  partial sanity, etc.)                            →
+#                  rm -rf the dir + warn
+# ---------------------------------------------------------------------------
+
+# Matches a valid harness dir name: integer (pre-finalize) or integer_hash8
+# (post-finalize). Anything else (e.g. user-created `notes/`, transient
+# scratch files) is filtered out by _scan_orphan_dirs.
+_HARNESS_DIR_RX = re.compile(r"^\d+(_[0-9a-f]{8})?$")
+
+
+def _scan_orphan_dirs(frontier: Frontier) -> List[Path]:
+    """Return harness dirs on disk whose int prefix isn't in `frontier`,
+    sorted by integer prefix ascending so adoption runs in id order."""
+    if not paths.harnesses_dir.exists():
+        return []
+    in_frontier_int_prefixes = {
+        e.id.split("_", 1)[0] for e in frontier.all_entries()
+    }
+    orphans: List[Tuple[int, Path]] = []
+    for child in paths.harnesses_dir.iterdir():
+        if not child.is_dir():
+            continue
+        if not _HARNESS_DIR_RX.match(child.name):
+            continue
+        int_prefix = child.name.split("_", 1)[0]
+        if int_prefix in in_frontier_int_prefixes:
+            continue
+        try:
+            orphans.append((int(int_prefix), child))
+        except ValueError:
+            continue
+    orphans.sort(key=lambda t: t[0])
+    return [path for _, path in orphans]
+
+
+def _classify_orphan(harness_dir: Path, dataset_names: List[str]) -> str:
+    """Return 'complete' | 'sanity_passed' | 'sanity_failed' | 'incomplete'.
+
+    Decision tree (in order):
+      - no harness.py                                  → 'incomplete'
+      - dir name has no underscore (Case B)            → 'incomplete'
+      - meta.json missing or content_hash missing      → 'incomplete'
+      - every <ds>/sanity/score.json present:
+          if every <ds>/score.json present             → 'complete'
+          else                                         → 'sanity_passed'
+      - no <ds>/sanity/ exists for any ds AND every
+        <ds>/score.json contains the sanity-failed
+        sentinel                                       → 'sanity_failed'
+      - else (partial / mixed-state)                   → 'incomplete'
+    """
+    if not (harness_dir / "harness.py").exists():
+        return "incomplete"
+    if "_" not in harness_dir.name:
+        return "incomplete"
+    meta = _read_meta(harness_dir)
+    if not meta.get("content_hash"):
+        return "incomplete"
+
+    sanity_score_paths = [
+        _sanity_dir(harness_dir, ds) / "score.json" for ds in dataset_names
+    ]
+    full_score_paths = [
+        _dataset_dir(harness_dir, ds) / "score.json" for ds in dataset_names
+    ]
+    has_all_sanity = all(p.exists() for p in sanity_score_paths)
+    has_all_full = all(p.exists() for p in full_score_paths)
+    has_no_sanity_dirs = not any(
+        _sanity_dir(harness_dir, ds).exists() for ds in dataset_names
+    )
+
+    if has_all_sanity:
+        return "complete" if has_all_full else "sanity_passed"
+
+    # Case E: no sanity dirs at all + all full eval score.jsons exist with the
+    # "sanity_failed_after_retries" marker that propose_eval_one writes via
+    # _write_failure when the sanity retry loop exhausts.
+    if has_no_sanity_dirs and has_all_full:
+        for p in full_score_paths:
+            try:
+                with p.open("r", encoding="utf-8") as f:
+                    data = json.load(f)
+            except Exception:
+                return "incomplete"
+            invalid = data.get("invalid_users", [])
+            if not any(
+                isinstance(u, dict) and u.get("error") == "sanity_failed_after_retries"
+                for u in invalid
+            ):
+                return "incomplete"
+        return "sanity_failed"
+
+    return "incomplete"
+
+
+def _build_adopted_entry(harness_dir: Path, per_ds: Dict[str, Dict[str, Any]]) -> Entry:
+    """Construct an Entry from per-dataset metrics + the dir's meta.json.
+
+    Used by all three "successful adoption" paths (complete / sanity_passed /
+    sanity_failed) — the only difference is whether we ran evaluate_harness
+    to get per_ds or read it straight from existing score.jsons.
+    """
+    meta = _read_meta(harness_dir)
+    return Entry(
+        id=harness_dir.name,
+        objectives=_build_objectives(per_ds, harness_dir),
+        parent_ids=_read_parent_ids(harness_dir),
+        content_hash=meta.get("content_hash"),
+        created_at=meta.get("created_at"),
+    )
+
+
+async def _adopt_orphan(
+    cfg: Dict[str, Any], harness_dir: Path, frontier: Frontier
+) -> Optional[Entry]:
+    """Re-enter the pipeline at the right stage for one orphan.
+
+    Returns the new Entry (already added to frontier — caller batches the
+    save) or None if the orphan was discarded.
+    """
+    dataset_names = list(cfg["datasets"].keys())
+    kind = _classify_orphan(harness_dir, dataset_names)
+    name = harness_dir.name
+
+    if kind == "incomplete":
+        log.warning(
+            f"adoption: discarded incomplete orphan harnesses/{name} "
+            f"(missing harness.py / hash suffix / content_hash, or partial sanity/eval state)"
+        )
+        shutil.rmtree(harness_dir, ignore_errors=True)
+        return None
+
+    # Defensive content_hash check (only meaningful for hash-suffixed dirs,
+    # which all surviving cases here are). Detects post-finalize edits to
+    # harness.py — would mean the eval would run different code than the
+    # hash suffix advertises.
+    expected_hash8 = name.split("_", 1)[1]
+    try:
+        actual_hash8 = _compute_content_hash(harness_dir)[:8]
+    except Exception as exc:
+        log.warning(
+            f"adoption: discarded harnesses/{name} — could not "
+            f"compute content_hash: {exc}"
+        )
+        shutil.rmtree(harness_dir, ignore_errors=True)
+        return None
+    if actual_hash8 != expected_hash8:
+        log.warning(
+            f"adoption: discarded harnesses/{name} — content_hash mismatch "
+            f"(computed={actual_hash8}, dir suffix={expected_hash8}); "
+            f"harness.py was modified post-finalize"
+        )
+        shutil.rmtree(harness_dir, ignore_errors=True)
+        return None
+
+    # Sanity-failed: synthetic 0-scores already on disk; just build the Entry.
+    if kind == "sanity_failed":
+        log.info(f"adoption: harnesses/{name} → sanity_failed (no eval needed)")
+        per_ds = {ds: _read_dataset_metrics(harness_dir, ds) for ds in dataset_names}
+        entry = _build_adopted_entry(harness_dir, per_ds)
+        frontier.add(entry)
+        _persist_sanity_status(name, "adopted_failed")
+        return entry
+
+    # Fully complete: just build the Entry from on-disk score.jsons.
+    if kind == "complete":
+        log.info(f"adoption: harnesses/{name} → complete (no eval needed)")
+        per_ds = {ds: _read_dataset_metrics(harness_dir, ds) for ds in dataset_names}
+        entry = _build_adopted_entry(harness_dir, per_ds)
+        frontier.add(entry)
+        _persist_sanity_status(name, "adopted_complete")
+        return entry
+
+    # Sanity passed but full eval missing/partial: run evaluate_harness only.
+    log.info(
+        f"adoption: harnesses/{name} → sanity_passed; running evaluate_harness "
+        f"on {dataset_names}"
+    )
+    try:
+        image_path = await ensure_image(harness_dir)
+    except EnvBuildError as exc:
+        log.error(
+            f"adoption: env build failed for harnesses/{name}: {exc}; "
+            f"adopting as failed Entry with all-zero objectives"
+        )
+        for ds in dataset_names:
+            _write_failure(_dataset_dir(harness_dir, ds), f"env_build_failed: {exc}")
+        per_ds = {ds: _read_dataset_metrics(harness_dir, ds) for ds in dataset_names}
+        entry = _build_adopted_entry(harness_dir, per_ds)
+        frontier.add(entry)
+        _persist_sanity_status(name, "adopted_env_build_failed")
+        return entry
+
+    per_ds = await evaluate_harness(
+        name, image_path,
+        datasets_config=cfg["datasets"],
+        status=cfg["status"],
+        model=cfg["model"], judge_model=cfg["judge_model"],
+        update_type=cfg["update_type"],
+        max_sample_concurrent=cfg["max_sample_concurrent"],
+        memory_dumps=cfg["memory_dumps"],
+        gpu=cfg["gpu"]["enabled"],
+    )
+    entry = _build_adopted_entry(harness_dir, per_ds)
+    frontier.add(entry)
+    _persist_sanity_status(name, "adopted_passed")
+    return entry
+
+
+async def _adopt_orphan_dirs(cfg: Dict[str, Any], frontier: Frontier) -> int:
+    """Top-level: scan + classify + adopt orphan harness dirs in id order.
+
+    Saves the frontier once at the end if any adoption succeeded. Returns
+    the count successfully adopted (incomplete/discarded don't count).
+    """
+    orphans = _scan_orphan_dirs(frontier)
+    if not orphans:
+        return 0
+    log.info(
+        f"adoption: scanning harnesses/ for orphans not in frontier — "
+        f"found {len(orphans)} candidate(s): {[p.name for p in orphans]}"
+    )
+    adopted = 0
+    for harness_dir in orphans:
+        try:
+            entry = await _adopt_orphan(cfg, harness_dir, frontier)
+        except Exception as exc:
+            log.error(
+                f"adoption: unexpected error adopting harnesses/{harness_dir.name}: "
+                f"{exc}; leaving dir as-is"
+            )
+            continue
+        if entry is not None:
+            adopted += 1
+            log.info(
+                f"adoption: re-attached {entry.id} "
+                f"accuracy={entry.objectives.get('accuracy', 0):.3f}"
+            )
+    if adopted:
+        frontier.save(paths.frontier_path)
+    return adopted
 
 
 # ---------------------------------------------------------------------------
@@ -1275,6 +1552,11 @@ def main() -> None:
                         help="Pass --nv to evaluator's singularity exec so the "
                              "container can use the host's NVIDIA driver. "
                              "Default off (CPU-only).")
+    parser.add_argument("--no-adopt-orphans", action="store_true",
+                        help="Skip orphan-harness-dir adoption pass on resume. "
+                             "Default ON: dirs on disk but not in frontier are "
+                             "re-attached (only the missing pipeline stages re-run). "
+                             "Pass this to force a clean restart instead.")
 
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
