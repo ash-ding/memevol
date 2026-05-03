@@ -59,6 +59,17 @@ class Frontier:
     def all_entries(self) -> List[Entry]:
         return list(self._entries)
 
+    def remove_by_ids(self, ids) -> int:
+        """Drop entries whose id is in `ids` (set or any container).
+
+        Returns the count removed. Used by the orchestrator's polluting-entry
+        cleanup at search_loop startup.
+        """
+        ids = set(ids)
+        before = len(self._entries)
+        self._entries = [e for e in self._entries if e.id not in ids]
+        return before - len(self._entries)
+
     # ------------------------------------------------------------------
     # Frontier
     # ------------------------------------------------------------------

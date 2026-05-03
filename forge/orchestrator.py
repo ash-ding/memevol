@@ -75,6 +75,21 @@ from forge.selection import Entry, Frontier
 log = logging.getLogger("forge.orchestrator")
 
 
+class ProposerInfraError(RuntimeError):
+    """Raised when the proposer subprocess itself fails (rc!=0, timeout, auth).
+
+    Distinct from harness-level failures (sanity_failed, env_build, eval crash)
+    which the search loop continues past — those are CC's design mistakes that
+    the search is supposed to learn from. ProposerInfraError means the proposer
+    subprocess never completed (no harness.py written), so there's no signal
+    to learn from and continuing would just generate a placeholder entry that
+    pollutes the frontier and confuses resume logic.
+
+    Triggers (a) cleanup of the empty harness dir, (b) abort of search_loop,
+    (c) main()'s sys.exit(2) so wrapper scripts can detect.
+    """
+
+
 # ---------------------------------------------------------------------------
 # Config resolution: defaults ← YAML file ← CLI overrides
 # ---------------------------------------------------------------------------
@@ -851,10 +866,18 @@ async def propose_eval_one(
                 active_datasets=list(cfg.get("datasets", {}).keys()),
             )
         except (TimeoutError, RuntimeError) as exc:
-            log.error(f"proposer failed: {exc}")
-            # Propose may have written nothing — finalize is a no-op then.
-            _settle_path()
-            return final_id, {ds: {"raw_score": 0.0, "score_max": 1, "per_user_stddev": None, "tokens": 0} for ds in dataset_names}, "proposer_failed", []
+            # propose() failed — most likely subprocess exited rc!=0 (auth 401,
+            # SDK timeout, or other infra error). harness.py was almost
+            # certainly never written. Clean up the empty harness dir so resume
+            # isn't polluted, then propagate ProposerInfraError to abort the
+            # search loop. main() catches it and sys.exit(2).
+            log.error(f"proposer failed for {new_id}: {exc}")
+            if harness_dir.exists() and not (harness_dir / "harness.py").exists():
+                shutil.rmtree(harness_dir, ignore_errors=True)
+                log.info(f"cleaned up empty harness dir {harness_dir}")
+            raise ProposerInfraError(
+                f"propose() failed for harness {new_id}: {exc}"
+            ) from exc
 
     # Build (or look up cached) env image. We do NOT host-side-validate the
     # harness anymore — that used to live in `forge.contract.validate` but
@@ -910,9 +933,14 @@ async def propose_eval_one(
                     active_datasets=list(cfg.get("datasets", {}).keys()),
                 )
             except (TimeoutError, RuntimeError) as exc:
+                # propose_with_fix subprocess died — same infra failure mode as
+                # propose() above. harness.py from the original propose still
+                # exists (don't delete the dir), but we abort the loop because
+                # propose-side infra is unavailable. Resume picks up cleanly.
                 log.error(f"propose_with_fix failed for {new_id}: {exc}")
-                sanity_status = "failed"
-                break
+                raise ProposerInfraError(
+                    f"propose_with_fix() failed for harness {new_id}: {exc}"
+                ) from exc
             # CC may have edited requirements.txt during the fix → re-resolve
             # the container image (cached unless requirements.txt actually
             # changed).
@@ -958,6 +986,14 @@ async def search_loop(cfg: Dict[str, Any]) -> None:
     ensure_dirs()
     frontier = Frontier.load(paths.frontier_path)
 
+    # Resume cleanup: drop any polluting entries from a prior partial run that
+    # used the old "catch + placeholder + continue" error handling. After this
+    # call, every remaining frontier entry has content_hash != None (real
+    # successful or sanity-failed harness). Persisted immediately so the
+    # cleanup is reflected on disk even if the rest of search_loop aborts.
+    if _cleanup_polluting_entries(frontier) > 0:
+        frontier.save(paths.frontier_path)
+
     datasets_config: Dict[str, Dict[str, Any]] = cfg["datasets"]
     dataset_names = list(datasets_config.keys())
 
@@ -999,34 +1035,106 @@ async def search_loop(cfg: Dict[str, Any]) -> None:
     # Search loop. v4: no parent selection — for each step, propose k harnesses
     # back-to-back; each call lets CC browse the workspace and pick its own
     # priors. v5: dir is renamed to <int>_<hash> after sanity settles.
+    #
+    # Resume semantics (2026-04-28): cfg["steps"] is the TOTAL number of search
+    # steps across all invocations of this --run-name. We compute "proposals
+    # already done" from the frontier (post-cleanup, every entry is real) and
+    # only run the remaining count. Empty workspace → done=0 → fresh run with
+    # full budget. Same workspace re-launched → done=N → only `total - N` more.
     k = int(cfg["propose"]["k_per_step"])
-    for step in range(cfg["steps"]):
-        log.info(f"[step {step+1}/{cfg['steps']}] proposing {k} harness(es)")
-        for j in range(k):
-            int_id = _next_id([e.id for e in frontier.all_entries()])
-            log.info(f"[step {step+1}/{cfg['steps']}] candidate {j+1}/{k} → int_id={int_id}")
+    total = cfg["steps"] * k
+    done = len(frontier.all_entries())
+    # Seed (if bootstrapped) sits at id "0_<hash>" — it's a baseline reference,
+    # not a "search proposal". Subtract it from `done` so it doesn't eat into
+    # the proposal budget.
+    if cfg["seed"]["enabled"] and any(
+        e.id.startswith("0_") for e in frontier.all_entries()
+    ):
+        done = max(0, done - 1)
+
+    if done >= total:
+        log.info(
+            f"all {total} proposals already complete in this workspace; nothing to do"
+        )
+        return
+
+    log.info(
+        f"{'resuming' if done > 0 else 'starting'} search: {done}/{total} "
+        f"proposals already done; running {total - done} more"
+    )
+
+    for n in range(done, total):
+        step = n // k + 1
+        j = n % k + 1
+        int_id = _next_id([e.id for e in frontier.all_entries()])
+        log.info(f"[step {step}/{cfg['steps']}] candidate {j}/{k} → int_id={int_id}")
+        try:
             final_id, per_ds, sanity_status, parent_ids = await propose_eval_one(
                 cfg, new_id=int_id, is_seed=False,
             )
-            new_dir = paths.harnesses_dir / final_id
-            objectives = _build_objectives(per_ds, new_dir)
-            new_meta = _read_meta(new_dir)
-            entry = Entry(
-                id=final_id, objectives=objectives, parent_ids=parent_ids,
-                content_hash=new_meta.get("content_hash"),
-                created_at=new_meta.get("created_at"),
+        except ProposerInfraError as exc:
+            log.error(
+                f"[step {step}/{cfg['steps']}] propose subprocess failed for "
+                f"{int_id}: {exc}\n"
+                f"  → search aborted to avoid generating placeholder entries.\n"
+                f"  → Resume with the SAME --run-name (total {cfg['steps']} steps; "
+                f"{n} of {total} proposals done before this attempt's failure)."
             )
-            frontier.add(entry)
-            _persist_sanity_status(entry.id, sanity_status)
-            frontier.save(paths.frontier_path)
-            log.info(
-                f"[step {step+1}/{j+1}] {final_id} mean={objectives['accuracy']:.3f} "
-                + ", ".join(
-                    f"{ds}={per_ds.get(ds, {}).get('raw_score', 0):.3f}"
-                    for ds in dataset_names
-                )
-                + f"  [sanity={sanity_status}]  parent_ids={parent_ids}"
+            raise   # propagate to main() for sys.exit(2)
+
+        new_dir = paths.harnesses_dir / final_id
+        objectives = _build_objectives(per_ds, new_dir)
+        new_meta = _read_meta(new_dir)
+        entry = Entry(
+            id=final_id, objectives=objectives, parent_ids=parent_ids,
+            content_hash=new_meta.get("content_hash"),
+            created_at=new_meta.get("created_at"),
+        )
+        frontier.add(entry)
+        _persist_sanity_status(entry.id, sanity_status)
+        frontier.save(paths.frontier_path)
+        log.info(
+            f"[step {step}/{j}] {final_id} mean={objectives['accuracy']:.3f} "
+            + ", ".join(
+                f"{ds}={per_ds.get(ds, {}).get('raw_score', 0):.3f}"
+                for ds in dataset_names
             )
+            + f"  [sanity={sanity_status}]  parent_ids={parent_ids}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Resume cleanup: drop polluting placeholder entries from prior partial runs.
+# Only `propose()`-failure entries (content_hash=None, integer-only id, empty
+# dir) are removed. Sanity-failed harnesses (have hash + harness.py) are kept
+# as legitimate "score=0 because design didn't pass sanity" data points.
+# ---------------------------------------------------------------------------
+
+def _cleanup_polluting_entries(frontier: Frontier) -> int:
+    """Filter out entries with content_hash=None and rm -rf their empty dirs.
+
+    Returns the number of entries removed (0 if frontier is clean). When
+    nonzero, caller should `frontier.save(...)` to persist the cleanup.
+    """
+    polluting_ids = {e.id for e in frontier.all_entries() if e.content_hash is None}
+    if not polluting_ids:
+        return 0
+    n_dirs_removed = 0
+    for entry_id in polluting_ids:
+        # Only touch integer-only dirs (truly empty, just sanity_status.txt).
+        # Hash-suffixed dirs shouldn't reach this branch in normal flow (their
+        # _finalize_harness_id sets content_hash) but defensively skip them.
+        if "_" not in entry_id:
+            harness_dir = paths.harnesses_dir / entry_id
+            if harness_dir.exists() and not (harness_dir / "harness.py").exists():
+                shutil.rmtree(harness_dir, ignore_errors=True)
+                n_dirs_removed += 1
+    n_removed = frontier.remove_by_ids(polluting_ids)
+    log.info(
+        f"cleanup: removed {n_removed} polluting frontier entries, "
+        f"{n_dirs_removed} empty harness dirs"
+    )
+    return n_removed
 
 
 # ---------------------------------------------------------------------------
@@ -1182,7 +1290,14 @@ def main() -> None:
     log.info(f"workspace: {paths.workspace}")
     log.info(f"run log: {run_log}")
     log.info(f"config snapshot: {cfg_snapshot}")
-    asyncio.run(search_loop(cfg))
+    try:
+        asyncio.run(search_loop(cfg))
+    except ProposerInfraError as exc:
+        # search_loop already logged the actionable message. Exit with a
+        # distinct code so wrapper scripts can detect "abort due to propose
+        # infra failure" (rc=2) versus other errors (rc=1, generic crashes).
+        log.error(f"search aborted: {exc}")
+        sys.exit(2)
 
 
 if __name__ == "__main__":
