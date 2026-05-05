@@ -37,7 +37,7 @@ class Basic_Recorder:
         async with self._lock:
             self.reward = reward
 
-
+# only for alma method, claude code should ignore this class
 @dataclass
 class Sub_memo_layer(ABC):
     """Abstract class for retrieve/update sub-function."""

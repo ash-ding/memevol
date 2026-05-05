@@ -76,93 +76,249 @@ def _count_entries(db) -> dict:
     return {}
 
 
+# Cap raw dump of numeric arrays at full=True. Embeddings on N=1500 events are
+# typically 1500×1536 ≈ 2.3M entries (~25 MB serialized) — over the cap. Smaller
+# arrays (routine card embeds, ~80k entries) dump completely.
+_NDARRAY_FULL_DUMP_CAP = 1_000_000
+
+
 def _dump_layer(attr, full: bool) -> dict:
-    """Extract data from a single Sub_memo_layer.
+    """Extract data from a `Sub_memo_layer` instance (alma-style backing store).
+
+    Reads `attr.database` and dispatches on its concrete type. Used as the
+    legacy branch of `_dump_value` for `Sub_memo_layer` attributes; alma
+    harnesses still rely on this. Modern forge-generated harnesses store
+    state directly on the MemoStructure subclass and go through the broader
+    `_dump_value` dispatcher instead.
 
     full=True  → complete database content (for status=test).
     full=False → statistics summary only (for status=search).
     """
     layer_data = {"layer_intro": getattr(attr, "layer_intro", "")}
-    db = attr.database
-
-    if db is None:
+    inner = _dump_value(attr.database, full=full)
+    layer_data.update(inner)
+    if attr.database is None:
         layer_data["status"] = "empty"
-        layer_data["n_entries"] = 0
-        return layer_data
-
-    db_type = type(db).__name__
-
-    # --- NetworkX graphs ---
-    if db_type in ("Graph", "DiGraph"):
-        import networkx as nx
-        n_nodes = db.number_of_nodes()
-        n_edges = db.number_of_edges()
-        layer_data["type"] = "networkx"
-        layer_data["n_nodes"] = n_nodes
-        layer_data["n_edges"] = n_edges
-        layer_data["status"] = "ok" if n_nodes > 0 else "empty"
-        type_counts = {}
-        for _, d in db.nodes(data=True):
-            t = d.get("type", "unknown")
-            type_counts[t] = type_counts.get(t, 0) + 1
-        layer_data["node_type_counts"] = type_counts
-        layer_data["sample_nodes"] = list(db.nodes())[:5]
-        if full:
-            layer_data["database"] = nx.node_link_data(db)
-        return layer_data
-
-    # --- Chroma vector store ---
-    if "Chroma" in db_type:
-        try:
-            chroma_data = db.get(include=["documents", "metadatas"])
-            ids = chroma_data.get("ids", [])
-            docs = chroma_data.get("documents", [])
-            metas = chroma_data.get("metadatas", [])
-            layer_data["type"] = "chroma"
-            layer_data["n_documents"] = len(ids)
-            layer_data["status"] = "ok" if len(ids) > 0 else "empty"
-            layer_data["sample_documents"] = docs[:3]
-            if metas:
-                layer_data["metadata_keys"] = sorted(set(k for m in metas[:10] for k in (m or {}).keys()))
-            if full:
-                layer_data["database"] = {"ids": ids, "documents": docs, "metadatas": metas}
-        except Exception as e:
-            layer_data["type"] = "chroma_error"
-            layer_data["status"] = f"extraction failed: {e}"
-        return layer_data
-
-    # --- Plain dict/list ---
-    if isinstance(db, (dict, list)):
-        layer_data["type"] = "dict" if isinstance(db, dict) else "list"
-        layer_data["entry_counts"] = _count_entries(db)
-        layer_data["status"] = "ok" if len(db) > 0 else "empty"
-        if isinstance(db, dict):
-            layer_data["top_level_keys"] = list(db.keys())[:20]
-        if full:
-            layer_data["database"] = db
-        return layer_data
-
-    # --- Unknown type ---
-    layer_data["type"] = db_type
-    layer_data["status"] = "unknown_type"
-    if full:
-        layer_data["database"] = repr(db)
+    else:
+        layer_data.setdefault("status", "ok")
     return layer_data
 
 
+def _dump_value(value, *, full: bool) -> dict:
+    """Introspect an arbitrary in-memory object and produce a JSON-serializable
+    summary. Stats (type, sizes, samples) are always included; raw content is
+    included when ``full=True``, with a soft cap on numeric arrays to keep
+    per-user dump files in the tens-of-MB range rather than GB-scale.
+
+    Recognized types (in dispatch order):
+      Sub_memo_layer (alma compat) → delegate to _dump_layer
+      None / bool / int / float / str (scalars)
+      numpy.ndarray             → shape, dtype, sample, optional .tolist()
+      networkx Graph/DiGraph    → counts, sample nodes, optional node_link_data
+      ChromaDB collection       → counts, sample docs, optional ids+docs+metas
+      rank_bm25 BM25*           → corpus_size, avgdl, optional idf dict
+      set / frozenset           → count, sample
+      dict / list               → counts, top-level keys, optional raw value
+      bytes / bytearray         → length, head repr (no raw dump)
+      anything else             → type + non-private __dict__ field types + repr[:300]
+    """
+    # Sub_memo_layer (alma compat) — delegate to the legacy helper.
+    if isinstance(value, Sub_memo_layer):
+        return _dump_layer(value, full=full)
+
+    # None / scalars (bool MUST come before int — bool is an int subclass).
+    if value is None:
+        return {"type": "NoneType", "value": None}
+    if isinstance(value, bool):
+        return {"type": "bool", "value": value}
+    if isinstance(value, (int, float)):
+        return {"type": type(value).__name__, "value": value}
+    if isinstance(value, str):
+        if len(value) > 1000:
+            return {
+                "type": "str",
+                "length": len(value),
+                "value_head": value[:1000] + " …(truncated)",
+                **({"value": value} if full else {}),
+            }
+        return {"type": "str", "value": value}
+
+    # numpy.ndarray — shape always, raw data when small enough.
+    try:
+        import numpy as np  # lazy import; harness containers always have it
+    except ImportError:
+        np = None  # type: ignore
+    if np is not None and isinstance(value, np.ndarray):
+        out: Dict[str, Any] = {
+            "type": "ndarray",
+            "shape": list(value.shape),
+            "dtype": str(value.dtype),
+            "size": int(value.size),
+        }
+        try:
+            out["sample_first_5"] = value.flatten()[:5].tolist()
+        except Exception:
+            pass
+        if full:
+            if value.size <= _NDARRAY_FULL_DUMP_CAP:
+                try:
+                    out["data"] = value.tolist()
+                except Exception as e:
+                    out["data_error"] = str(e)
+            else:
+                out["data_skipped"] = (
+                    f"size {value.size} > {_NDARRAY_FULL_DUMP_CAP:,} cap; "
+                    f"recording shape/dtype/sample only"
+                )
+        return out
+
+    db_type = type(value).__name__
+
+    # NetworkX graphs.
+    if db_type in ("Graph", "DiGraph", "MultiGraph", "MultiDiGraph"):
+        try:
+            import networkx as nx
+        except ImportError:
+            return {"type": "networkx", "subtype": db_type, "error": "networkx unavailable"}
+        out = {
+            "type": "networkx",
+            "subtype": db_type,
+            "n_nodes": value.number_of_nodes(),
+            "n_edges": value.number_of_edges(),
+        }
+        type_counts: Dict[str, int] = {}
+        for _, d in value.nodes(data=True):
+            t = d.get("type", "unknown")
+            type_counts[t] = type_counts.get(t, 0) + 1
+        out["node_type_counts"] = type_counts
+        out["sample_nodes"] = list(value.nodes())[:5]
+        if full:
+            try:
+                out["data"] = nx.node_link_data(value)
+            except Exception as e:
+                out["data_error"] = str(e)
+        return out
+
+    # Chroma vector collection (chromadb.api.models.Collection.Collection or similar).
+    if "Chroma" in db_type or "Collection" in db_type:
+        try:
+            chroma_data = value.get(include=["documents", "metadatas"])
+        except Exception as e:
+            return {"type": "chroma_error", "subtype": db_type, "error": str(e)}
+        ids = chroma_data.get("ids", []) or []
+        docs = chroma_data.get("documents", []) or []
+        metas = chroma_data.get("metadatas", []) or []
+        out = {
+            "type": "chroma",
+            "subtype": db_type,
+            "n_documents": len(ids),
+            "sample_documents": docs[:3],
+        }
+        if metas:
+            out["metadata_keys"] = sorted(
+                set(k for m in metas[:10] for k in (m or {}).keys())
+            )
+        if full:
+            out["data"] = {"ids": ids, "documents": docs, "metadatas": metas}
+        return out
+
+    # rank_bm25 family.
+    if db_type in ("BM25Okapi", "BM25", "BM25Plus", "BM25L"):
+        out = {"type": "bm25", "subtype": db_type}
+        for attr_name in ("corpus_size", "avgdl", "average_idf"):
+            v = getattr(value, attr_name, None)
+            if v is None:
+                continue
+            try:
+                out[attr_name] = float(v) if isinstance(v, (int, float)) else v
+            except Exception:
+                pass
+        if full:
+            try:
+                idf = getattr(value, "idf", None)
+                if idf is not None:
+                    out["data"] = {"idf": dict(idf)}
+            except Exception as e:
+                out["data_error"] = str(e)
+        return out
+
+    # set / frozenset.
+    if isinstance(value, (set, frozenset)):
+        items = list(value)
+        out = {"type": type(value).__name__, "n_entries": len(value)}
+        out["sample"] = items[:5]
+        if full:
+            try:
+                out["data"] = sorted(items) if all(isinstance(x, str) for x in items) else items
+            except TypeError:
+                out["data"] = items
+        return out
+
+    # dict / list.
+    if isinstance(value, (dict, list)):
+        out = {
+            "type": "dict" if isinstance(value, dict) else "list",
+            "entry_counts": _count_entries(value),
+        }
+        if isinstance(value, dict):
+            out["top_level_keys"] = list(value.keys())[:20]
+        if full:
+            out["data"] = value
+        return out
+
+    # bytes — length only; raw dump as repr head.
+    if isinstance(value, (bytes, bytearray)):
+        out = {"type": type(value).__name__, "length": len(value)}
+        out["head_repr"] = repr(bytes(value[:64]))
+        return out
+
+    # Unknown / custom class — describe via __dict__ shape + truncated repr.
+    out = {"type": db_type}
+    inner = getattr(value, "__dict__", None)
+    if isinstance(inner, dict) and inner:
+        out["fields"] = {
+            k: type(v).__name__ for k, v in inner.items() if not k.startswith("_")
+        }
+    try:
+        out["repr"] = repr(value)[:300]
+    except Exception:
+        out["repr"] = f"<unrepresentable {db_type}>"
+    return out
+
+
 def _dump_memory(memo: MemoStructure, user_id: str, dump_dir: Path, full: bool = False) -> None:
-    """Dump memory state after Phase 1 to dump_dir/<user_id>.json."""
+    """Dump in-memory state of a harness after Phase 1 to ``dump_dir/<user_id>.json``.
+
+    Walks every public instance attribute of `memo` (`vars(memo)`, minus
+    underscore-prefixed and callables) and dispatches each value to
+    `_dump_value`. The output preserves whatever the harness chose to put on
+    `self` — `MemoStructure` subclasses with flat fields (e.g. forge-generated
+    H0..H4 with `self.events`, `self.routine_cards`, `self.event_embeds`, ...)
+    get fully introspected, and legacy alma-style harnesses with
+    `Sub_memo_layer` attributes go through `_dump_layer` for parity with the
+    pre-refactor behavior.
+
+    full=False (status=search) → statistics + samples only.
+    full=True  (status=test, or memory_dumps='full') → also include raw data,
+    with a per-ndarray size cap to keep file sizes manageable.
+    """
     safe_user_id = user_id.replace("/", "_").replace("\\", "_")
     dump_dir.mkdir(parents=True, exist_ok=True)
 
-    dump = {}
-    for attr_name in dir(memo):
+    dump: Dict[str, Any] = {}
+    instance_vars = getattr(memo, "__dict__", {}) or {}
+    for attr_name, attr in instance_vars.items():
         if attr_name.startswith("_"):
             continue
-        attr = getattr(memo, attr_name, None)
-        if not isinstance(attr, Sub_memo_layer):
+        if callable(attr):
             continue
-        dump[attr_name] = _dump_layer(attr, full=full)
+        try:
+            dump[attr_name] = _dump_value(attr, full=full)
+        except Exception as exc:
+            dump[attr_name] = {
+                "type": type(attr).__name__,
+                "dump_error": f"{type(exc).__name__}: {exc}",
+            }
 
     file_path = dump_dir / f"{safe_user_id}.json"
     try:
