@@ -10,10 +10,18 @@ model: gpt-5-mini
 judge_model: gpt-5-mini
 update_type: all_at_once
 
+# Default proposer agent is claude_code; override with `agent: codex` here
+# or `--agent codex` on CLI. Each agent has its own model + opts.
 proposer:
-  model: claude-opus-4-7
   max_turns: 80
   timeout_s: 1500
+  claude_code:
+    model: claude-opus-4-7
+    effort: medium                # low / medium / high / xhigh / max  (CC --effort)
+    disallowed_tools: ["mcp__*"]
+  codex:
+    model: gpt-5.5
+    reasoning_effort: medium      # low / medium / high  (codex -c model_reasoning_effort=...)
 
 propose:
   k_per_step: 2             # candidates per outer-loop step (paper default)

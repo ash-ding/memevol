@@ -6,25 +6,30 @@ Launched by `forge/proposer.py` via:
         python /app/forge/propose_in_container.py \\
             --new-id <int> --workspace /workspace [--mode propose|fix] \\
             [--error-trace-file /workspace/.fix_error_trace.txt] \\
-            --model <claude-model> --max-turns <N> --timeout-s <s>
+            --agent <claude_code|codex> --model <model> --timeout-s <s>
 
 Inside the Singularity sandbox we have:
   /app                project root, RO  (forge.* + datasets.* importable)
-  /workspace          this run's workspace, RW  (cwd for CC)
-  /seeds              seed library, RO
-  /usr/local/bin/claude         host's claude binary, RO bind
-  /usr/local/share/claude/      host's claude install, RO bind
-  /root/.claude/.credentials.json     host's OAuth creds, RW (CLI may refresh)
+  /workspace          this run's workspace, RW  (cwd for the agent)
+  /usr/local/bin/claude         host's claude binary, RO bind (CC)
+  /usr/local/share/claude/      host's claude install, RO bind (CC)
+  /usr/local/bin/codex          host's codex binary, RO bind (codex)
+  /root/.claude/.credentials.json     host's OAuth creds, RW (CC fallback)
 
-CC's filesystem-readable surface is exactly the four binds above; nothing
+The agent's filesystem-readable surface is exactly the binds above; nothing
 else from the host is visible (`--containall` strips $HOME, /tmp, etc).
 
+# Multi-agent design
+
 This file used to depend on claude_code_sdk (with a private-API monkey-patch
-to handle unknown event types). It now shells out to the `claude` CLI
-directly in stream-json mode and parses NDJSON events from stdout, removing
-the SDK dependency + the `_internal.message_parser` monkey-patch. External
-behavior (the lines emitted to stdout for the host orchestrator) is
-unchanged.
+to handle unknown event types). It now shells out to the agent CLI directly
+in stream-json mode and parses NDJSON events from stdout. Each agent has:
+
+  - `_build_cmd_*`       argv builder (returns list[str])
+  - `_build_stdin_*`     stdin bytes (NDJSON for CC, plain text for codex)
+  - `_handle_event_*`    NDJSON event → _emit() lines
+
+The main loop is identical across agents — only dispatch differs.
 """
 from __future__ import annotations
 
@@ -33,7 +38,7 @@ import asyncio
 import json
 import sys
 from pathlib import Path
-from typing import List
+from typing import Callable, List
 
 # Project root is bound at /app. Add to sys.path so `from forge.prompts` works.
 _APP = Path("/app")
@@ -47,14 +52,14 @@ from forge.prompts import (
 )
 
 
-# Tool restrictions intentionally NOT set here: filesystem isolation is
-# enforced by the Singularity sandbox in forge/proposer.py — CC's reachable
-# surface is exactly the bind list (workspace + project root RO + CLI binary
-# RO + per-run scratch HOME). Bash, WebFetch, WebSearch, mcp__* all permitted
-# inside the container; the proposer image (extends eval-base.sif) has the
-# same Python env as the evaluator, so CC can `python -c "from harness import
-# ..."` for sub-second import validation. See PROPOSER_SYSTEM for the workflow
-# cheat sheet.
+# Tool restrictions intentionally NOT set: filesystem isolation is enforced
+# by the Singularity sandbox in forge/proposer.py — the agent's reachable
+# surface is exactly the bind list (workspace + project root RO + agent
+# CLI binary RO + per-run scratch HOME). Bash, WebFetch, WebSearch, mcp__*
+# all permitted inside the container; the proposer image (extends
+# eval-base.sif) has the same Python env as the evaluator, so the agent can
+# `python -c "from harness import ..."` for sub-second import validation.
+# See PROPOSER_SYSTEM for the workflow cheat sheet.
 
 
 def _emit(prefix: str, msg: str) -> None:
@@ -62,10 +67,10 @@ def _emit(prefix: str, msg: str) -> None:
     forwards these into the orchestrator log.
 
     Tag conventions:
-      proposer·text    CC assistant text — emitted line-by-line, full content
-                       (one log line per source line; rendered at INFO so the
-                       reasoning is visible without --verbose)
-      proposer·tool    CC tool use (truncated to 140 chars)
+      proposer·text    agent assistant text — emitted line-by-line, full
+                       content (one log line per source line; rendered at
+                       INFO so the reasoning is visible without --verbose)
+      proposer·tool    agent tool use (truncated to 140 chars)
       proposer·info    high-level status (model, finish, usage)
       proposer·error   actionable failure
     """
@@ -74,13 +79,18 @@ def _emit(prefix: str, msg: str) -> None:
     sys.stdout.flush()
 
 
-def _build_cc_cmd(
+# ============================================================================
+# Per-agent: build argv + build stdin + handle event
+# ============================================================================
+
+# ---- claude_code ----------------------------------------------------------
+
+def _build_cmd_cc(
     *,
     system_prompt: str,
     model: str,
-    disallowed_tools: List[str],
+    agent_opts: dict,
 ) -> List[str]:
-    """Build the `claude` CLI argv for non-interactive stream-json mode."""
     cmd = [
         "claude", "-p",
         # --verbose is REQUIRED when --output-format=stream-json in -p mode.
@@ -91,12 +101,17 @@ def _build_cc_cmd(
         "--system-prompt", system_prompt,
         "--permission-mode", "bypassPermissions",
     ]
-    if disallowed_tools:
-        cmd += ["--disallowed-tools", ",".join(disallowed_tools)]
+    disallowed = agent_opts.get("disallowed_tools") or []
+    if disallowed:
+        cmd += ["--disallowed-tools", ",".join(disallowed)]
+    effort = agent_opts.get("effort")
+    if effort:
+        # CC --effort: low / medium / high / xhigh / max
+        cmd += ["--effort", str(effort)]
     return cmd
 
 
-def _build_cc_stdin(task: str) -> bytes:
+def _build_stdin_cc(task: str) -> bytes:
     """One NDJSON user message line. CC -p with --input-format stream-json
     reads events from stdin until EOF."""
     return (
@@ -105,20 +120,19 @@ def _build_cc_stdin(task: str) -> bytes:
     ).encode("utf-8")
 
 
-# CC tool counter (state for _handle_cc_event; module-level since the handler
+# CC tool counter (state for _handle_event_cc; module-level since handler
 # is called per-line on the event loop's single thread).
 _cc_tool_count = 0
 
 
-def _handle_cc_event(event: dict) -> None:
+def _handle_event_cc(event: dict) -> None:
     """Parse one CC stream-json event → _emit() lines.
 
     Event types we recognize:
       assistant   — message with content blocks (text / thinking / tool_use)
       result      — final summary (duration, cost, turns, usage)
-      system / rate_limit_event / others — skipped silently. The SDK we used
-                    to depend on aborted on unknown event types; the CLI just
-                    streams them and lets us choose what to ignore.
+      system      — startup info; logged briefly
+      rate_limit_event / others — silently ignored
     """
     global _cc_tool_count
     etype = event.get("type", "")
@@ -129,9 +143,7 @@ def _handle_cc_event(event: dict) -> None:
                 text = (block.get("text") or "").strip()
                 if text:
                     # Emit each line separately so orchestrator.log preserves
-                    # paragraph structure (no truncation; CC's reasoning
-                    # between tool calls is the richest signal for "why this
-                    # decision").
+                    # paragraph structure.
                     for line in text.splitlines():
                         _emit("proposer·text", line)
             elif btype == "tool_use":
@@ -153,8 +165,108 @@ def _handle_cc_event(event: dict) -> None:
             f"usage={event.get('usage','')}",
         )
         if event.get("is_error"):
-            _emit("proposer·error",
-                  f"agent reported is_error=true: {event.get('result','')}")
+            _emit("proposer·error", f"agent reported is_error=true: {event.get('result','')}")
+    # else: system / rate_limit_event / unknown — skip silently.
+
+
+# ---- codex ----------------------------------------------------------------
+
+def _build_cmd_codex(
+    *,
+    model: str,
+    workspace: str,
+    agent_opts: dict,
+) -> List[str]:
+    # codex has no --system-prompt; system + task are combined into stdin
+    # (see _build_stdin_codex). codex also has no --disallowed-tools;
+    # sandboxing relies entirely on the Singularity bind list.
+    cmd = [
+        "codex", "exec",
+        "--json",
+        "--ephemeral",
+        "--skip-git-repo-check",
+        "--cd", workspace,
+        "--model", model,
+        "--dangerously-bypass-approvals-and-sandbox",
+        "--sandbox", "danger-full-access",
+    ]
+    reasoning = agent_opts.get("reasoning_effort")
+    if reasoning:
+        # codex -c: TOML-typed override. Values that fail TOML parse become
+        # literal strings, so unquoted `high` works equally well; we quote
+        # for clarity.
+        cmd += ["-c", f'model_reasoning_effort="{reasoning}"']
+    cmd += ["-"]  # read prompt from stdin (must come after -c overrides)
+    return cmd
+
+
+def _build_stdin_codex(system_prompt: str, task: str) -> bytes:
+    """Codex sees one user prompt. Concatenate the system prompt + the
+    task prompt with a separator. Codex doesn't distinguish "system" from
+    "user" at the CLI level, so the agent reads it as instructions in one
+    big context.
+    """
+    payload = f"{system_prompt}\n\n---\n\n{task}\n"
+    return payload.encode("utf-8")
+
+
+_codex_tool_count = 0
+
+
+def _handle_event_codex(event: dict) -> None:
+    """Parse one codex --json event → _emit() lines.
+
+    Event types observed:
+      thread.started   — skip
+      turn.started     — skip
+      item.completed   — item.type ∈ {agent_message, command_call, ...}
+      turn.completed   — final usage summary
+      others           — skip silently
+    """
+    global _codex_tool_count
+    etype = event.get("type", "")
+    if etype == "item.completed":
+        item = event.get("item") or {}
+        itype = item.get("type", "")
+        if itype == "agent_message":
+            text = (item.get("text") or "").strip()
+            if text:
+                for line in text.splitlines():
+                    _emit("proposer·text", line)
+        else:
+            # All non-text items are tool-like (command_call, file_write,
+            # web_fetch, ...). Log compactly.
+            _codex_tool_count += 1
+            payload = json.dumps(item, ensure_ascii=False)[:140]
+            _emit("proposer·tool", f"#{_codex_tool_count} {itype} {payload}")
+    elif etype == "turn.completed":
+        usage = event.get("usage", {}) or {}
+        _emit(
+            "proposer·info",
+            f"finished tools={_codex_tool_count} usage={usage}",
+        )
+
+
+# Agent dispatch table
+_AGENT_DISPATCH = {
+    "claude_code": {
+        "build_cmd": _build_cmd_cc,
+        "build_stdin": _build_stdin_cc,
+        "handle_event": _handle_event_cc,
+        "uses_system_prompt_flag": True,
+    },
+    "codex": {
+        "build_cmd": _build_cmd_codex,
+        "build_stdin": _build_stdin_codex,
+        "handle_event": _handle_event_codex,
+        "uses_system_prompt_flag": False,
+    },
+}
+
+
+# ============================================================================
+# Main loop
+# ============================================================================
 
 
 async def _run(args: argparse.Namespace) -> int:
@@ -175,14 +287,6 @@ async def _run(args: argparse.Namespace) -> int:
         error_trace = Path(args.error_trace_file).read_text(encoding="utf-8")
         task = proposer_fix_prompt(new_dir_rel=new_dir_rel, error_trace=error_trace)
 
-    # Parse disallowed_tools from comma-separated CLI arg.
-    # Empty string / unset = no restrictions = allow all tools.
-    disallowed_tools = [
-        t.strip() for t in (args.disallowed_tools or "").split(",") if t.strip()
-    ]
-
-    # Active datasets (comma-separated; empty = render full 3-benchmark prompt
-    # for back-compat with older orchestrators that don't yet wire this).
     active_datasets = [
         d.strip() for d in (args.active_datasets or "").split(",") if d.strip()
     ]
@@ -190,18 +294,48 @@ async def _run(args: argparse.Namespace) -> int:
     system_prompt = build_proposer_system(
         sanity_enabled=args.sanity_enabled,
         active_datasets=active_datasets or None,
+        update_type=args.update_type,
     )
 
-    cmd = _build_cc_cmd(
-        system_prompt=system_prompt,
-        model=args.model,
-        disallowed_tools=disallowed_tools,
-    )
-    stdin_bytes = _build_cc_stdin(task)
+    if args.agent not in _AGENT_DISPATCH:
+        _emit("proposer·error", f"unknown agent: {args.agent}")
+        return 5
 
-    if disallowed_tools:
-        _emit("proposer·info", f"disallowed_tools={disallowed_tools}")
-    _emit("proposer·info", f"mode={args.mode} new_id={args.new_id} model={args.model}")
+    # Parse agent-specific opts (JSON dict). Empty / missing → {}. This dict
+    # carries everything per-agent: disallowed_tools (CC) / effort (CC) /
+    # reasoning_effort (codex). Unknown keys are silently ignored by each
+    # agent's argv builder so adding new keys is forward-compatible.
+    try:
+        agent_opts: dict = json.loads(args.agent_opts or "{}")
+    except json.JSONDecodeError as exc:
+        _emit("proposer·error", f"--agent-opts is not valid JSON: {exc}")
+        return 6
+    if not isinstance(agent_opts, dict):
+        _emit("proposer·error", f"--agent-opts must decode to a dict, got {type(agent_opts).__name__}")
+        return 6
+
+    # Build agent-specific argv + stdin payload.
+    if args.agent == "claude_code":
+        cmd = _build_cmd_cc(
+            system_prompt=system_prompt,
+            model=args.model,
+            agent_opts=agent_opts,
+        )
+        stdin_bytes = _build_stdin_cc(task)
+    elif args.agent == "codex":
+        cmd = _build_cmd_codex(
+            model=args.model,
+            workspace=str(workspace),
+            agent_opts=agent_opts,
+        )
+        stdin_bytes = _build_stdin_codex(system_prompt, task)
+
+    if agent_opts:
+        _emit("proposer·info", f"agent_opts={agent_opts}")
+    _emit(
+        "proposer·info",
+        f"mode={args.mode} new_id={args.new_id} agent={args.agent} model={args.model}",
+    )
 
     proc = await asyncio.create_subprocess_exec(
         *cmd,
@@ -223,6 +357,8 @@ async def _run(args: argparse.Namespace) -> int:
         except Exception:
             pass
 
+    handler: Callable[[dict], None] = _AGENT_DISPATCH[args.agent]["handle_event"]  # type: ignore[assignment]
+
     async def _pump() -> None:
         assert proc.stdout is not None
         async for raw in proc.stdout:
@@ -237,16 +373,14 @@ async def _run(args: argparse.Namespace) -> int:
                 _emit("proposer·text", line[:500])
                 continue
             try:
-                _handle_cc_event(event)
+                handler(event)
             except Exception as exc:
-                _emit("proposer·error",
-                      f"event handler error: {exc} on {line[:200]}")
+                _emit("proposer·error", f"event handler error: {exc} on {line[:200]}")
 
     try:
         await asyncio.wait_for(_pump(), timeout=args.timeout_s)
     except asyncio.TimeoutError:
-        _emit("proposer·error",
-              f"timed out after {args.timeout_s}s for {args.new_id}")
+        _emit("proposer·error", f"timed out after {args.timeout_s}s for {args.new_id}")
         try:
             proc.kill()
         except ProcessLookupError:
@@ -259,8 +393,10 @@ async def _run(args: argparse.Namespace) -> int:
     if args.mode == "propose":
         sentinel = new_dir / "PROPOSAL_READY"
         if not sentinel.exists():
-            _emit("proposer·error",
-                  f"finished without writing PROPOSAL_READY at {new_dir}")
+            _emit(
+                "proposer·error",
+                f"finished without writing PROPOSAL_READY at {new_dir}",
+            )
             return 4
 
     return rc
@@ -274,15 +410,15 @@ def main() -> None:
     p.add_argument("--mode", choices=["propose", "fix"], default="propose")
     p.add_argument("--error-trace-file", default=None,
                    help="Required when --mode=fix; path inside container to the trace text file.")
+    p.add_argument("--agent", default="claude_code",
+                   choices=list(_AGENT_DISPATCH.keys()),
+                   help="Coding agent backend to drive (default claude_code).")
     p.add_argument("--model", default="claude-opus-4-7")
     p.add_argument("--max-turns", type=int, default=80,
                    help="Soft turn budget. NOT enforced — wall-clock --timeout-s "
                         "is the hard limit. Kept for backward compat with old "
-                        "callers; no longer plumbed to the claude CLI (which has "
-                        "no --max-turns flag).")
+                        "callers; no longer plumbed to the agent CLI.")
     p.add_argument("--timeout-s", type=int, default=25 * 60)
-    p.add_argument("--disallowed-tools", default="",
-                   help="Comma-separated tool names blocked inside CC. Empty = allow all.")
     p.add_argument("--sanity-enabled", default="true",
                    choices=["true", "false"],
                    help="Whether the orchestrator will run a sanity check after this propose. "
@@ -292,6 +428,15 @@ def main() -> None:
                         "(e.g. 'dynamicmem,locomo'). Empty = full 3-benchmark prompt. "
                         "Controls which dataset shapes / dispatch examples / trace "
                         "field listings appear in PROPOSER_SYSTEM.")
+    p.add_argument("--update-type", default="all_at_once",
+                   choices=["all_at_once", "chunked", "sequential"],
+                   help="Phase 1 dispatch mode for this run. Surfaced to the proposer "
+                        "so it knows whether general_update will be called once with "
+                        "the full payload or many times with smaller chunks.")
+    p.add_argument("--agent-opts", default="{}",
+                   help="JSON dict of agent-specific options. Recognized keys: "
+                        "{claude_code: effort} {codex: reasoning_effort}. Unknown "
+                        "keys are silently ignored by each agent's argv builder.")
     args = p.parse_args()
     # Convert string flag → bool (argparse choices keep it stringly-typed for
     # CLI symmetry with the host launcher).

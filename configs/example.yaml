@@ -73,43 +73,58 @@ max_sample_concurrent: 3
 memory_dumps: full
 
 # -----------------------------------------------------------------------------
-# Proposer (Claude Code SDK) — runs OUTSIDE the eval container, in its own
-# Singularity sandbox (proposer-base.sif). Authenticates via the host's
-# `claude login` subscription (no ANTHROPIC_API_KEY needed).
+# Proposer — runs OUTSIDE the eval container, in its own Singularity sandbox
+# (proposer-base.sif). Two agent backends supported:
+#   claude_code (default): host `claude` CLI, auth via subscription OAuth or
+#                          long-lived setup-token (~/.claude/oauth_token).
+#   codex                : host `codex` CLI (OpenAI Codex CLI), auth via
+#                          OPENAI_API_KEY env var (from project .env).
+# Switch backend with `agent: codex` here or `--agent codex` on CLI.
 # -----------------------------------------------------------------------------
 
 proposer:
-  # Anthropic model id used by the SDK proposer. opus-4-7 is the strongest
-  # available; sonnet variants are cheaper but produce simpler harnesses.
-  model: claude-opus-4-7
-
   # Maximum agentic turns the proposer is allowed (caps Read/Bash/Write loops
-  # in case CC gets stuck). 80 leaves comfortable room for EXPLORATORY runs
-  # that browse multiple priors + WebSearch for inspiration + iterate on the
-  # harness. Meta-Harness paper reports median 82 file-reads per iteration
-  # (Appendix A.1), so this matches that scale. Tighten to ~50 only if you
-  # observe propose calls consistently finishing well under budget.
+  # in case the agent gets stuck). 80 leaves comfortable room for EXPLORATORY
+  # runs that browse multiple priors + WebSearch + iterate on the harness.
+  # Meta-Harness paper reports median 82 file-reads per iteration (Appendix
+  # A.1). Tighten to ~50 only if propose calls consistently finish under budget.
   max_turns: 80
 
   # Wall-clock cap for ONE propose() call (in seconds). If hit, the orchestrator
-  # logs TimeoutError and the harness is recorded as `proposer_failed`. 1500s
-  # (25 min) ≈ 80 turns × ~20s/turn — sized to the max_turns budget. WebFetch
-  # of slow papers can also push wall-clock up.
+  # logs TimeoutError and aborts (fail-fast). 1500s (25 min) ≈ 80 turns ×
+  # ~20s/turn — sized to the max_turns budget.
   timeout_s: 1500
 
-  # Tools blocked inside the proposer container. Filesystem isolation is
-  # enforced by the Singularity bind list (see CLAUDE.md "Singularity & images"),
-  # so this list is only about CC's *behavioral* surface.
-  #   ["mcp__*"]                       — default; only MCP wildcard. CC can use
-  #                                       Bash / WebFetch / WebSearch / Read etc.
-  #   []                               — allow EVERYTHING (incl. MCP, if any
-  #                                       MCP server is registered on the host).
-  #   ["Bash", "WebFetch", "WebSearch", "mcp__*"]  — paranoid sandbox (pre-v6
-  #                                       behavior); CC limited to Read/Grep/Glob/Write/Edit.
-  # CLI override: --proposer-disallowed-tools "Bash,WebFetch,mcp__*"  (use ""
-  # to allow all).
-  disallowed_tools:
-    - mcp__*
+  # ----- claude_code agent-specific config -----
+  claude_code:
+    # Anthropic model id. opus-4-7 is the strongest available; sonnet variants
+    # are cheaper but produce simpler harnesses.
+    model: claude-opus-4-7
+
+    # Reasoning effort: low / medium / high / xhigh / max. Higher = deeper
+    # reasoning + slower + costlier. "medium" is the CC default.
+    effort: medium
+
+    # Tools blocked inside CC. Filesystem isolation is enforced by the
+    # Singularity bind list, so this is only about CC's *behavioral* surface.
+    #   ["mcp__*"]                       — default; only MCP wildcard.
+    #   []                               — allow EVERYTHING (incl. MCP).
+    #   ["Bash", "WebFetch", "WebSearch", "mcp__*"]  — paranoid sandbox.
+    # CLI override: --proposer-disallowed-tools "Bash,WebFetch,mcp__*".
+    disallowed_tools:
+      - mcp__*
+
+  # ----- codex agent-specific config -----
+  codex:
+    # OpenAI Codex model id. gpt-5.5 is current default.
+    model: gpt-5.5
+
+    # Reasoning effort: low / medium / high. "medium" is codex's default.
+    reasoning_effort: medium
+
+    # Note: codex has no "disallowed_tools" equivalent. Codex tool scope is
+    # controlled by `--sandbox <mode>` which we hardcode to danger-full-access
+    # (the real isolation is the outer Singularity bind list).
 
 # -----------------------------------------------------------------------------
 # How many candidate harnesses CC proposes per outer-loop step

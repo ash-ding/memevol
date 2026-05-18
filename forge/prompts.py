@@ -402,7 +402,25 @@ correctly.
 * Phase 1  general_update(recorder):
       recorder.init is dataset-dependent (see below).
       Build any memory state on `self` (dicts, graphs, vector stores, ...).
-      May be called multiple times per user (sequential / chunked / all_at_once).
+      To simulate the different streaming patterns a real-world memory
+      system may face, the workflow delivers init to your harness in one of
+      three modes:
+
+        - all_at_once: the entire user history arrives in a single call.
+          general_update is invoked ONCE per user, with the full init
+          payload. For DynamicMem, recorder.init["app_logs"] is the entire
+          (~1500-log) list. Mirrors batch / offline ingestion.
+
+        - chunked: history arrives in K roughly-equal chunks. general_update
+          is invoked K times per user; your state on `self` must persist
+          across calls. Mirrors mini-batch / scheduled-flush ingestion.
+
+        - sequential: events stream in one at a time. general_update is
+          invoked once per init item — for DynamicMem ~1500 calls per user,
+          each with recorder.init["app_logs"] of length 1. Mirrors true
+          online / event-by-event ingestion.
+
+      ▶ THIS run's mode: update_type = <<UPDATE_TYPE>>
 * Phase 2  general_retrieve(recorder):
       recorder.init carries the full user context + the current QA query.
       Return a dict; it is fed verbatim into the QA agent as context.
@@ -633,7 +651,14 @@ def _build_dataset_subs(active):
     }
 
 
-def build_proposer_system(sanity_enabled: bool = True, active_datasets=None) -> str:
+_VALID_UPDATE_TYPES = ("all_at_once", "chunked", "sequential")
+
+
+def build_proposer_system(
+    sanity_enabled: bool = True,
+    active_datasets=None,
+    update_type: str = "all_at_once",
+) -> str:
     """Render PROPOSER_SYSTEM with sanity-related AND dataset-specific sections
     included or stripped according to the run config.
 
@@ -644,16 +669,27 @@ def build_proposer_system(sanity_enabled: bool = True, active_datasets=None) -> 
                         keys (e.g. ["dynamicmem", "locomo", "longmemeval_s"]).
                         Pass None / empty to render the full 3-benchmark prompt
                         (back-compat).
+      update_type     — the runtime Phase 1 dispatch mode for this search:
+                        all_at_once / chunked / sequential. Surfaced to the
+                        proposer so it knows whether general_update will be
+                        called once with the full payload or many times with
+                        smaller chunks. Defaults to all_at_once for back-compat
+                        with callers that haven't been updated.
 
     The two `_SANITY_*_SUBS` dicts cover sanity sentinels; `_build_dataset_subs`
     computes the dataset sentinels. Empty / unknown active_datasets defensively
     fall back to all three (so callers that don't yet wire this through still
     get a valid prompt).
     """
+    if update_type not in _VALID_UPDATE_TYPES:
+        raise ValueError(
+            f"update_type must be one of {_VALID_UPDATE_TYPES}, got {update_type!r}"
+        )
     active = _normalize_active_datasets(active_datasets)
     subs = {
         **(_SANITY_ON_SUBS if sanity_enabled else _SANITY_OFF_SUBS),
         **_build_dataset_subs(active),
+        "<<UPDATE_TYPE>>": update_type,
     }
     out = _PROPOSER_SYSTEM_TEMPLATE
     for sentinel, replacement in subs.items():

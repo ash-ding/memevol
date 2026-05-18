@@ -11,9 +11,15 @@ judge_model: gpt-5-mini
 update_type: all_at_once
 
 proposer:
-  model: claude-opus-4-7
   max_turns: 80
   timeout_s: 1500          # seconds
+  claude_code:
+    model: claude-opus-4-7
+    effort: medium                # low / medium / high / xhigh / max  (CC --effort)
+    disallowed_tools: ["mcp__*"]
+  codex:
+    model: gpt-5.5
+    reasoning_effort: medium      # low / medium / high  (codex -c model_reasoning_effort=...)
 
 propose:
   k_per_step: 2            # candidates per step

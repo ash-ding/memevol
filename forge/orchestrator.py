@@ -107,16 +107,32 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "max_sample_concurrent": 3,
     "memory_dumps": "full",   # full | stats | none — post-Phase-1 memo dump policy
     "proposer": {
-        "model": "claude-opus-4-7",
+        # Generic propose-time controls (shared by both agents).
         "max_turns": 80,
         "timeout_s": 25 * 60,
-        # Tools blocked inside the proposer container. Default: only the MCP
-        # wildcard (no MCP servers configured on this host, but if any are
-        # added they shouldn't be reachable by the proposer without an
-        # explicit opt-in). Pass [] to allow ALL tools, or extend with e.g.
-        # ["Bash", "WebFetch"] for tighter sandboxes / ablation experiments.
-        # Filesystem isolation is enforced by Singularity binds, not this list.
-        "disallowed_tools": ["mcp__*"],
+        # Per-agent subsections. Only the subsection matching cfg["agent"] is
+        # consumed at propose-time; the other is ignored. Each agent has its
+        # own model + agent-specific knobs. Fields set to null (None) fall back
+        # to the agent's CLI default (no flag passed).
+        "claude_code": {
+            "model": "claude-opus-4-7",
+            # low / medium / high / xhigh / max  (CC --effort)
+            "effort": "medium",
+            # Tools the agent CLI is told not to consider. Defense-in-depth
+            # only — actual filesystem isolation is the Singularity bind list.
+            # Default ["mcp__*"] keeps CC from listing host MCP servers (which
+            # are unreachable anyway due to --containall, but pruning them
+            # from the prompt avoids wasted turns).
+            "disallowed_tools": ["mcp__*"],
+        },
+        "codex": {
+            "model": "gpt-5.5",
+            # low / medium / high  (codex -c model_reasoning_effort=...)
+            "reasoning_effort": "medium",
+            # No `disallowed_tools` field: codex's tool scope is controlled
+            # by --sandbox mode (we use danger-full-access because the outer
+            # Singularity sandbox is the real boundary), not per-tool blocking.
+        },
     },
     "selection": {
         # tau is still consumed by Frontier.sample_parent if the held-out test
@@ -157,6 +173,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # stages before adding them to frontier. Disable via `--no-adopt-orphans`
     # if you suspect the orphan dirs are corrupt.
     "adopt_orphans": True,
+    # Which coding-agent backend the proposer drives: "claude_code" (uses the
+    # `claude` CLI in stream-json mode, default) or "codex" (OpenAI Codex CLI
+    # in --json mode, auths via OPENAI_API_KEY).
+    "agent": "claude_code",
     # `run_name` defaults to a timestamp at resolve time (so the default isn't
     # frozen at import time). `datasets` intentionally omitted from defaults.
 }
@@ -200,9 +220,8 @@ def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
         if val is not None:
             cfg[key] = val
 
-    # Nested proposer / selection / sanity overrides
+    # Generic proposer overrides (apply to both agents).
     _proposer_map = {
-        "proposer_model": "model",
         "proposer_max_turns": "max_turns",
         "proposer_timeout_s": "timeout_s",
     }
@@ -210,9 +229,15 @@ def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
         val = getattr(args, cli_key, None)
         if val is not None:
             cfg["proposer"][cfg_key] = val
-    # disallowed_tools: comma-separated. Empty string = allow everything.
+    # --proposer-model overrides the ACTIVE agent's model. We compute the
+    # active agent here (CLI --agent > cfg.agent > DEFAULT_CONFIG.agent).
+    if args.proposer_model is not None:
+        active_agent = args.agent or cfg.get("agent", "claude_code")
+        cfg["proposer"][active_agent]["model"] = args.proposer_model
+    # disallowed_tools (claude_code-only; codex has no per-tool block).
+    # Comma-separated. Empty string = allow everything.
     if args.proposer_disallowed_tools is not None:
-        cfg["proposer"]["disallowed_tools"] = [
+        cfg["proposer"]["claude_code"]["disallowed_tools"] = [
             t.strip() for t in args.proposer_disallowed_tools.split(",") if t.strip()
         ]
     if args.tau is not None:
@@ -231,6 +256,8 @@ def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
         cfg["gpu"]["enabled"] = True
     if args.no_adopt_orphans:
         cfg["adopt_orphans"] = False
+    if args.agent is not None:
+        cfg["agent"] = args.agent
 
     # run_name: CLI > YAML > timestamp default. Resolved here (not in
     # DEFAULT_CONFIG) so `from forge.orchestrator import DEFAULT_CONFIG`
@@ -351,6 +378,55 @@ def _write_resolved_config(cfg: Dict[str, Any]) -> Path:
     with cfg_path.open("w", encoding="utf-8") as f:
         yaml.safe_dump(cfg, f, sort_keys=False, allow_unicode=True)
     return cfg_path
+
+
+# ---------------------------------------------------------------------------
+# Proposer config resolution
+# ---------------------------------------------------------------------------
+
+def _resolve_proposer_for_agent(
+    cfg: Dict[str, Any], agent: str
+) -> Tuple[str, Dict[str, Any]]:
+    """Compute (model, agent_opts) for the active agent from cfg.proposer.
+
+    Pure lookup against `cfg.proposer[agent]` — no fallback to a top-level
+    `proposer.model`. Each agent's subsection is self-contained.
+
+    `agent_opts` contains all per-agent fields the in-container script
+    consumes when building the agent CLI argv:
+
+      claude_code:
+        effort           → --effort <level>
+        disallowed_tools → --disallowed-tools <comma-sep>
+      codex:
+        reasoning_effort → -c model_reasoning_effort="<level>"
+    """
+    proposer_cfg = cfg.get("proposer", {}) or {}
+    agent_cfg = proposer_cfg.get(agent)
+    if agent_cfg is None:
+        raise ValueError(
+            f"No `proposer.{agent}` subsection in config. "
+            f"Each agent needs its own model + opts under proposer.<agent>."
+        )
+
+    model = agent_cfg.get("model")
+    if not model:
+        raise ValueError(
+            f"No model configured for agent={agent!r}: set proposer.{agent}.model "
+            f"in the YAML config."
+        )
+
+    opts: Dict[str, Any] = {}
+    if agent == "claude_code":
+        if agent_cfg.get("effort") is not None:
+            opts["effort"] = str(agent_cfg["effort"])
+        # disallowed_tools is always passed (defaults to empty list).
+        opts["disallowed_tools"] = list(agent_cfg.get("disallowed_tools") or [])
+    elif agent == "codex":
+        if agent_cfg.get("reasoning_effort") is not None:
+            opts["reasoning_effort"] = str(agent_cfg["reasoning_effort"])
+
+    return model, opts
 
 
 # ---------------------------------------------------------------------------
@@ -861,18 +937,22 @@ async def propose_eval_one(
         if (harness_dir / "harness.py").exists() and "_" not in harness_dir.name:
             final_id, harness_dir = _finalize_harness_id(new_id, harness_dir)
 
-    # Propose (unless seed). No parent_id passed — CC browses the workspace
-    # itself and records its chosen prior(s) in meta.json::parent_ids.
+    # Propose (unless seed). No parent_id passed — the agent browses the
+    # workspace itself and records its chosen prior(s) in meta.json::parent_ids.
     if not is_seed:
+        agent = cfg["agent"]
+        agent_model, agent_opts = _resolve_proposer_for_agent(cfg, agent)
         try:
             await propose(
                 new_id=new_id,
-                model=cfg["proposer"]["model"],
+                model=agent_model,
                 max_turns=cfg["proposer"]["max_turns"],
                 timeout_s=cfg["proposer"]["timeout_s"],
-                disallowed_tools=cfg["proposer"]["disallowed_tools"],
                 sanity_enabled=sanity_enabled,
                 active_datasets=list(cfg.get("datasets", {}).keys()),
+                update_type=cfg["update_type"],
+                agent=agent,
+                agent_opts=agent_opts,
             )
         except (TimeoutError, RuntimeError) as exc:
             # propose() failed — most likely subprocess exited rc!=0 (auth 401,
@@ -929,17 +1009,21 @@ async def propose_eval_one(
             if attempt >= max_retries:
                 sanity_status = "failed"
                 break
-            # Retry: ask CC to fix its own harness based on the error trace
+            # Retry: ask the agent to fix its own harness based on the error trace.
+            agent = cfg["agent"]
+            agent_model, agent_opts = _resolve_proposer_for_agent(cfg, agent)
             try:
                 await propose_with_fix(
                     new_id=new_id,
                     error_trace=error_trace,
-                    model=cfg["proposer"]["model"],
+                    model=agent_model,
                     max_turns=cfg["proposer"]["max_turns"],
                     timeout_s=cfg["proposer"]["timeout_s"],
-                    disallowed_tools=cfg["proposer"]["disallowed_tools"],
                     sanity_enabled=sanity_enabled,
                     active_datasets=list(cfg.get("datasets", {}).keys()),
+                    update_type=cfg["update_type"],
+                    agent=agent,
+                    agent_opts=agent_opts,
                 )
             except (TimeoutError, RuntimeError) as exc:
                 # propose_with_fix subprocess died — same infra failure mode as
@@ -1557,6 +1641,12 @@ def main() -> None:
                              "Default ON: dirs on disk but not in frontier are "
                              "re-attached (only the missing pipeline stages re-run). "
                              "Pass this to force a clean restart instead.")
+    parser.add_argument("--agent", default=None,
+                        choices=["claude_code", "codex"],
+                        help="Coding-agent backend the proposer drives. "
+                             "claude_code (default) shells out to the `claude` CLI; "
+                             "codex shells out to OpenAI Codex CLI (`codex exec`). "
+                             "codex auth = OPENAI_API_KEY env var.")
 
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
