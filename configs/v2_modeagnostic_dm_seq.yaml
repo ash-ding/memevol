@@ -1,0 +1,47 @@
+# v2_modeagnostic_dm_seq — first run with prompt 20260519_0534_99fc82ac
+# (the "Mode-agnostic correctness" revision).
+#
+# Hypothesis: under sequential ingestion the new prompt's anti-idempotency
+# guidance produces harnesses that ACCUMULATE / MUTATE across the 1500-ish
+# per-user general_update calls — rather than the freeze-on-first-build
+# pattern observed in every prior all_at_once run.
+#
+# Usage:
+#   venv/bin/python -m forge.orchestrator --config configs/v2_modeagnostic_dm_seq.yaml \
+#       --run-name v2_modeagnostic_dm_seq_<TS>
+
+steps: 10
+status: search
+max_sample_concurrent: 3
+memory_dumps: full
+
+model: gpt-5-mini
+judge_model: gpt-5-mini
+update_type: sequential          # the whole point — exercise the new prompt
+
+proposer:
+  max_turns: 80
+  timeout_s: 2400                # 40 min — max effort needs headroom
+  claude_code:
+    model: claude-opus-4-7
+    effort: max                  # max reasoning per user request
+    disallowed_tools: ["mcp__*"]
+
+propose:
+  k_per_step: 1                  # one candidate per outer-loop step
+
+selection:
+  tau: 0.5
+
+sanity:
+  enabled: true
+  max_retries: 2
+
+datasets:
+  dynamicmem:
+    eval_n_samples: 6            # all search users
+    eval_n_qa: 20
+
+prompts:
+  version: latest                # → reads forge/prompts/templates/_default
+                                 #   currently 20260519_0534_99fc82ac

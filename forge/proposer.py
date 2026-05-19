@@ -55,6 +55,11 @@ from forge.paths import (
     PROPOSER_BASE_SIF,
     paths,
 )
+from forge.prompts import (
+    build_proposer_system,
+    proposer_fix_prompt,
+    proposer_task_prompt,
+)
 
 log = logging.getLogger("forge.proposer")
 
@@ -321,9 +326,11 @@ def _build_singularity_cmd(
           /app/.env, /app/.git                          not needed
     """
     binds = [
-        # LAYER-1 wrapper script imports
+        # LAYER-1 wrapper script imports. Note: forge/prompts/ is intentionally
+        # NOT bound — prompts are rendered HOST-SIDE by `_render_and_stage_prompts`
+        # and staged to the per-harness workspace as `.prompt_system.txt` +
+        # `.prompt_task.txt`; the container only reads those files via /workspace.
         f"{PROJECT_ROOT}/forge/__init__.py:/app/forge/__init__.py:ro",
-        f"{PROJECT_ROOT}/forge/prompts.py:/app/forge/prompts.py:ro",
         f"{PROJECT_ROOT}/forge/propose_in_container.py:/app/forge/propose_in_container.py:ro",
 
         # Agent reference materials
@@ -398,6 +405,12 @@ async def _stream_subprocess(
         env=env,
         # Put singularity in its own process group so we can kill it cleanly.
         preexec_fn=os.setsid,
+        # Match the in-container readline limit. The container only emits
+        # truncated `proposer·*: ...` lines so the host pump shouldn't ever
+        # see > 64 KB in practice, but if the container crashes with a stack
+        # trace (or a stray library prints a giant message) the default limit
+        # would silently kill the outer pump too.
+        limit=16 * 1024 * 1024,
     )
 
     async def _pump_stdout() -> None:
@@ -408,7 +421,13 @@ async def _stream_subprocess(
                 continue
             # Lines from propose_in_container.py are pre-tagged
             # ("proposer·tool: ...", "proposer·text: ...", etc).
-            # Map error tag → log.error, info → log.info, everything else → debug.
+            # Map error tag → log.error, info / tool / text → log.info.
+            # Anything untagged is unstructured output from the agent CLI's
+            # own stderr (CC's bun-runtime exceptions, codex panics, etc.),
+            # which we MUST surface — silent rc=1 was traced to these being
+            # swallowed by log.debug. Use WARNING so they're visible at the
+            # default level without disrupting the agent's structured event
+            # stream.
             if line.startswith("proposer·error"):
                 log.error(line)
             elif line.startswith("proposer·info"):
@@ -418,7 +437,7 @@ async def _stream_subprocess(
             elif line.startswith("proposer·text"):
                 log.info(line)
             else:
-                log.debug(line)
+                log.warning(f"proposer·raw: {line}")
 
     pump_task = asyncio.create_task(_pump_stdout())
     try:
@@ -447,6 +466,63 @@ async def _stream_subprocess(
 
 
 # ---------------------------------------------------------------------------
+# Host-side prompt rendering / staging
+# ---------------------------------------------------------------------------
+
+def _render_and_stage_prompts(
+    *,
+    new_id: str,
+    mode: str,  # "propose" | "fix"
+    prompts_version: Optional[str],
+    sanity_enabled: bool,
+    active_datasets: Optional[List[str]],
+    update_type: str,
+    error_trace: Optional[str] = None,
+) -> Dict[str, str]:
+    """Render system + task prompts HOST-SIDE for the chosen version and
+    write them to the harness dir as forensic-friendly text files.
+
+    The container then reads the two files via the /workspace RW bind — it
+    never imports any version of `forge.prompts.*`. Effect: each harness dir
+    permanently captures the exact prompt that produced it, available for
+    diff between runs without spelunking git.
+
+    Returns the *container-side* absolute paths suitable to pass as argv to
+    `propose_in_container.py`.
+    """
+    new_dir = paths.harnesses_dir / new_id
+    new_dir.mkdir(parents=True, exist_ok=True)
+
+    system_text = build_proposer_system(
+        sanity_enabled=sanity_enabled,
+        active_datasets=active_datasets or None,
+        update_type=update_type,
+        version=prompts_version,
+    )
+    new_dir_rel = f"harnesses/{new_id}"
+    if mode == "propose":
+        task_text = proposer_task_prompt(new_dir_rel, version=prompts_version)
+    elif mode == "fix":
+        if error_trace is None:
+            raise ValueError("fix mode requires error_trace")
+        task_text = proposer_fix_prompt(
+            new_dir_rel, error_trace, version=prompts_version
+        )
+    else:
+        raise ValueError(f"unknown mode: {mode!r} (expected propose|fix)")
+
+    system_host = new_dir / ".prompt_system.txt"
+    task_host = new_dir / ".prompt_task.txt"
+    system_host.write_text(system_text, encoding="utf-8")
+    task_host.write_text(task_text, encoding="utf-8")
+
+    return {
+        "system_in_container": f"/workspace/harnesses/{new_id}/.prompt_system.txt",
+        "task_in_container": f"/workspace/harnesses/{new_id}/.prompt_task.txt",
+    }
+
+
+# ---------------------------------------------------------------------------
 # Public API — same signatures as v5 host-side proposer; orchestrator unchanged.
 # ---------------------------------------------------------------------------
 
@@ -461,12 +537,18 @@ async def propose(
     update_type: str = "all_at_once",
     agent: str = "claude_code",
     agent_opts: Optional[Dict[str, Any]] = None,
+    prompts_version: Optional[str] = None,
 ) -> Path:
     """Run a sandboxed proposer; return the new harness directory on success.
 
     `agent` selects the coding-agent backend: 'claude_code' (default) or
     'codex'. The in-container script (`propose_in_container.py`) dispatches
     on this and shells out to the matching CLI.
+
+    `prompts_version` selects the prompt template version (a stem name under
+    `forge/prompts/templates/`); None / "latest" → templates/_default.
+    Prompts are rendered HOST-SIDE and staged into the harness dir; the
+    container does not import any forge.prompts.* code.
 
     No parent_id passed — the agent explores `harnesses/` itself and decides
     which prior(s) to draw from. Choices are recorded in `meta.json::parent_ids`.
@@ -483,6 +565,15 @@ async def propose(
     # mkdir on host so the bind sees it; container has it RW via /workspace.
     new_dir.mkdir(parents=True, exist_ok=True)
 
+    staged = _render_and_stage_prompts(
+        new_id=new_id,
+        mode="propose",
+        prompts_version=prompts_version,
+        sanity_enabled=sanity_enabled,
+        active_datasets=active_datasets,
+        update_type=update_type,
+    )
+
     proposer_home = _prepare_claude_home()
     if agent == "codex":
         _stage_codex_apikey_auth(proposer_home)
@@ -494,9 +585,8 @@ async def propose(
         "--model", model,
         "--max-turns", str(max_turns),
         "--timeout-s", str(timeout_s),
-        "--sanity-enabled", "true" if sanity_enabled else "false",
-        "--active-datasets", ",".join(active_datasets or []),
-        "--update-type", update_type,
+        "--system-prompt-file", staged["system_in_container"],
+        "--task-file", staged["task_in_container"],
         "--agent-opts", json.dumps(agent_opts or {}),
     ]
     cmd = _build_singularity_cmd(
@@ -534,13 +624,15 @@ async def propose_with_fix(
     update_type: str = "all_at_once",
     agent: str = "claude_code",
     agent_opts: Optional[Dict[str, Any]] = None,
+    prompts_version: Optional[str] = None,
 ) -> Path:
     """Ask the agent to Read + Edit the existing harness to fix a sanity-check
     failure.
 
-    The error trace is staged to a host-side file inside the harness dir so
-    the container can read it via the workspace bind. The file is removed
-    after the subprocess returns (success or failure).
+    The error trace is folded HOST-SIDE into the rendered task prompt by
+    `proposer_fix_prompt`; no separate file is written into the harness dir.
+    The staged `.prompt_task.txt` for a fix call therefore CONTAINS the trace
+    inline (truncated if >90 lines).
     """
     _check_environment(agent=agent)
 
@@ -550,12 +642,15 @@ async def propose_with_fix(
             f"propose_with_fix called but {new_dir}/harness.py does not exist"
         )
 
-    # Stage the error trace inside the harness dir so it's reachable via the
-    # /workspace bind. Hidden filename so the agent doesn't accidentally read
-    # it as part of normal exploration.
-    trace_host = new_dir / ".fix_error_trace.txt"
-    trace_host.write_text(error_trace, encoding="utf-8")
-    trace_in_container = f"/workspace/harnesses/{new_id}/.fix_error_trace.txt"
+    staged = _render_and_stage_prompts(
+        new_id=new_id,
+        mode="fix",
+        prompts_version=prompts_version,
+        sanity_enabled=sanity_enabled,
+        active_datasets=active_datasets,
+        update_type=update_type,
+        error_trace=error_trace,
+    )
 
     proposer_home = _prepare_claude_home()
     if agent == "codex":
@@ -564,30 +659,22 @@ async def propose_with_fix(
         "--new-id", new_id,
         "--workspace", "/workspace",
         "--mode", "fix",
-        "--error-trace-file", trace_in_container,
         "--agent", agent,
         "--model", model,
         "--max-turns", str(max_turns),
         "--timeout-s", str(timeout_s),
-        "--sanity-enabled", "true" if sanity_enabled else "false",
-        "--active-datasets", ",".join(active_datasets or []),
-        "--update-type", update_type,
+        "--system-prompt-file", staged["system_in_container"],
+        "--task-file", staged["task_in_container"],
         "--agent-opts", json.dumps(agent_opts or {}),
     ]
     cmd = _build_singularity_cmd(
         propose_args=propose_args, proposer_home=proposer_home, agent=agent,
     )
     extra_env = _agent_auth_extra_env(agent)
-    try:
-        rc = await _stream_subprocess(
-            cmd, timeout_s=timeout_s + 60, label=f"propose_fix[{new_id}]",
-            extra_env=extra_env,
-        )
-    finally:
-        try:
-            trace_host.unlink()
-        except OSError:
-            pass
+    rc = await _stream_subprocess(
+        cmd, timeout_s=timeout_s + 60, label=f"propose_fix[{new_id}]",
+        extra_env=extra_env,
+    )
 
     if rc != 0:
         raise RuntimeError(

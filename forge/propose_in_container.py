@@ -5,7 +5,8 @@ Launched by `forge/proposer.py` via:
     singularity exec --containall --bind ... proposer-base.sif \\
         python /app/forge/propose_in_container.py \\
             --new-id <int> --workspace /workspace [--mode propose|fix] \\
-            [--error-trace-file /workspace/.fix_error_trace.txt] \\
+            --system-prompt-file /workspace/harnesses/<id>/.prompt_system.txt \\
+            --task-file          /workspace/harnesses/<id>/.prompt_task.txt   \\
             --agent <claude_code|codex> --model <model> --timeout-s <s>
 
 Inside the Singularity sandbox we have:
@@ -18,6 +19,17 @@ Inside the Singularity sandbox we have:
 
 The agent's filesystem-readable surface is exactly the binds above; nothing
 else from the host is visible (`--containall` strips $HOME, /tmp, etc).
+
+# Prompt staging
+
+System prompt + task prompt are rendered HOST-SIDE by
+`forge.proposer._render_and_stage_prompts(...)` against the chosen prompt
+template version (cfg.prompts.version) and written into the harness dir as
+`.prompt_system.txt` / `.prompt_task.txt`. This script does NOT import any
+version of `forge.prompts.*`; it just reads those two files. Effect: each
+harness dir captures the exact prompt that produced it, available for diff
+without spelunking git, and prompt-version code is fully decoupled from the
+container image's bind list.
 
 # Multi-agent design
 
@@ -39,17 +51,6 @@ import json
 import sys
 from pathlib import Path
 from typing import Callable, List
-
-# Project root is bound at /app. Add to sys.path so `from forge.prompts` works.
-_APP = Path("/app")
-if str(_APP) not in sys.path:
-    sys.path.insert(0, str(_APP))
-
-from forge.prompts import (
-    build_proposer_system,
-    proposer_fix_prompt,
-    proposer_task_prompt,
-)
 
 
 # Tool restrictions intentionally NOT set: filesystem isolation is enforced
@@ -87,7 +88,7 @@ def _emit(prefix: str, msg: str) -> None:
 
 def _build_cmd_cc(
     *,
-    system_prompt: str,
+    system_prompt_file: str,
     model: str,
     agent_opts: dict,
 ) -> List[str]:
@@ -98,7 +99,10 @@ def _build_cmd_cc(
         "--output-format", "stream-json",
         "--input-format", "stream-json",
         "--model", model,
-        "--system-prompt", system_prompt,
+        # --system-prompt-file is the file-based variant of --system-prompt;
+        # avoids embedding a ~25 KB blob in argv (which `ps` would expose) and
+        # makes the prompt visible to forensic diffs at <harness>/.prompt_system.txt.
+        "--system-prompt-file", system_prompt_file,
         "--permission-mode", "bypassPermissions",
     ]
     disallowed = agent_opts.get("disallowed_tools") or []
@@ -271,31 +275,22 @@ _AGENT_DISPATCH = {
 
 async def _run(args: argparse.Namespace) -> int:
     workspace = Path(args.workspace)
-    new_dir_rel = f"harnesses/{args.new_id}"
-    new_dir = workspace / new_dir_rel
+    new_dir = workspace / f"harnesses/{args.new_id}"
 
-    if args.mode == "propose":
-        new_dir.mkdir(parents=True, exist_ok=True)
-        task = proposer_task_prompt(new_dir_rel=new_dir_rel)
-    else:  # fix
-        if not (new_dir / "harness.py").exists():
-            _emit("proposer·error", f"fix mode but {new_dir}/harness.py missing")
-            return 2
-        if not args.error_trace_file:
-            _emit("proposer·error", "fix mode requires --error-trace-file")
-            return 2
-        error_trace = Path(args.error_trace_file).read_text(encoding="utf-8")
-        task = proposer_fix_prompt(new_dir_rel=new_dir_rel, error_trace=error_trace)
+    # Sanity: in fix mode the harness must already exist. (In propose mode
+    # the host launcher created the dir; both .prompt_*.txt files live inside
+    # so by definition the dir is there.)
+    if args.mode == "fix" and not (new_dir / "harness.py").exists():
+        _emit("proposer·error", f"fix mode but {new_dir}/harness.py missing")
+        return 2
 
-    active_datasets = [
-        d.strip() for d in (args.active_datasets or "").split(",") if d.strip()
-    ]
-
-    system_prompt = build_proposer_system(
-        sanity_enabled=args.sanity_enabled,
-        active_datasets=active_datasets or None,
-        update_type=args.update_type,
-    )
+    # Prompts are pre-rendered HOST-SIDE — just read the two staged files.
+    try:
+        system_prompt = Path(args.system_prompt_file).read_text(encoding="utf-8")
+        task = Path(args.task_file).read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        _emit("proposer·error", f"missing staged prompt file: {exc}")
+        return 7
 
     if args.agent not in _AGENT_DISPATCH:
         _emit("proposer·error", f"unknown agent: {args.agent}")
@@ -317,7 +312,7 @@ async def _run(args: argparse.Namespace) -> int:
     # Build agent-specific argv + stdin payload.
     if args.agent == "claude_code":
         cmd = _build_cmd_cc(
-            system_prompt=system_prompt,
+            system_prompt_file=args.system_prompt_file,
             model=args.model,
             agent_opts=agent_opts,
         )
@@ -343,6 +338,14 @@ async def _run(args: argparse.Namespace) -> int:
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.STDOUT,
+        # CC / codex emit NDJSON events one event per line. A single line can
+        # easily exceed asyncio's default 64 KB readline limit — e.g. a
+        # `tool_result` block containing `cat` output over a multi-MB dataset
+        # file. Without raising this limit, `async for raw in proc.stdout`
+        # raises LimitOverrunError and the whole propose silently dies. 16 MB
+        # is generous; any tool_result above that means the agent is doing
+        # something pathological that we'd want to fail loudly anyway.
+        limit=16 * 1024 * 1024,
     )
 
     assert proc.stdin is not None
@@ -407,9 +410,15 @@ def main() -> None:
     p.add_argument("--new-id", required=True)
     p.add_argument("--workspace", required=True,
                    help="Container path of the per-run workspace (typically /workspace).")
-    p.add_argument("--mode", choices=["propose", "fix"], default="propose")
-    p.add_argument("--error-trace-file", default=None,
-                   help="Required when --mode=fix; path inside container to the trace text file.")
+    p.add_argument("--mode", choices=["propose", "fix"], default="propose",
+                   help="propose: enforce PROPOSAL_READY on exit. fix: skip that check.")
+    p.add_argument("--system-prompt-file", required=True,
+                   help="Path inside the container to the host-rendered system prompt "
+                        "(typically /workspace/harnesses/<id>/.prompt_system.txt).")
+    p.add_argument("--task-file", required=True,
+                   help="Path inside the container to the host-rendered task prompt "
+                        "(/workspace/harnesses/<id>/.prompt_task.txt). In fix mode this "
+                        "file already has the error trace folded in by proposer_fix_prompt.")
     p.add_argument("--agent", default="claude_code",
                    choices=list(_AGENT_DISPATCH.keys()),
                    help="Coding agent backend to drive (default claude_code).")
@@ -419,28 +428,11 @@ def main() -> None:
                         "is the hard limit. Kept for backward compat with old "
                         "callers; no longer plumbed to the agent CLI.")
     p.add_argument("--timeout-s", type=int, default=25 * 60)
-    p.add_argument("--sanity-enabled", default="true",
-                   choices=["true", "false"],
-                   help="Whether the orchestrator will run a sanity check after this propose. "
-                        "Controls whether sanity-related sections appear in PROPOSER_SYSTEM.")
-    p.add_argument("--active-datasets", default="",
-                   help="Comma-separated dataset names this run is configured for "
-                        "(e.g. 'dynamicmem,locomo'). Empty = full 3-benchmark prompt. "
-                        "Controls which dataset shapes / dispatch examples / trace "
-                        "field listings appear in PROPOSER_SYSTEM.")
-    p.add_argument("--update-type", default="all_at_once",
-                   choices=["all_at_once", "chunked", "sequential"],
-                   help="Phase 1 dispatch mode for this run. Surfaced to the proposer "
-                        "so it knows whether general_update will be called once with "
-                        "the full payload or many times with smaller chunks.")
     p.add_argument("--agent-opts", default="{}",
                    help="JSON dict of agent-specific options. Recognized keys: "
-                        "{claude_code: effort} {codex: reasoning_effort}. Unknown "
-                        "keys are silently ignored by each agent's argv builder.")
+                        "{claude_code: effort, disallowed_tools} {codex: reasoning_effort}. "
+                        "Unknown keys are silently ignored by each agent's argv builder.")
     args = p.parse_args()
-    # Convert string flag → bool (argparse choices keep it stringly-typed for
-    # CLI symmetry with the host launcher).
-    args.sanity_enabled = (args.sanity_enabled == "true")
     rc = asyncio.run(_run(args))
     sys.exit(rc)
 

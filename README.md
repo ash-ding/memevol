@@ -207,10 +207,12 @@ finished turns=X tools=Y duration=Zms cost=$W` summary.
 - [`docs/meta hearness.pdf`](docs/) — Meta-Harness paper (the design we follow:
   agent-driven parent selection, full filesystem feedback, no compressed
   per-candidate summaries).
-- The mission framing inside [`forge/prompts.py::PROPOSER_SYSTEM`](forge/prompts.py)
-  decomposes "biological memory" into a 12-axis taxonomy across three families
-  (Functional Core / Performance & Runtime / Learning & Adaptation) — these
-  are the search dimensions the proposer is asked to advance.
+- The mission framing inside the active template under
+  [`forge/prompts/templates/`](forge/prompts/templates/) (the stem listed in
+  `forge/prompts/templates/_default`) decomposes "biological memory" into a
+  12-axis taxonomy across three families (Functional Core / Performance &
+  Runtime / Learning & Adaptation) — these are the search dimensions the
+  proposer is asked to advance.
 
 ## License
 

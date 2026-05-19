@@ -1,19 +1,33 @@
-"""Prompt templates for the forge Claude-Code-SDK proposer.
+"""Prompt template.
 
-The proposer browses the per-run workspace (Read/Grep/Glob + Bash with the
-usual unix tools) and decides what to study. There is no fixed parent-
-selection rule — this matches the "Meta-Harness" paper (Algorithm 1, §3):
-no selection heuristic in the outer loop; the agent picks priors itself.
+Parent: 20260519_1807_09c510fe
+
+Changes from parent:
+  - Phase 1 "Mode-agnostic correctness" section: explicitly scoped to
+    `general_update` (not the whole harness). Added a "scope
+    clarification" sub-section pointing out the common anti-pattern
+    where agents over-interpret "lazy / online" as "delay all
+    abstraction to first-retrieve consolidation over the subset" —
+    that pattern is NOT what mode-agnostic correctness asks for.
+  - MISSION C1 (Consolidation / Abstraction): added explicit
+    "What COUNTS / What does NOT count" sub-bullets so agents can
+    distinguish persistent write-time consolidation (real C1) from
+    per-query view functions (NOT C1, just better return formatting)
+    and from "lazy consolidation on first retrieve" (one-shot build
+    in the wrong place).
+
+This file is IMMUTABLE — to make further changes, create a new
+timestamp_hash file via `tools/bump_prompt.sh new`.
 """
 
+PROMPT_VERSION = "20260519_1907_c7b1ef72"
 
-# Internal template — DO NOT use directly; call
-# `build_proposer_system(sanity_enabled, active_datasets)`.
-# Sentinels in the form <<NAME>> are substituted at build time so the prompt
-# accurately reflects (a) whether the sanity-check layer runs for THIS run,
-# and (b) which benchmark(s) THIS run is configured for (so the dataset
-# shapes / dispatch examples / trace fields only document active benchmarks).
-_PROPOSER_SYSTEM_TEMPLATE = """\
+
+# ===========================================================================
+# SYSTEM_TEMPLATE — was forge/prompts.py::_PROPOSER_SYSTEM_TEMPLATE
+# ===========================================================================
+
+SYSTEM_TEMPLATE = """\
 You are a researcher designing memory systems for AI agents. Each iteration
 you produce a "harness" — but substantively a harness IS a memory system:
 it ingests a stream of user data (app logs, conversations, chat sessions)
@@ -111,6 +125,28 @@ C. LEARNING & ADAPTATION — how memory should EVOLVE
       consolidation. Enables generalization queries ("what's my recent
       pattern?") rather than just lookups. Most vector stores LACK this
       layer entirely (append-only logs).
+
+      What COUNTS as C1:
+        - PERSISTENT abstractions stored on `self` (e.g.
+          `self.routine_cards`, `self.entity_summaries`,
+          `self.consolidated_facts`) derived at WRITE time, or in a
+          batched flush, and REUSED across all subsequent retrieves.
+        - The abstraction MUST accumulate / be refined across writes
+          (chunked or sequential) — not built once and frozen.
+
+      What does NOT count:
+        - Per-query view functions over the retrieved subset (e.g.
+          `_timing_stats(ranked[:K])`, weekday distributions computed
+          on the top-K hits and returned in the retrieve dict but not
+          stored on `self`). That's "better return formatting", not
+          consolidation. The point of C1 is that abstractions PERSIST.
+        - "Lazy consolidation on first retrieve" that builds the
+          whole-corpus abstraction inside the first `general_retrieve`
+          call: it IS persistent on `self`, but it puts the cost on
+          the read path (which has its own budget) and treats
+          consolidation as a one-shot build rather than an online
+          process. Prefer write-time incremental accumulation in
+          `general_update` instead.
 
   • Principled Forgetting
       Actively prune outdated, wrong, or low-value information so noise
@@ -320,8 +356,9 @@ Your harness sees its real input via `recorder.init`, never via file IO.
   grep -l 'failure_info' harnesses/*/locomo/traces/*.json | head    traces with crashes
   cat /app/datasets/locomo/env.py                                    authoritative shape
 
-The Read/Grep/Glob SDK tools also work; mix and match by what fits the
-question (Read for one file you'll inspect, Bash+jq for cross-file queries).
+Your file-read / grep / glob tools also work; mix and match by what fits
+the question (a direct file read for one file you'll inspect, Bash+jq for
+cross-file queries).
 
 # Trace fields (per benchmark — important for diagnosing prior failures)
 
@@ -357,11 +394,47 @@ A candidate is a directory `harnesses/<id>/` containing:
                        cache hits.
 
   meta.json           REQUIRED.
-                       {"parent_ids": ["<id1>", "<id2>", ...],
-                        "description": "<one-line rationale>"}
-                       parent_ids = ALL harness dirs you actually drew from
-                       (use the full `<int>_<hash>` form, e.g. `"3_a1b2c3d4"`).
-                       Empty list `[]` if you didn't reference any prior.
+                       {"parent_ids":     ["<id1>", "<id2>", ...],
+                        "description":    "<one-line rationale>",
+                        "axes_addressed": [
+                            {"axis": "<code>",
+                             "name": "<axis name>",
+                             "how":  "<mechanism + rationale (2–4 sentences)>"},
+                            ...
+                        ]}
+                       parent_ids: ALL harness dirs you drew from (use the
+                       full `<int>_<hash>` form, e.g. `"3_a1b2c3d4"`). Empty
+                       list `[]` if you didn't reference any prior.
+                       description: one short line on what's new and why.
+                       axes_addressed: the subset of the 12 MISSION axes
+                       (A1..A5, B1..B3, C1..C4 — see "Search dimensions"
+                       above) that THIS harness materially advances. Be
+                       STRICT — only list an axis when concrete code in
+                       harness.py implements it; passing-mention in a
+                       docstring is NOT enough. Each entry's `how` (2–4
+                       sentences) MUST cover BOTH:
+                         (a) MAPPING — which specific code mechanism
+                             realizes this axis: function names, indices,
+                             data structures, control-flow points;
+                         (b) RATIONALE — WHY this design over alternatives:
+                             what failure pattern it targets, what trade-off
+                             it accepts, what observation about the dataset
+                             or prior harnesses' traces motivated the
+                             choice. When the design came from diagnosing a
+                             specific weakness, cite it concretely.
+                       Example of a GOOD `how`:
+                         "Hybrid BM25 + dense fusion via RRF in
+                          `_retrieve_pool`. BM25 alone misses paraphrased
+                          queries; dense alone misses low-frequency exact
+                          facts. Fusion catches both. Chosen after
+                          harness 3's traces showed synthesis queries
+                          scoring 0–4 with dense-only retrieval."
+                       BAD `how` (mechanism only, no rationale):
+                         "BM25 + dense fusion."
+                       Typical count: 2–5 axes; 8+ is a red flag for
+                       checkbox-gaming. Future iterations of you read this
+                       field and trust it — under-claim if uncertain
+                       rather than over-claim.
                        (`content_hash` and `created_at` are added by the
                        system after you finish — don't write them yourself.)
 
@@ -401,26 +474,77 @@ correctly.
 # Two-phase protocol
 * Phase 1  general_update(recorder):
       recorder.init is dataset-dependent (see below).
-      Build any memory state on `self` (dicts, graphs, vector stores, ...).
-      To simulate the different streaming patterns a real-world memory
-      system may face, the workflow delivers init to your harness in one of
-      three modes:
+      Build / update / mutate any memory state on `self` (dicts, graphs,
+      vector stores, ...).
 
-        - all_at_once: the entire user history arrives in a single call.
+      Three modes — a stress test on your architecture's flexibility. To
+      study whether different real-world data-arrival patterns elicit
+      different memory architectures, the workflow delivers init in one
+      of three modes:
+
+        - all_at_once: the entire user history in a single call.
           general_update is invoked ONCE per user, with the full init
-          payload. For DynamicMem, recorder.init["app_logs"] is the entire
-          (~1500-log) list. Mirrors batch / offline ingestion.
+          payload. For DynamicMem, recorder.init["app_logs"] is the
+          entire (~1500-log) list. Mirrors batch / offline ingestion.
 
-        - chunked: history arrives in K roughly-equal chunks. general_update
-          is invoked K times per user; your state on `self` must persist
-          across calls. Mirrors mini-batch / scheduled-flush ingestion.
+        - chunked: history arrives in K roughly-equal chunks.
+          general_update is invoked K times per user; your state on
+          `self` must persist across calls. Mirrors mini-batch /
+          scheduled-flush ingestion.
 
         - sequential: events stream in one at a time. general_update is
-          invoked once per init item — for DynamicMem ~1500 calls per user,
-          each with recorder.init["app_logs"] of length 1. Mirrors true
-          online / event-by-event ingestion.
+          invoked once per init item — for DynamicMem ~1500 calls per
+          user, each with recorder.init["app_logs"] of length 1. Mirrors
+          true online / event-by-event ingestion.
 
       ▶ THIS run's mode: update_type = <<UPDATE_TYPE>>
+
+      Mode-agnostic correctness — non-negotiable. Although this run
+      pins one mode, your `general_update` (and NOTHING ELSE — see
+      scope note below) MUST be correct under ALL THREE modes, ANY
+      payload size (1 to thousands of items per call), and ANY call
+      count (1 to thousands). Concretely, all three constraints below
+      apply to `general_update`:
+
+        - `general_update` is RE-ENTRANT, not idempotent. Do NOT write
+          early-exit guards like `if self.events: return` that freeze
+          memory after the first call. Under chunked / sequential they
+          silently drop 99% of incoming data, AND they prohibit belief
+          revision, online consolidation, and retroactive mutation —
+          i.e. they prohibit the entire LEARNING & ADAPTATION family
+          from the MISSION axes above.
+        - State on `self` accumulates AND may mutate across calls. Each
+          call delivers new items; integrate them with what's already
+          on `self` (append, merge, supersede, re-cluster — whatever
+          your design calls for). Treating sequential as "1500 batched
+          appends with identical final state to all_at_once" wastes
+          the mode entirely.
+        - Use lazy / online data structures INSIDE `general_update`.
+          Don't pre-allocate from a "full payload size" assumption —
+          under sequential each call's payload length is 1.
+
+      Scope clarification — these constraints do NOT extend to
+      `general_retrieve`. Read-side code SHOULD still:
+        - maintain precomputed indices (BM25 corpus, dense embeddings,
+          inverted indices) — built incrementally during ingest, or
+          lazily on first retrieve, then cached on `self` and reused;
+        - look up write-time-built abstractions for generalization
+          queries.
+
+      Anti-pattern to avoid: "Mode-agnostic" is sometimes
+      MIS-interpreted as "delay all abstraction to first retrieve,
+      compute over the retrieved subset, and discard". That is NOT
+      what's asked. The constraints above ask `general_update` to
+      handle partial input correctly — not to be empty. If you push
+      consolidation out of `general_update` into a per-query view
+      function over `ranked[:K]`, you're not addressing C1
+      (Consolidation), and you put the cost on the read path where
+      it's bounded by less generous budgets. Build abstractions
+      incrementally during writes; store them persistently; reuse
+      them across queries.
+
+      Bottom line: a good memory architecture is defined by WHAT it
+      stores and HOW it retrieves, not by WHEN the data arrives.
 * Phase 2  general_retrieve(recorder):
       recorder.init carries the full user context + the current QA query.
       Return a dict; it is fed verbatim into the QA agent as context.
@@ -445,7 +569,7 @@ async def general_retrieve(self, recorder):
 ```
 
 # Base image (pre-installed, import freely)
-python 3.12, openai, anthropic, claude-code-sdk, tiktoken,
+python 3.12, openai, anthropic, tiktoken,
 chromadb, langchain-chroma, sentence-transformers (CPU torch),
 numpy, scipy, pandas, scikit-learn, networkx, rank_bm25, nltk,
 python-dotenv, pydantic, rich, tenacity, tqdm, jsonschema, pyyaml.
@@ -468,8 +592,11 @@ python-dotenv, pydantic, rich, tenacity, tqdm, jsonschema, pyyaml.
 """
 
 
-# Sanity-on / sanity-off substitutions for _PROPOSER_SYSTEM_TEMPLATE.
-_SANITY_ON_SUBS = {
+# ===========================================================================
+# SANITY_ON_SUBS / SANITY_OFF_SUBS — was _SANITY_*_SUBS
+# ===========================================================================
+
+SANITY_ON_SUBS = {
     "<<MEMORY_DUMPS_BOX>>": "├──",
     "<<SANITY_TREE_BLOCK>>": "\n          └── sanity/          pre-eval sanity-check artifacts (smaller)\n              ├── score.json\n              └── traces/",
     "<<RUNS_SANITY_SUFFIX>>": "[_sanity]",
@@ -486,7 +613,7 @@ happy path. Self-validation above prevents most sanity-check fixups.
 """,
 }
 
-_SANITY_OFF_SUBS = {
+SANITY_OFF_SUBS = {
     "<<MEMORY_DUMPS_BOX>>": "└──",
     "<<SANITY_TREE_BLOCK>>": "",
     "<<RUNS_SANITY_SUFFIX>>": "",
@@ -496,10 +623,11 @@ _SANITY_OFF_SUBS = {
 }
 
 
-# Per-benchmark prompt blocks. Keys here are the canonical "shape names" —
-# longmemeval_s and longmemeval_m share the same shape doc, so both
-# normalize to "longmemeval".
-_DATASET_INFO = {
+# ===========================================================================
+# DATASET_INFO + DATASET_RENDER_ORDER + VALID_UPDATE_TYPES
+# ===========================================================================
+
+DATASET_INFO = {
     "dynamicmem": {
         "display_name": "DynamicMem",
         "qa_metadata": "    DynamicMem:    {domain, belonged, app_log_ids}",
@@ -574,140 +702,17 @@ context window, so memory/retrieval is mandatory.
     },
 }
 
-# Order to render datasets in (canonical: dynamicmem → locomo → longmemeval).
-_DATASET_RENDER_ORDER = ["dynamicmem", "locomo", "longmemeval"]
+DATASET_RENDER_ORDER = ["dynamicmem", "locomo", "longmemeval"]
+
+VALID_UPDATE_TYPES = ("all_at_once", "chunked", "sequential")
 
 
-def _normalize_active_datasets(active_datasets):
-    """Map dataset registration names → canonical shape group keys, in render order.
+# ===========================================================================
+# TASK_PROMPT_TEMPLATE — was proposer_task_prompt() body
+# ===========================================================================
+# Use with str.format(new_dir_rel=...)
 
-    longmemeval_s + longmemeval_m share the same shape doc → both → "longmemeval".
-    Unknown names are silently dropped (defensive against typos / future names).
-    None / empty → all three (back-compat: render full prompt).
-    """
-    if not active_datasets:
-        return list(_DATASET_RENDER_ORDER)
-    seen = set()
-    for ds in active_datasets:
-        key = "longmemeval" if ds.startswith("longmemeval") else ds
-        if key in _DATASET_INFO:
-            seen.add(key)
-    return [k for k in _DATASET_RENDER_ORDER if k in seen]
-
-
-def _build_dataset_subs(active):
-    """Compute the 6 dataset-conditional sentinel substitutions."""
-    n = len(active)
-    names_csv = ", ".join(_DATASET_INFO[k]["display_name"] for k in active)
-
-    if n == 0:
-        # Defensive: shouldn't happen since _normalize falls back to all three,
-        # but if it does, leave intro vague.
-        eval_intro = (
-            "Your memory system is evaluated on long-context QA benchmarks. "
-            "It must handle the `recorder.init` shape provided at runtime."
-        )
-    elif n == 1:
-        eval_intro = (
-            f"Your memory system is evaluated on the {names_csv} benchmark. "
-            f"See the dataset shape and dispatch pattern below."
-        )
-    else:
-        eval_intro = (
-            f"Your memory system is evaluated on MULTIPLE benchmarks "
-            f"(currently {names_csv}). Each benchmark exposes a different "
-            f"`recorder.init` shape, so it must handle all of them — either "
-            f"with dataset-agnostic logic, or by dispatching on the keys of "
-            f"`recorder.init`."
-        )
-
-    qa_meta = "\n".join(_DATASET_INFO[k]["qa_metadata"] for k in active)
-    relevant = "\n".join(_DATASET_INFO[k]["relevant"] for k in active)
-    shapes = "\n".join(_DATASET_INFO[k]["shape"] for k in active)
-
-    update_lines = []
-    retrieve_lines = []
-    for i, k in enumerate(active):
-        kw = "if" if i == 0 else "elif"
-        info = _DATASET_INFO[k]
-        update_lines.append(
-            f"    {kw} {info['dispatch_check']}:\n"
-            f"        {info['dispatch_update_comment']}\n"
-            f"        ..."
-        )
-        retrieve_lines.append(
-            f"    {kw} {info['dispatch_check']}:\n"
-            f"        {info['dispatch_retrieve_comment']}\n"
-            f"        ..."
-        )
-
-    return {
-        "<<EVAL_INTRO_BLOCK>>": eval_intro,
-        "<<TRACE_QA_METADATA_BLOCK>>": qa_meta,
-        "<<TRACE_RELEVANT_BLOCK>>": relevant,
-        "<<DATASET_SHAPES_BLOCK>>": shapes,
-        "<<DISPATCH_UPDATE_BRANCHES>>": "\n".join(update_lines),
-        "<<DISPATCH_RETRIEVE_BRANCHES>>": "\n".join(retrieve_lines),
-    }
-
-
-_VALID_UPDATE_TYPES = ("all_at_once", "chunked", "sequential")
-
-
-def build_proposer_system(
-    sanity_enabled: bool = True,
-    active_datasets=None,
-    update_type: str = "all_at_once",
-) -> str:
-    """Render PROPOSER_SYSTEM with sanity-related AND dataset-specific sections
-    included or stripped according to the run config.
-
-    Args:
-      sanity_enabled  — pass False when this run will NOT run the sanity layer
-                        (cfg.sanity.enabled=false, or cfg.status=devtest).
-      active_datasets — list of dataset registration names from cfg["datasets"]
-                        keys (e.g. ["dynamicmem", "locomo", "longmemeval_s"]).
-                        Pass None / empty to render the full 3-benchmark prompt
-                        (back-compat).
-      update_type     — the runtime Phase 1 dispatch mode for this search:
-                        all_at_once / chunked / sequential. Surfaced to the
-                        proposer so it knows whether general_update will be
-                        called once with the full payload or many times with
-                        smaller chunks. Defaults to all_at_once for back-compat
-                        with callers that haven't been updated.
-
-    The two `_SANITY_*_SUBS` dicts cover sanity sentinels; `_build_dataset_subs`
-    computes the dataset sentinels. Empty / unknown active_datasets defensively
-    fall back to all three (so callers that don't yet wire this through still
-    get a valid prompt).
-    """
-    if update_type not in _VALID_UPDATE_TYPES:
-        raise ValueError(
-            f"update_type must be one of {_VALID_UPDATE_TYPES}, got {update_type!r}"
-        )
-    active = _normalize_active_datasets(active_datasets)
-    subs = {
-        **(_SANITY_ON_SUBS if sanity_enabled else _SANITY_OFF_SUBS),
-        **_build_dataset_subs(active),
-        "<<UPDATE_TYPE>>": update_type,
-    }
-    out = _PROPOSER_SYSTEM_TEMPLATE
-    for sentinel, replacement in subs.items():
-        out = out.replace(sentinel, replacement)
-    return out
-
-
-def proposer_task_prompt(new_dir_rel: str) -> str:
-    """Per-iteration task prompt.
-
-    All paths are workspace-relative; the SDK's `cwd` is pinned to the
-    workspace root so Read/Grep/Write resolve correctly.
-
-    No parent_id is passed — the proposer browses the workspace itself
-    and decides which prior harness(es) to draw from. This implements the
-    "no parent-selection rule" design from the Meta-Harness paper.
-    """
-    return f"""\
+TASK_PROMPT_TEMPLATE = """\
 # Iteration target
 
 Propose a new MemoStructure harness, written to `{new_dir_rel}/`.
@@ -744,13 +749,24 @@ You decide which priors to study and how deeply. The general spirit:
 Write to `{new_dir_rel}/`:
 
   1. harness.py            new MemoStructure subclass.
-  2. meta.json             {{"parent_ids": [...], "description": "..."}}
-                            parent_ids = list of ALL harness dirs you drew
-                            from, using the full `<int>_<hash>` form (e.g.
-                            `["3_a1b2c3d4", "7_5e6f7890"]` if you combined
-                            ideas from those two priors). Empty list if you
-                            started from scratch.
-                            description = one short line on what's new and why.
+  2. meta.json             {{"parent_ids":     [...],
+                             "description":    "...",
+                             "axes_addressed": [{{"axis": "...",
+                                                  "name": "...",
+                                                  "how":  "..."}}, ...]}}
+                            parent_ids: ALL harness dirs you drew from
+                            (full `<int>_<hash>` form, e.g.
+                            `["3_a1b2c3d4", "7_5e6f7890"]`). Empty list if
+                            you started from scratch.
+                            description: one short line on what's new + why.
+                            axes_addressed: which of the 12 MISSION axes
+                            this harness materially advances (strict —
+                            concrete code, not docstring claims). Each
+                            entry's `how` covers BOTH mapping (code
+                            mechanism) AND rationale (why this choice over
+                            alternatives + what failure mode it targets).
+                            See PROPOSER_SYSTEM "Harness contract" →
+                            meta.json for the full schema + example.
   3. requirements.txt      OPTIONAL. Only if you need packages beyond the base image.
   4. <helper>.py           OPTIONAL helper modules.
   5. PROPOSAL_READY        Empty file — write LAST as the done-sentinel.
@@ -809,19 +825,12 @@ Write to `{new_dir_rel}/`:
 """
 
 
-def proposer_fix_prompt(
-    new_dir_rel: str,
-    error_trace: str,
-) -> str:
-    """Prompt issued after a sanity-check failure. Tells CC to Read its own
-    harness, study the error trace, and Edit to fix. No propose/new-dir
-    contract — the harness already exists; we just need it fixed in place.
-    """
-    # Trim overly long traces: keep first 60 + last 30 lines
-    lines = error_trace.splitlines()
-    if len(lines) > 90:
-        error_trace = "\n".join(lines[:60]) + "\n... [truncated] ...\n" + "\n".join(lines[-30:])
-    return f"""\
+# ===========================================================================
+# FIX_PROMPT_TEMPLATE — was proposer_fix_prompt() body
+# ===========================================================================
+# Use with str.format(new_dir_rel=..., error_trace=...)
+
+FIX_PROMPT_TEMPLATE = """\
 # Fix your harness
 
 Your previous attempt at `{new_dir_rel}/` failed the pre-eval sanity check.

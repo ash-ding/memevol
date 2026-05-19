@@ -70,6 +70,7 @@ from forge.paths import (
     ensure_dirs,
     paths,
 )
+from forge.prompts import PromptVersionError, load_template_module, resolve_version
 from forge.proposer import propose, propose_with_fix
 from forge.selection import Entry, Frontier
 
@@ -177,6 +178,13 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # `claude` CLI in stream-json mode, default) or "codex" (OpenAI Codex CLI
     # in --json mode, auths via OPENAI_API_KEY).
     "agent": "claude_code",
+    "prompts": {
+        # Prompt template version stem under forge/prompts/templates/.
+        # "latest" → read forge/prompts/templates/_default at startup. Pin to
+        # an explicit stem (e.g. "20260518_2112_99812772") to lock a run to
+        # a specific prompt revision — required for clean A/B comparisons.
+        "version": "latest",
+    },
     # `run_name` defaults to a timestamp at resolve time (so the default isn't
     # frozen at import time). `datasets` intentionally omitted from defaults.
 }
@@ -258,6 +266,8 @@ def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
         cfg["adopt_orphans"] = False
     if args.agent is not None:
         cfg["agent"] = args.agent
+    if args.prompts_version is not None:
+        cfg["prompts"]["version"] = args.prompts_version
 
     # run_name: CLI > YAML > timestamp default. Resolved here (not in
     # DEFAULT_CONFIG) so `from forge.orchestrator import DEFAULT_CONFIG`
@@ -366,17 +376,37 @@ def _attach_run_log() -> Path:
     return log_path
 
 
+def _snapshot_view(cfg: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a deep-copied cfg with the inactive proposer agent's subsection
+    pruned, so the snapshot file + startup log line reflect what ACTUALLY ran.
+
+    The live cfg keeps both `proposer.claude_code` and `proposer.codex` as a
+    static catalog (DEFAULT_CONFIG provides both so `--agent <other>` resolves
+    cleanly without a YAML edit). For human-facing views (snapshot YAML +
+    startup log "run config:" dump) we drop the inactive one — otherwise
+    readers are left guessing which agent's settings the run is actually using.
+    """
+    snap = copy.deepcopy(cfg)
+    active = snap.get("agent", "claude_code")
+    proposer = snap.get("proposer", {})
+    for other in ("claude_code", "codex"):
+        if other != active:
+            proposer.pop(other, None)
+    return snap
+
+
 def _write_resolved_config(cfg: Dict[str, Any]) -> Path:
     """Snapshot the effective run config into workspace/<run_id>/config.yaml.
 
     Captures the dict AFTER defaults + YAML + CLI have been merged, so the
     file alone is enough to reproduce the run (regardless of whether the
-    user passed a config file, plain CLI args, or both).
+    user passed a config file, plain CLI args, or both). Inactive agent's
+    proposer subsection is dropped — see `_snapshot_view`.
     """
     paths.workspace.mkdir(parents=True, exist_ok=True)
     cfg_path = paths.workspace / "config.yaml"
     with cfg_path.open("w", encoding="utf-8") as f:
-        yaml.safe_dump(cfg, f, sort_keys=False, allow_unicode=True)
+        yaml.safe_dump(_snapshot_view(cfg), f, sort_keys=False, allow_unicode=True)
     return cfg_path
 
 
@@ -953,6 +983,7 @@ async def propose_eval_one(
                 update_type=cfg["update_type"],
                 agent=agent,
                 agent_opts=agent_opts,
+                prompts_version=cfg["prompts"]["version"],
             )
         except (TimeoutError, RuntimeError) as exc:
             # propose() failed — most likely subprocess exited rc!=0 (auth 401,
@@ -1024,6 +1055,7 @@ async def propose_eval_one(
                     update_type=cfg["update_type"],
                     agent=agent,
                     agent_opts=agent_opts,
+                    prompts_version=cfg["prompts"]["version"],
                 )
             except (TimeoutError, RuntimeError) as exc:
                 # propose_with_fix subprocess died — same infra failure mode as
@@ -1647,6 +1679,12 @@ def main() -> None:
                              "claude_code (default) shells out to the `claude` CLI; "
                              "codex shells out to OpenAI Codex CLI (`codex exec`). "
                              "codex auth = OPENAI_API_KEY env var.")
+    parser.add_argument("--prompts-version", default=None,
+                        help="Prompt template version stem under "
+                             "forge/prompts/templates/ (format "
+                             "YYYYMMDD_HHMM_<hash8>). Pass 'latest' or omit to "
+                             "use forge/prompts/templates/_default. Pin to an "
+                             "explicit stem for A/B comparisons of prompt revisions.")
 
     parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
@@ -1657,11 +1695,23 @@ def main() -> None:
     run_log = _attach_run_log()
     cfg_snapshot = _write_resolved_config(cfg)
     log.info(
-        f"run config: {json.dumps({k: v for k, v in cfg.items() if k != 'proposer'}, default=str)}"
+        f"run config: {json.dumps(_snapshot_view(cfg), default=str)}"
     )
     log.info(f"workspace: {paths.workspace}")
     log.info(f"run log: {run_log}")
     log.info(f"config snapshot: {cfg_snapshot}")
+    try:
+        resolved_prompts_version = resolve_version(cfg["prompts"]["version"])
+        # Load now so missing file / missing exports surface at startup, not
+        # halfway through the search loop. Result is cached in loader._MODULE_CACHE.
+        load_template_module(resolved_prompts_version)
+    except PromptVersionError as exc:
+        log.error(f"prompts: {exc}")
+        sys.exit(2)
+    log.info(
+        f"prompts version: {resolved_prompts_version} "
+        f"(cfg.prompts.version={cfg['prompts']['version']!r})"
+    )
     try:
         asyncio.run(search_loop(cfg))
     except ProposerInfraError as exc:
