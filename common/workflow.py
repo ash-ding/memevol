@@ -59,6 +59,31 @@ class _MemoryEncoder(json.JSONEncoder):
             return repr(obj)
 
 
+_JSON_KEY_NATIVE = (str, int, float, bool, type(None))
+
+
+def _json_safe_keys(obj):
+    """Recursively coerce dict keys that aren't JSON-native (str/int/float/bool/None)
+    to their `str(...)` form. Returns a new structure; leaves values alone.
+
+    Why this can't live in `_MemoryEncoder.default()`: Python's `json.dump`
+    enforces the dict-key type constraint BEFORE calling the encoder's
+    `default()` hook, so a custom encoder can't intercept e.g. tuple keys —
+    they must be coerced via pre-processing. Harnesses very commonly use
+    tuple-keyed inverted indices (`Dict[Tuple[int, int], ...]` for
+    (year, month), (app, api), etc.), so memory_dumps without this would
+    silently lose every such harness's dump file.
+    """
+    if isinstance(obj, dict):
+        return {
+            (k if isinstance(k, _JSON_KEY_NATIVE) else str(k)): _json_safe_keys(v)
+            for k, v in obj.items()
+        }
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe_keys(x) for x in obj]
+    return obj
+
+
 def _count_entries(db) -> dict:
     """Count entries in a dict/list database (one level)."""
     if isinstance(db, list):
@@ -323,7 +348,10 @@ def _dump_memory(memo: MemoStructure, user_id: str, dump_dir: Path, full: bool =
     file_path = dump_dir / f"{safe_user_id}.json"
     try:
         with file_path.open("w", encoding="utf-8") as f:
-            json.dump(dump, f, indent=2, ensure_ascii=False, cls=_MemoryEncoder)
+            # Coerce tuple/other-non-native dict keys before encoding; the
+            # _MemoryEncoder only handles non-JSON VALUES, not keys.
+            json.dump(_json_safe_keys(dump), f, indent=2,
+                      ensure_ascii=False, cls=_MemoryEncoder)
     except Exception as e:
         log.warning(f"Failed to dump memory for {user_id}: {e}")
 
@@ -656,29 +684,35 @@ class BaseWorkflow(ABC):
             retrieve_recorder.init = self.build_query_recorder_init(init_data, qa)
 
             try:
-                retrieved = await asyncio.wait_for(
-                    memo.general_retrieve(retrieve_recorder), timeout=300
-                )
-            except asyncio.TimeoutError:
-                log.warning(
-                    f"general_retrieve timed out for user {user_tag}, question: {qa['query'][:50]} "
-                    f"— stopping user at {len(recorder.steps)}/{len(qa_pairs)} QAs"
-                )
-                recorder.failure_info = (
-                    f"[Phase2_Retrieve] TimeoutError at QA {len(recorder.steps)+1}/{len(qa_pairs)}, "
-                    f"query: {qa['query'][:120]}"
-                )
-                break
+                retrieved = await memo.general_retrieve(retrieve_recorder)
             except Exception as exc:
+                # Per-QA failure isolation: log a score=0 step and continue
+                # to the next QA — a single bad query must not silently
+                # truncate the rest of the user's QA loop (which would
+                # under-report the harness's real capability).
                 log.warning(
-                    f"general_retrieve failed for {user_tag}: {exc} "
-                    f"— stopping user at {len(recorder.steps)}/{len(qa_pairs)} QAs"
+                    f"general_retrieve failed for {user_tag} on QA "
+                    f"{len(recorder.steps)+1}/{len(qa_pairs)} "
+                    f"({type(exc).__name__}: {str(exc)[:120]}) "
+                    f"— recording score=0 and continuing"
                 )
-                recorder.failure_info = (
-                    f"[Phase2_Retrieve] {type(exc).__name__}: {exc} "
-                    f"(at QA {len(recorder.steps)+1}/{len(qa_pairs)}, query: {qa['query'][:120]})"
+                await self.log_qa_step(
+                    recorder=recorder,
+                    query=qa["query"],
+                    predicted="",
+                    reference=qa.get("reference", ""),
+                    score=0,
+                    judge_reason=(
+                        f"[Phase2_Retrieve_ERROR] {type(exc).__name__}: "
+                        f"{str(exc)[:200]}"
+                    ),
+                    qa_metadata=self.build_qa_metadata(qa),
+                    retrieved_memory={},
+                    relevant_context=self.extract_relevant_context(qa, init_data),
                 )
-                break
+                if qa_tracker:
+                    await qa_tracker.increment()
+                continue
 
             relevant_context = self.extract_relevant_context(qa, init_data)
             qa_metadata = self.build_qa_metadata(qa)
