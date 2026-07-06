@@ -324,6 +324,10 @@ def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
         params.setdefault("eval_n_qa", None)
         params.setdefault("check_n_samples", 1)
         params.setdefault("check_n_qa", 3)
+        # Per-dataset judge override; falls back to the global judge_model.
+        # (DynamicMem pins the official TCE judge gpt-5.4-2026-03-05 in the
+        # YAML; other benchmarks typically inherit the global value.)
+        params.setdefault("judge_model", cfg["judge_model"])
 
     return cfg
 
@@ -829,7 +833,7 @@ async def sanity_check_harness(
                 check_n_samples=params["check_n_samples"],
                 check_n_qa=params["check_n_qa"],
                 model=model,
-                judge_model=judge_model,
+                judge_model=params.get("judge_model", judge_model),
                 update_type=update_type,
                 max_sample_concurrent=max_sample_concurrent,
                 memory_dumps="none",   # sanity never dumps
@@ -903,7 +907,7 @@ async def evaluate_harness(
                 check_n_samples=check_ns,
                 check_n_qa=check_nq,
                 model=model,
-                judge_model=judge_model,
+                judge_model=params.get("judge_model", judge_model),
                 update_type=update_type,
                 max_sample_concurrent=max_sample_concurrent,
                 memory_dumps=memory_dumps,

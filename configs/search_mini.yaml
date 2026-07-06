@@ -34,7 +34,8 @@ sanity:
 datasets:
   dynamicmem:
     eval_n_samples: 2
-    eval_n_qa: 10
+    eval_n_qa: 10           # per-user TCE items, stratified across checkpoints × task families
+    judge_model: gpt-5.4-2026-03-05   # official TCE judge (downgrade to gpt-5-mini to save cost)
     # check_n_samples / check_n_qa default to 1 / 3
   locomo:
     eval_n_samples: 2

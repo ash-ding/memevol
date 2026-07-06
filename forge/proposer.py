@@ -302,9 +302,10 @@ def _build_singularity_cmd(
     Bind list rationale:
       - LAYER-1 wrapper script (propose_in_container.py + its forge.prompts
         import) needs to be reachable via /app/forge/. Agents never read these.
-      - Agent reference materials live under /app/{common,datasets}/. Only the
-        files that contribute to writing a correct harness are bound:
-          common/harness_base.py   the MemoStructure ABC contract
+      - Agent reference materials live under /app/{common,datasets,forge}/. Only
+        the files that contribute to writing a correct harness are bound:
+          forge/harness_base.py    the MemoStructure base CC must inherit from
+          common/harness_base.py   the underlying ABC (forge's subclasses it)
           common/llm.py            Agent + Embedding helpers (token-tracked)
           common/logger.py         transitive dep of common.llm
           common/__init__.py       package marker
@@ -334,6 +335,7 @@ def _build_singularity_cmd(
         f"{PROJECT_ROOT}/forge/propose_in_container.py:/app/forge/propose_in_container.py:ro",
 
         # Agent reference materials
+        f"{PROJECT_ROOT}/forge/harness_base.py:/app/forge/harness_base.py:ro",
         f"{PROJECT_ROOT}/common/__init__.py:/app/common/__init__.py:ro",
         f"{PROJECT_ROOT}/common/harness_base.py:/app/common/harness_base.py:ro",
         f"{PROJECT_ROOT}/common/llm.py:/app/common/llm.py:ro",

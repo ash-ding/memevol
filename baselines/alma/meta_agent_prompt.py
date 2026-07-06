@@ -385,8 +385,11 @@ def get_metadata_dict(instance) -> dict:
 
 
 def _read_harness_base() -> str:
-    """The backbone code shown to the LLM — kept at baselines/alma/harness_base.py."""
-    path = Path(__file__).parent / "harness_base.py"
+    """The backbone code shown to the LLM — kept at common/harness_base.py.
+
+    (alma deliberately stays on the common base; forge's evolution target is
+    the separate forge/harness_base.py, which alma must NOT pick up.)"""
+    path = Path(__file__).resolve().parent.parent.parent / "common" / "harness_base.py"
     if not path.exists():
         raise FileNotFoundError(f"Cannot find harness_base.py at {path.resolve()}")
     return path.read_text(encoding="utf-8")

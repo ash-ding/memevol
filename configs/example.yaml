@@ -207,9 +207,15 @@ datasets:
     # Full-eval task-list cap (# users from search/test split — total
     # available: 6 users in search split, 4 in test).
     eval_n_samples: 6
-    # Full-eval per-user QA cap. None or omitted = use ALL QAs available
-    # (DynamicMem users have ~178 QAs each; LoCoMo conversations have ~199).
+    # Full-eval per-user TCE-item cap, stratified across the 5 checkpoints ×
+    # 2 task families (state_completion + apply_service). None or omitted =
+    # ALL items (~250-350 per user). LoCoMo conversations have ~199 QAs.
     eval_n_qa: 20
+    # Per-dataset judge override (falls back to the global judge_model).
+    # gpt-5.4-2026-03-05 is the official TCE judge; downgrade to gpt-5-mini
+    # to save cost at some fidelity loss. Scores are 0.0-1.0 (official
+    # holistic Core+Detail: 0.8*core_correct + 0.2*detail_quality/2).
+    judge_model: gpt-5.4-2026-03-05
     # Sanity-check task-list cap. Default 1.
     check_n_samples: 1
     # Sanity-check per-sample QA cap. Default 3.

@@ -9,7 +9,7 @@ into some form of memory.
 """
 from typing import Dict
 
-from common.harness_base import MemoStructure
+from forge.harness_base import MemoStructure
 
 class NoMemoryHarness(MemoStructure):
     async def general_update(self, recorder) -> None:
