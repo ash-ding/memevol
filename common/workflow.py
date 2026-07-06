@@ -557,11 +557,9 @@ class BaseWorkflow(ABC):
         prompt template / score range / model — e.g. for benchmark-specific
         judges (LoCoMo binary, LongMemEval per-question-type, ...)."""
         from common.judge import Judge
-        return Judge(
-            model=self.judge_model,
-            timeout=180,        # match Agent in this workflow (a bit longer than Judge default 150)
-            max_retries=5,      # match Agent's retry budget
-        )
+        # timeout / max_retries deliberately NOT overridden here — the Judge
+        # defaults in common/judge.py are the single source of truth.
+        return Judge(model=self.judge_model)
 
     async def judge(
         self,
@@ -677,7 +675,9 @@ class BaseWorkflow(ABC):
         recorder.user_id = user_tag
         await self.phase1_log_init(recorder, init_data)
 
-        agent = Agent(system_prompt="", model=self.model, timeout=180, max_retries=5)
+        # timeout / max_retries deliberately NOT overridden — Agent defaults
+        # in common/llm.py are the single source of truth.
+        agent = Agent(system_prompt="", model=self.model)
 
         for qa in qa_pairs:
             retrieve_recorder = self.recorder_class()

@@ -6,7 +6,7 @@ status: search            # train/explore on search split (full eval size, sanit
 max_sample_concurrent: 3
 memory_dumps: full        # full | stats | none
 
-model: gpt-5-mini
+model: gpt-5-mini/low   # "/low" pins reasoning effort — cuts generation latency (timeout-storm fix)
 judge_model: gpt-5-mini
 update_type: all_at_once
 

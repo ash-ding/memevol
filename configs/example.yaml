@@ -46,7 +46,10 @@ status: search
 # OpenAI model used by the QA agent inside each harness eval (NOT the
 # proposer — see `proposer.model`). Anything supported by OpenAI's
 # /chat/completions endpoint works; gpt-5-mini / gpt-5 / gpt-4.1 / etc.
-model: gpt-5-mini
+# An optional "/effort" suffix (low|medium|high) pins the reasoning effort
+# for reasoning models — "gpt-5-mini/low" is strongly recommended: default
+# (medium) effort was the main driver of historical LLM-timeout storms.
+model: gpt-5-mini/low
 
 # OpenAI model used by the LLM-as-judge that scores predicted vs reference
 # answers per QA. Cheaper models are usually fine; gpt-5-mini is a sensible

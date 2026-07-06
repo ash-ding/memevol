@@ -192,6 +192,5 @@ class LoCoMoWorkflow(BaseWorkflow):
             model=self.judge_model,
             prompt_template=LOCOMO_JUDGE_PROMPT,
             score_min=0, score_max=self.judge_score_max,
-            timeout=180, max_retries=5,
         )
 

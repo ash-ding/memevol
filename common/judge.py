@@ -7,6 +7,10 @@ Parallel to `common.llm.Agent`:
   (score, reason). Scoring scale and prompt template are configurable
   per benchmark.
 
+Requests share `common.llm`'s per-event-loop client, global concurrency
+gate, and unified retry kernel (429/5xx/timeout/empty-response are all
+retried with jittered backoff — see common.llm._call_with_retries).
+
 Token usage is reported to `common.tokens.GLOBAL_TOKEN_TRACKER` if it has
 been initialized (e.g. by `init_global_tracker()` in the host launch
 script). Same lazy-import pattern as `Agent.ask`, no separate "injection"
@@ -14,26 +18,19 @@ mechanism is needed.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
-import os
 from typing import Optional, Tuple
 
 import httpx
-import openai
-from openai import AsyncOpenAI
+
+# Module reference (not from-import) so the shared client/kernel stay
+# late-bound — monkeypatching common.llm._get_async_client (tests) or any
+# future swap of the kernel takes effect here too.
+from common import llm as _llm
+from common.llm import EmptyResponseError, _supports_reasoning
 
 log = logging.getLogger("main")
-
-
-# OpenAI rejects `reasoning_effort` for non-reasoning models. Keep a narrow
-# allowlist by name prefix; add new model families as they appear.
-_REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
-
-
-def _supports_reasoning(model: str) -> bool:
-    return any(model.startswith(p) for p in _REASONING_MODEL_PREFIXES)
 
 
 class Judge:
@@ -57,28 +54,25 @@ Output ONLY a JSON object:
         prompt_template: Optional[str] = None,
         score_min: int = 0,
         score_max: int = 10,
-        timeout: float = 150.0,
-        max_retries: int = 6,
+        timeout: float = 300.0,
+        max_retries: int = 5,
     ):
         self.model = model
         self.prompt_template = prompt_template or self.DEFAULT_PROMPT_TEMPLATE
         self.score_min = score_min
         self.score_max = score_max
+        self.timeout = timeout
         self.max_retries = max_retries
-        self.client = AsyncOpenAI(
-            api_key=os.getenv("OPENAI_API_KEY", ""),
-            timeout=httpx.Timeout(timeout, connect=10.0),
-            max_retries=0,
-        )
 
     async def score(
         self, query: str, predicted: str, reference: str
     ) -> Tuple[int, str]:
         """Score (predicted vs reference) for a given query. Returns (score, reason).
 
-        On retry exhaustion or any non-retryable exception, returns (score_min, error_message).
-        Token usage is reported to GLOBAL_TOKEN_TRACKER if it has been
-        initialized; otherwise silently skipped (matches Agent.ask).
+        Never raises: on retry exhaustion or any non-retryable exception,
+        returns (score_min, error_message). A malformed-JSON judge reply is
+        retried once before giving up (a whole QA step's signal is worth one
+        extra call).
         """
         user_msg = self.prompt_template.format(
             query=query, reference=reference, prediction=predicted
@@ -92,39 +86,46 @@ Output ONLY a JSON object:
         if _supports_reasoning(self.model):
             chat_kwargs["reasoning_effort"] = "low"
 
-        for attempt in range(self.max_retries):
-            try:
-                resp = await self.client.chat.completions.create(**chat_kwargs)
+        client = _llm._get_async_client()
+        request_timeout = httpx.Timeout(self.timeout, connect=10.0)
 
-                # Lazy-import to match Agent.ask pattern; tracker may be None.
-                from common.tokens import GLOBAL_TOKEN_TRACKER
-                if GLOBAL_TOKEN_TRACKER is not None and hasattr(resp, "usage") and resp.usage is not None:
-                    try:
-                        await GLOBAL_TOKEN_TRACKER.update(model_name=self.model, usage=resp.usage)
-                    except Exception as tracker_exc:
-                        log.debug(f"token tracker update failed: {tracker_exc}")
+        async def _attempt():
+            resp = await client.chat.completions.create(
+                **chat_kwargs, timeout=request_timeout
+            )
+            if not resp.choices:
+                raise EmptyResponseError("Judge API returned no choices")
 
+            # Lazy-import to match Agent.ask pattern; tracker may be None.
+            from common.tokens import GLOBAL_TOKEN_TRACKER
+            if GLOBAL_TOKEN_TRACKER is not None and hasattr(resp, "usage") and resp.usage is not None:
+                try:
+                    await GLOBAL_TOKEN_TRACKER.update(model_name=self.model, usage=resp.usage)
+                except Exception as tracker_exc:
+                    log.debug(f"token tracker update failed: {tracker_exc}")
+
+            return resp
+
+        try:
+            for parse_attempt in range(2):  # 1 call + 1 retry on malformed JSON
+                resp = await _llm._call_with_retries(
+                    _attempt, what="Judge", max_retries=self.max_retries
+                )
                 raw = resp.choices[0].message.content or ""
                 try:
                     result = json.loads(raw)
                 except json.JSONDecodeError:
+                    if parse_attempt == 0:
+                        log.warning(f"Judge returned non-JSON, retrying once: {raw[:120]}")
+                        continue
                     return self.score_min, f"Judge returned non-JSON: {raw[:200]}"
 
                 score = int(result.get("score", self.score_min))
                 score = max(self.score_min, min(self.score_max, score))
                 reason = str(result.get("reason", ""))
                 return score, reason
-
-            except (asyncio.TimeoutError, openai.APITimeoutError, openai.APIConnectionError, openai.InternalServerError) as exc:
-                if attempt < self.max_retries - 1:
-                    delay = min(60, 2 ** (attempt + 1))  # 2, 4, 8, 16, 32, (cap) 60
-                    log.warning(f"Judge retry {attempt+1}/{self.max_retries}: {repr(exc)}")
-                    await asyncio.sleep(delay)
-                    continue
-                log.warning(f"Judge failed after {self.max_retries} attempts: {repr(exc)}")
-                return self.score_min, f"Judge error: {exc}"
-            except Exception as exc:
-                log.warning(f"Judge failed: {repr(exc)}")
-                return self.score_min, f"Judge error: {exc}"
+        except Exception as exc:
+            log.warning(f"Judge failed: {repr(exc)}")
+            return self.score_min, f"Judge error: {exc}"
 
         return self.score_min, "Judge exhausted retries"

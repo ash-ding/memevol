@@ -131,7 +131,6 @@ class LongMemEvalWorkflow(BaseWorkflow):
             model=self.judge_model,
             prompt_template=prompt_template,
             score_min=0, score_max=self.judge_score_max,
-            timeout=180, max_retries=5,
         )
 
     @property
