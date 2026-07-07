@@ -11,7 +11,7 @@
 #       --run-name v2_modeagnostic_dm_seq_<TS>
 
 steps: 10
-status: search
+mode: search
 max_sample_concurrent: 3
 memory_dumps: full
 
@@ -39,8 +39,9 @@ sanity:
 
 datasets:
   dynamicmem:
-    eval_n_samples: 6            # all search users
-    eval_n_qa: 20
+    # Migrated to the staged schema (2026-07-07); omitted fields fall back
+    # to forge/orchestrator.py::DEFAULT_STAGES.
+    stages: {}
 
 prompts:
   version: latest                # → reads forge/prompts/templates/_default

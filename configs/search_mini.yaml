@@ -2,7 +2,7 @@
 # Usage:
 #   python -m forge.orchestrator --config configs/search_mini.yaml
 steps: 3
-status: search            # train/explore on search split (full eval size, sanity respected)
+mode: search
 max_sample_concurrent: 3
 memory_dumps: full        # full | stats | none
 
@@ -31,15 +31,26 @@ sanity:
   enabled: true
   max_retries: 2
 
+# Mini staged gauntlet: same schema as search.yaml but smaller stage sizes
+# for cheap iteration (omitted fields fall back to family defaults —
+# forge/orchestrator.py::DEFAULT_STAGES).
 datasets:
   dynamicmem:
-    eval_n_samples: 2
-    eval_n_qa: 10           # per-user TCE items, stratified across checkpoints × task families
     judge_model: gpt-5.4-2026-03-05   # official TCE judge (downgrade to gpt-5-mini to save cost)
-    # check_n_samples / check_n_qa default to 1 / 3
+    stages:
+      sanity_check: {n_users: 1, n_checkpoints: 1, n_task_a: 1, n_task_c: 1}
+      stage1: {n_users: 1, n_checkpoints: 1, n_task_a: 3, n_task_c: 3, threshold: 0.05}
+      stage2: {n_users: 2, n_checkpoints: 2, n_task_a: 3, n_task_c: 3, threshold: 0.10}
+      stage3: {n_users: 2, n_checkpoints: 3, n_task_a: 3, n_task_c: 3}
   locomo:
-    eval_n_samples: 2
-    eval_n_qa: 10
+    stages:
+      sanity_check: {n_conversations: 1, n_qa: 3}
+      stage1: {n_conversations: 1, n_qa: 10, threshold: 0.30}
+      stage2: {n_conversations: 2, n_qa: 10, threshold: 0.35}
+      stage3: {n_conversations: 2, n_qa: 15}
   longmemeval_s:
-    eval_n_samples: 10
-    # eval_n_qa & check_n_qa ignored — LongMemEval has exactly 1 QA per sample
+    stages:
+      sanity_check: {n_questions: 2}
+      stage1: {n_questions: 5, threshold: 0.25}
+      stage2: {n_questions: 8, threshold: 0.30}
+      stage3: {n_questions: 10}

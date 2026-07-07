@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import random
 import time
 import traceback
 from abc import ABC, abstractmethod
@@ -403,15 +402,16 @@ class BaseWorkflow(ABC):
     Override per benchmark: 10 for DynamicMem (partial credit), 1 for
     LoCoMo / LongMemEval (binary)."""
 
-    def _qa_per_user_estimate(self, mode: str, check_n_qa: int) -> int:
+    def _qa_per_user_estimate(self, stage_spec: Optional[Dict]) -> int:
         """Expected number of QAs per user/sample — drives the Phase-2 progress-tracker total.
 
-        Default honours `--eval-n-qa` (or `--check-n-qa` via `check_n_qa`
-        in check mode). Benchmarks where the QA count per sample is fixed
-        (e.g. LongMemEval, always 1) should override this to ignore
-        user-supplied `--*-n-qa`."""
-        if mode == "check":
-            return check_n_qa
+        Default honours the stage spec's `n_qa` (falling back to the legacy
+        `eval_n_qa` ctor param used by the alma baseline path). Benchmarks
+        where the QA count per sample is fixed (LongMemEval, always 1) or
+        derived from other spec fields (DynamicMem) override this."""
+        n_qa = (stage_spec or {}).get("n_qa")
+        if n_qa is not None:
+            return int(n_qa)
         return self.eval_n_qa or self._default_qa_per_user_hint
 
     def _phase1_item_count(self, init_data) -> "int | str":
@@ -584,33 +584,41 @@ class BaseWorkflow(ABC):
     async def run_all_users(
         self,
         task_list: List[str],
-        mode: str = "eval",
+        *,
+        stage: str = "stage3",
+        stage_spec: Optional[Dict] = None,
         max_sample_concurrent: int = 6,
-        check_n_samples: int = 6,
-        check_n_qa: int = 3,
     ) -> Tuple[List[Any], int]:
         """Run Phase 1 + Phase 2 for every user in task_list.
 
-        mode='check' samples check_n_samples users with check_n_qa QA pairs each.
+        `stage` is the staged-evaluation tier this run belongs to
+        (sanity / stage1 / stage2 / stage3); it controls side effects only
+        (memory dumps happen at stage3). `stage_spec` carries the
+        benchmark-native size fields (e.g. n_qa, n_checkpoints, ...).
+
+        task_list is expected to be pre-capped by the caller (a deterministic
+        prefix of the split — no resampling here, staged nesting depends on
+        every stage seeing a prefix-consistent task list).
 
         Returns (results_list, results_len). Failed users appear as Exception
         objects (with `.user_id` attribute) in the list. The returned length
         equals len(results_list); downstream filters out Exceptions itself.
         """
-        if mode == "check":
-            task_list = random.sample(task_list, min(check_n_samples, len(task_list)))
-
-        qa_per_user = self._qa_per_user_estimate(mode, check_n_qa)
+        qa_per_user = self._qa_per_user_estimate(stage_spec)
         total_qa = len(task_list) * qa_per_user
         qa_tracker = _QAProgressTracker(total_qa)
-        log.info(f"Starting evaluation: {len(task_list)} users × ~{qa_per_user} QA = ~{total_qa} total")
+        log.info(
+            f"Starting evaluation [{stage}]: {len(task_list)} users × ~{qa_per_user} QA = ~{total_qa} total"
+        )
 
         semaphore = asyncio.Semaphore(max_sample_concurrent)
 
         async def run_one(user_dir: str):
             async with semaphore:
                 try:
-                    return await self.run_single_user(user_dir, mode=mode, qa_tracker=qa_tracker, check_n_qa=check_n_qa)
+                    return await self.run_single_user(
+                        user_dir, stage=stage, stage_spec=stage_spec, qa_tracker=qa_tracker
+                    )
                 except Exception as exc:
                     user_tag = user_dir[-15:]
                     log.error(f"[ERROR] User {user_tag} failed: {exc}\n{traceback.format_exc()}")
@@ -632,9 +640,10 @@ class BaseWorkflow(ABC):
     async def run_single_user(
         self,
         user_dir: str,
-        mode: str = "eval",
+        *,
+        stage: str = "stage3",
+        stage_spec: Optional[Dict] = None,
         qa_tracker: Optional[_QAProgressTracker] = None,
-        check_n_qa: int = 3,
     ) -> Basic_Recorder:
         """Run Phase 1 (update) then Phase 2 (retrieve + QA) for one user."""
         # Agent is lazy-imported so module load stays cheap & avoids cycles.
@@ -642,7 +651,7 @@ class BaseWorkflow(ABC):
 
         user_tag = user_dir[-15:]
 
-        qa_size = check_n_qa if mode == "check" else self.eval_n_qa
+        qa_size = (stage_spec or {}).get("n_qa", self.eval_n_qa)
         init_data, qa_pairs = await self.load_user_data(user_dir, qa_size)
 
         memo = self.memo_class()
@@ -656,11 +665,11 @@ class BaseWorkflow(ABC):
             f"({item_count} {self._phase1_item_label}, {t1_elapsed:.1f}s)"
         )
 
-        # Dump memory database for post-hoc inspection. Policy:
-        #   - mode=="check": never dump (smoke/sanity runs stay cheap + clean)
-        #   - mode=="eval":  dump per self.memory_dumps (full / stats / none)
+        # Dump memory database for post-hoc inspection. Policy: dumps happen
+        # ONLY at the terminal stage (stage3) — sanity / stage1 / stage2 /
+        # devtest runs stay cheap + clean.
         if (
-            mode == "eval"
+            stage == "stage3"
             and self.memory_dumps != "none"
             and self.output_run_dir is not None
         ):

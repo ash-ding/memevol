@@ -31,11 +31,10 @@ class LongMemEvalWorkflow(BaseWorkflow):
 
     _variant: str = ""  # override in concrete subclasses: "s" or "m"
 
-    # LongMemEval has exactly 1 QA per sample — ignore whatever the caller
-    # passed for --eval-n-qa / --check-n-qa. This keeps the progress-bar
-    # total accurate and makes the CLI semantics honest ("--*-n-qa has no
-    # effect on longmemeval_*").
-    def _qa_per_user_estimate(self, mode: str, check_n_qa: int) -> int:
+    # LongMemEval has exactly 1 QA per sample — the stage spec carries only
+    # n_samples (question count); any n_qa is ignored. This keeps the
+    # progress-bar total accurate.
+    def _qa_per_user_estimate(self, stage_spec: Optional[Dict]) -> int:
         return 1
 
     # ------------------------------------------------------------------

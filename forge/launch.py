@@ -91,11 +91,14 @@ def _load_harness_class(harness_dir: Path) -> Type[MemoStructure]:
             f"harness.py raised at import time: [{type(exc).__name__}] {exc}"
         ) from exc
     for _, obj in inspect.getmembers(module, inspect.isclass):
-        if issubclass(obj, MemoStructure) and obj is not MemoStructure:
+        # inspect.isabstract excludes both the common ABC and the
+        # forge.harness_base.MemoStructure subclass that harnesses import
+        # (still abstract — no general_update/general_retrieve impls).
+        if issubclass(obj, MemoStructure) and not inspect.isabstract(obj):
             return obj
     raise ImportError(
         f"No MemoStructure subclass found in {harness_py}. Define a class "
-        f"that inherits from `common.harness_base.MemoStructure` and "
+        f"that inherits from `forge.harness_base.MemoStructure` and "
         f"implements both `general_update` and `general_retrieve`."
     )
 
@@ -172,11 +175,14 @@ async def _async_main(args: argparse.Namespace) -> None:
 
     tracker = init_global_tracker()
 
-    # Task-list size: for mode=check, cap at check_n_samples; for mode=eval,
-    # cap at eval_n_samples. The env module's parameter name is `eval_n_samples`
-    # but its semantic is "how many items to return" — we reuse it for both.
-    task_list_size = args.check_n_samples if args.mode == "check" else args.eval_n_samples
-    task_list = env_module.get_task_list(status=args.status, eval_n_samples=int(task_list_size))
+    # Stage spec: benchmark-native size fields normalized by the orchestrator
+    # (see forge/orchestrator.py::stage_wire_spec). `n_samples` caps the task
+    # list — a deterministic PREFIX of the split, so a smaller stage's task
+    # list is always a prefix of a larger one (staged nesting).
+    stage_spec = json.loads(args.stage_spec)
+    task_list = env_module.get_task_list(
+        status=args.split, eval_n_samples=int(stage_spec["n_samples"])
+    )
 
     workflow = workflow_cls(
         memo_class=memo_class,
@@ -184,20 +190,18 @@ async def _async_main(args: argparse.Namespace) -> None:
         update_type=args.update_type,
         n_chunks=args.n_chunks,
         max_logs=args.max_logs,
-        eval_n_qa=args.eval_n_qa,
         judge_model=args.judge_model,
         memory_dumps=args.memory_dumps,
     )
     workflow.memo_sha = harness_dir.name
-    workflow.status = args.status
+    workflow.status = args.split
     workflow.output_run_dir = out_dir
 
     records, rlen = await workflow.run_all_users(
         task_list=task_list,
-        mode=args.mode,
+        stage=args.stage,
+        stage_spec=stage_spec,
         max_sample_concurrent=args.max_sample_concurrent,
-        check_n_samples=args.check_n_samples,
-        check_n_qa=args.check_n_qa,
     )
 
     score = _build_score(records[:rlen], score_max=workflow.judge_score_max)
@@ -219,16 +223,17 @@ if __name__ == "__main__":
     parser.add_argument("--harness-dir", required=True)
     parser.add_argument("--out-dir", required=True)
     parser.add_argument("--dataset", default="dynamicmem", choices=sorted(WORKFLOWS))
-    parser.add_argument("--status", default="search", choices=["search", "test"])
-    parser.add_argument("--mode", default="eval", choices=["eval", "check"])
-    parser.add_argument("--eval-n-samples", type=int, default=6,
-                        help="Task-list cap when mode=eval")
-    parser.add_argument("--eval-n-qa", type=int, default=None,
-                        help="Per-sample QA cap when mode=eval (None = all available)")
-    parser.add_argument("--check-n-samples", type=int, default=1,
-                        help="Task-list cap when mode=check (sanity run)")
-    parser.add_argument("--check-n-qa", type=int, default=3,
-                        help="Per-sample QA cap when mode=check")
+    parser.add_argument("--split", default="search", choices=["search", "test"],
+                        help="Benchmark split (the user-facing `mode` maps search/test/dev onto this)")
+    parser.add_argument("--stage", default="stage3",
+                        choices=["sanity", "stage1", "stage2", "stage3"],
+                        help="Staged-evaluation tier this run belongs to. "
+                             "Controls side effects only (memory dumps happen "
+                             "at stage3); sizes come from --stage-spec.")
+    parser.add_argument("--stage-spec", required=True,
+                        help='JSON stage spec, e.g. \'{"n_samples": 2, "n_qa": 20}\' '
+                             '(dynamicmem: n_samples/n_checkpoints/n_task_a/n_task_c; '
+                             'locomo: n_samples/n_qa; longmemeval: n_samples).')
     parser.add_argument("--model", default="gpt-5-mini")
     parser.add_argument("--judge-model", default="gpt-5-mini")
     parser.add_argument("--update-type", default="all_at_once",

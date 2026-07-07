@@ -154,11 +154,18 @@ async def main(
     # 2. Init token tracker (Judge picks it up via GLOBAL_TOKEN_TRACKER)
     tracker = init_global_tracker()
 
-    # 3. Get task list
-    task_list = get_task_list(status=status, eval_n_samples=int(eval_n_samples))
+    # 3. Get task list — alma's mode=check keeps its old semantics (small
+    # task list + small QA count) by capping the list itself; the shared
+    # workflow no longer resamples.
+    task_list_size = check_n_samples if mode == "check" else eval_n_samples
+    task_list = get_task_list(status=status, eval_n_samples=int(task_list_size))
     log.info(f"Task list ({status}, size={len(task_list)}): {[t[-15:] for t in task_list]}")
 
-    # 4. Build workflow and run
+    # 4. Build workflow and run. alma maps its legacy (mode, *_n_qa) knobs
+    # onto the shared workflow's staged API: check → the cheap "sanity" tier
+    # (DynamicMem: first checkpoint only), eval → the terminal "stage3" tier
+    # (memory dumps enabled). The spec's n_qa drives the legacy total-count
+    # sampling path in DynamicMemWorkflow.
     workflow = DynamicMemWorkflow(
         memo_class=memo_class,
         model=model,
@@ -172,12 +179,18 @@ async def main(
     workflow.status = status
     workflow.output_run_dir = run_dir
 
+    stage = "sanity" if mode == "check" else "stage3"
+    stage_spec = {"n_samples": int(task_list_size)}
+    if mode == "check":
+        stage_spec["n_qa"] = int(check_n_qa)
+    elif eval_n_qa is not None:
+        stage_spec["n_qa"] = int(eval_n_qa)
+
     records, record_len = await workflow.run_all_users(
         task_list=task_list,
-        mode=mode,
+        stage=stage,
+        stage_spec=stage_spec,
         max_sample_concurrent=max_sample_concurrent,
-        check_n_samples=check_n_samples,
-        check_n_qa=check_n_qa,
     )
 
     # 5. Persist outputs

@@ -29,19 +29,21 @@ run_name: my_first_search
 # "evaluate the seed (if any) and exit" — useful for dry runs.
 steps: 5
 
-# search | test | devtest — what stage of work is this run?
-#   search  — training/exploration phase. Reads SEARCH split (e.g. DynamicMem
-#             users 001-006, LoCoMo conv-26..conv-44, LongMemEval 50 stratified
-#             question_ids). Uses the FULL eval sizes (`eval_n_*`). Sanity
-#             layer respects `sanity.enabled` (default on).
-#   test    — held-out evaluation phase. Reads TEST split. Uses full eval sizes.
-#             Sanity respects `sanity.enabled`.
-#   devtest — quick dev verification ("smoke / iterate"). Reads SEARCH split
-#             (devtest is for cheaply iterating on search-time work; never
-#             touches the held-out test split). Uses the small `check_n_*`
-#             sizes. Sanity is ALWAYS skipped (devtest IS the sanity-size
-#             quick check; running another sanity layer is redundant).
-status: search
+# search | test | dev — the ONE user-facing run-mode switch.
+#   search — training/exploration phase. Reads the SEARCH (training) split
+#            (e.g. DynamicMem users 001-006, LoCoMo conv-26..conv-44,
+#            LongMemEval 300 stratified question_ids). Runs the full staged
+#            gauntlet (stage1→2→3 with thresholds). Sanity layer respects
+#            `sanity.enabled` (default on).
+#   test   — held-out evaluation phase. Reads the TEST split. Full staged
+#            gauntlet. Sanity respects `sanity.enabled`.
+#   dev    — quick dev verification ("smoke / iterate"). Reads the SEARCH
+#            split (never touches held-out test). Runs the whole pipeline
+#            ONCE per benchmark at `stages.sanity_check` sizes — no gauntlet,
+#            no thresholds, and the sanity gate is ALWAYS skipped (dev IS the
+#            sanity-size quick check).
+#            (Renamed from `status:`/`devtest` on 2026-07-07.)
+mode: search
 
 # OpenAI model used by the QA agent inside each harness eval (NOT the
 # proposer — see `proposer.model`). Anything supported by OpenAI's
@@ -68,7 +70,7 @@ update_type: all_at_once
 max_sample_concurrent: 3
 
 # full | stats | none — what to write under harnesses/<id>/<dataset>/memory_dumps/
-# after Phase 1, per user. `mode=check` ALWAYS skips dumps regardless of this.
+# after Phase 1, per user. Dumps happen ONLY at stage3 (never in dev/sanity).
 #   full  — complete memo state (Chroma docs+metas, NetworkX nodes+edges, dict raw)
 #           — can be MB-scale per user for LongMemEval_m
 #   stats — sizes + 3-5 sample entries (cheap, alma's old behavior)
@@ -151,7 +153,7 @@ selection:
   tau: 0.5
 
 # -----------------------------------------------------------------------------
-# Pre-eval sanity check (small mode=check run before full eval)
+# Pre-eval sanity check (stages.sanity_check-sized run before the gauntlet)
 # -----------------------------------------------------------------------------
 
 sanity:
@@ -201,45 +203,67 @@ gpu:
 # (orchestrator errors out if no datasets configured).
 # -----------------------------------------------------------------------------
 
+# STAGED EVALUATION (since 2026-07-07): the old flat eval_n_*/check_n_*
+# fields are GONE (they now raise a migration error). Each benchmark carries
+# a `stages` block with four entries:
+#
+#   sanity_check  — crash gate before the gauntlet (mode=search/test only;
+#                   also the size used by mode=dev runs). No threshold.
+#   stage1/2/3    — the promotion gauntlet. After stage1/stage2, the stage's
+#                   normalized score must be >= `threshold` to advance
+#                   (per-benchmark independent). stage3 is terminal — memory
+#                   dumps happen only there.
+#
+# Sizes use each benchmark's NATIVE hierarchy and are PER-UNIT; sampling is
+# deterministic and NESTED (a smaller stage's task set is a strict subset of
+# a larger one, so promotion comparisons are apples-to-apples).
+# Any omitted stage/field falls back to the family defaults in
+# forge/orchestrator.py::DEFAULT_STAGES (which equal the values shown here).
+# Artifacts land in harnesses/<id>/<ds>/<stage>/, with the final reached
+# stage's score.json copied to the dataset root + a stages.json summary.
+
 datasets:
 
   dynamicmem:
-    # Full-eval task-list cap (# users from search/test split — total
-    # available: 6 users in search split, 4 in test).
-    eval_n_samples: 6
-    # Full-eval per-user TCE-item cap, stratified across the 5 checkpoints ×
-    # 2 task families (state_completion + apply_service). None or omitted =
-    # ALL items (~250-350 per user). LoCoMo conversations have ~199 QAs.
-    eval_n_qa: 20
     # Per-dataset judge override (falls back to the global judge_model).
     # gpt-5.4-2026-03-05 is the official TCE judge; downgrade to gpt-5-mini
     # to save cost at some fidelity loss. Scores are 0.0-1.0 (official
     # holistic Core+Detail: 0.8*core_correct + 0.2*detail_quality/2).
     judge_model: gpt-5.4-2026-03-05
-    # Sanity-check task-list cap. Default 1.
-    check_n_samples: 1
-    # Sanity-check per-sample QA cap. Default 3.
-    check_n_qa: 3
+    # Fields: n_users (of 6 search / 4 test), n_checkpoints (first k of 5),
+    # n_task_a / n_task_c (items PER CHECKPOINT per family; each checkpoint
+    # has ~17-53 of each). stage3 = 6u × 5cp × (5+5) = 300 items.
+    stages:
+      sanity_check: {n_users: 1, n_checkpoints: 1, n_task_a: 1, n_task_c: 1}
+      stage1: {n_users: 2, n_checkpoints: 1, n_task_a: 5, n_task_c: 5, threshold: 0.05}
+      stage2: {n_users: 4, n_checkpoints: 3, n_task_a: 5, n_task_c: 5, threshold: 0.10}
+      stage3: {n_users: 6, n_checkpoints: 5, n_task_a: 5, n_task_c: 5}
 
   locomo:
-    # 6 conversations in search split (conv-26..conv-44), 4 in test.
-    eval_n_samples: 6
-    eval_n_qa: 20           
-    check_n_samples: 1
-    check_n_qa: 3
+    # Fields: n_conversations (of 6 search / 4 test), n_qa PER CONVERSATION
+    # (each has ~105-260 QAs; sampled as a shuffled prefix — nested).
+    # Thresholds are higher than DynamicMem: the no-memory floor is non-zero
+    # (cat-5 adversarial "not mentioned" questions are free points).
+    stages:
+      sanity_check: {n_conversations: 1, n_qa: 3}
+      stage1: {n_conversations: 2, n_qa: 20, threshold: 0.30}
+      stage2: {n_conversations: 4, n_qa: 40, threshold: 0.35}
+      stage3: {n_conversations: 6, n_qa: 60}
 
   longmemeval_s:
-    # 50 question_ids in search split (stratified by question_type), 450 in test.
-    # NOTE: LongMemEval has exactly 1 QA per sample, so eval_n_qa / check_n_qa
-    # are IGNORED here (the workflow forces qa_per_user_estimate=1).
-    eval_n_samples: 50
-    check_n_samples: 1
-    # eval_n_qa and check_n_qa are ignored for longmemeval_*; omitting them
-    # is fine.
+    # Single-level hierarchy: n_questions (of 300 search / 200 test; each
+    # question is 1 QA + its own ~48-session haystack).
+    stages:
+      sanity_check: {n_questions: 2}
+      stage1: {n_questions: 20, threshold: 0.25}
+      stage2: {n_questions: 50, threshold: 0.30}
+      stage3: {n_questions: 100}
 
   longmemeval_m:
-    # Same shape as _s but with a much bigger haystack per question (~475
-    # sessions, ~1.3M tokens). Each Singularity exec reloads the 2.7 GB
-    # JSON (~30s overhead per harness eval). See PROGRESS.md deferred work.
-    eval_n_samples: 50
-    check_n_samples: 1
+    # Same 500 questions as _s but ~476-session haystacks (~1.3M tokens);
+    # each Singularity exec reloads the 2.7 GB JSON (~30s overhead).
+    stages:
+      sanity_check: {n_questions: 2}
+      stage1: {n_questions: 20, threshold: 0.25}
+      stage2: {n_questions: 50, threshold: 0.30}
+      stage3: {n_questions: 100}

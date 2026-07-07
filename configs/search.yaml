@@ -2,7 +2,7 @@
 # Usage:
 #   python -m forge.orchestrator --config configs/search.yaml
 steps: 10
-status: search            # train/explore on search split (full eval size, sanity respected)
+mode: search
 max_sample_concurrent: 3
 memory_dumps: full        # full | stats | none — full dumps written per-user after Phase 1
 
@@ -33,16 +33,37 @@ sanity:
   enabled: true
   max_retries: 2
 
+# Staged evaluation: each harness runs the stage1→2→3 gauntlet per benchmark
+# (independent promotion); the stage's normalized score must be >= threshold
+# to advance. Sizes are per-unit (DynamicMem task counts per checkpoint;
+# LoCoMo QA per conversation). Sampling is nested — a smaller stage's task
+# set is a strict subset of a larger one. Omitted stage fields fall back to
+# the family defaults in forge/orchestrator.py::DEFAULT_STAGES (identical to
+# the values below). Thresholds are deliberately conservative — calibrate
+# against stage-score distributions after the first real search run.
 datasets:
   dynamicmem:
-    eval_n_samples: 6       # all search users
-    eval_n_qa: 20           # per-user TCE items, stratified across 5 checkpoints × 2 task families
     judge_model: gpt-5.4-2026-03-05   # official TCE judge (downgrade to gpt-5-mini to save cost)
-    # check_n_samples / check_n_qa default to 1 / 3
+    stages:
+      sanity_check: {n_users: 1, n_checkpoints: 1, n_task_a: 1, n_task_c: 1}
+      stage1: {n_users: 2, n_checkpoints: 1, n_task_a: 5, n_task_c: 5, threshold: 0.05}
+      stage2: {n_users: 4, n_checkpoints: 3, n_task_a: 5, n_task_c: 5, threshold: 0.10}
+      stage3: {n_users: 6, n_checkpoints: 5, n_task_a: 5, n_task_c: 5}
   locomo:
-    eval_n_samples: 6       # all search conversations
-    eval_n_qa: 20           # aligned with alma default
+    stages:
+      sanity_check: {n_conversations: 1, n_qa: 3}
+      stage1: {n_conversations: 2, n_qa: 20, threshold: 0.30}
+      stage2: {n_conversations: 4, n_qa: 40, threshold: 0.35}
+      stage3: {n_conversations: 6, n_qa: 60}
   longmemeval_s:
-    eval_n_samples: 50      # full stratified search set
-  longmemeval_m:
-    eval_n_samples: 50      # full stratified search set (heavy — ~30s/sample just loading)
+    stages:
+      sanity_check: {n_questions: 2}
+      stage1: {n_questions: 20, threshold: 0.25}
+      stage2: {n_questions: 50, threshold: 0.30}
+      stage3: {n_questions: 100}
+  longmemeval_m:                      # heavy — ~476 sessions/question to ingest
+    stages:
+      sanity_check: {n_questions: 2}
+      stage1: {n_questions: 20, threshold: 0.25}
+      stage2: {n_questions: 50, threshold: 0.30}
+      stage3: {n_questions: 100}

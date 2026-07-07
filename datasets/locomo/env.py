@@ -190,8 +190,13 @@ def load_user_data(
         })
 
     if eval_n_qa is not None:
+        # Shuffle-then-prefix (NOT rng.sample): guarantees the nesting
+        # property staged evaluation depends on — the n=20 selection is
+        # always the first 20 of the n=40 selection for the same sample.
         rng = random.Random(user_dir)
-        qa_pairs = rng.sample(qa_pairs, min(eval_n_qa, len(qa_pairs)))
+        shuffled = list(qa_pairs)
+        rng.shuffle(shuffled)
+        qa_pairs = shuffled[: min(eval_n_qa, len(shuffled))]
 
     return conversation, {}, qa_pairs
 

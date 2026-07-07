@@ -33,10 +33,11 @@ appearance, kill on wall-clock timeout.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Any, Dict, Optional
 
 try:
     from dotenv import dotenv_values
@@ -58,9 +59,13 @@ from forge.paths import PROJECT_ROOT
 
 log = logging.getLogger("forge.evaluator")
 
+# Wall-clock caps per staged-evaluation tier. Small tiers fail fast; the
+# terminal tier keeps the historical 8h budget.
 SUBPROCESS_TIMEOUT = {
-    "check": 2 * 3600,
-    "eval":  8 * 3600,
+    "sanity": 2 * 3600,
+    "stage1": 2 * 3600,
+    "stage2": 4 * 3600,
+    "stage3": 8 * 3600,
 }
 
 GRACE_AFTER_SCORE = 60
@@ -73,12 +78,9 @@ async def run_evaluation(
     out_dir: Path,
     *,
     dataset: str = "dynamicmem",
-    status: str = "search",
-    mode: str = "eval",
-    eval_n_samples: int = 6,
-    eval_n_qa: Optional[int] = None,
-    check_n_samples: int = 1,
-    check_n_qa: int = 3,
+    split: str = "search",   # search | test — benchmark split
+    stage: str = "stage3",
+    stage_spec: Dict[str, Any],
     model: str = "gpt-5-mini",
     judge_model: str = "gpt-5-mini",
     update_type: str = "all_at_once",
@@ -141,23 +143,19 @@ async def run_evaluation(
         "--harness-dir", "/harness",
         "--out-dir", "/out",
         "--dataset", dataset,
-        "--status", status,
-        "--mode", mode,
-        "--eval-n-samples", str(eval_n_samples),
-        "--check-n-samples", str(check_n_samples),
-        "--check-n-qa", str(check_n_qa),
+        "--split", split,
+        "--stage", stage,
+        "--stage-spec", json.dumps(stage_spec),
         "--model", model,
         "--judge-model", judge_model,
         "--update-type", update_type,
         "--max-sample-concurrent", str(max_sample_concurrent),
         "--memory-dumps", memory_dumps,
     ]
-    if eval_n_qa is not None:
-        cmd += ["--eval-n-qa", str(eval_n_qa)]
 
     log.info(
-        f"evaluator: launching {harness_dir.name} [{dataset}] with {image_path.name} "
-        f"(gpu={'on' if gpu else 'off'})"
+        f"evaluator: launching {harness_dir.name} [{dataset}/{stage}] with {image_path.name} "
+        f"(spec={json.dumps(stage_spec)}, gpu={'on' if gpu else 'off'})"
     )
 
     process = await asyncio.create_subprocess_exec(
@@ -166,7 +164,7 @@ async def run_evaluation(
         stderr=asyncio.subprocess.PIPE,
     )
 
-    timeout_s = SUBPROCESS_TIMEOUT.get(mode, 8 * 3600)
+    timeout_s = SUBPROCESS_TIMEOUT.get(stage, 8 * 3600)
     score_path = out_dir / "score.json"
 
     async def _poll_for_score() -> bool:

@@ -449,6 +449,40 @@ def sample_items(checkpoints: List[Dict], n: Optional[int], seed: Any) -> List[D
     return out
 
 
+def sample_items_staged(
+    checkpoints: List[Dict],
+    *,
+    n_checkpoints: int,
+    n_task_a: int,
+    n_task_c: int,
+    seed: Any,
+) -> List[Dict]:
+    """Per-checkpoint task sampling for the staged-evaluation pipeline.
+
+    Takes the FIRST `n_checkpoints` checkpoints (chronological prefix) and,
+    from each, the first `n_task_a` / `n_task_c` items of that checkpoint's
+    deterministically shuffled Task-A / Task-C buckets. Counts beyond a
+    bucket's size return what exists.
+
+    NESTING GUARANTEE (stage gating depends on it): with the same seed, a
+    smaller (n_checkpoints, n_task_a, n_task_c) selection is always a subset
+    of a larger one — checkpoint prefix × shuffled-bucket prefix.
+    """
+    rng = random.Random(str(seed))
+    counts = {TASK_FAMILY_STATE_COMPLETION: n_task_a, TASK_FAMILY_APPLY_SERVICE: n_task_c}
+    out: List[Dict] = []
+    for cp in checkpoints[: max(0, int(n_checkpoints))]:
+        # Shuffles run in fixed checkpoint order, so a shorter checkpoint
+        # prefix consumes the identical rng sequence for the checkpoints it
+        # does include — selections within each checkpoint are independent
+        # of n_checkpoints.
+        for fam in (TASK_FAMILY_STATE_COMPLETION, TASK_FAMILY_APPLY_SERVICE):
+            items = [i for i in cp.get("items", []) if i.get("task_family") == fam]
+            rng.shuffle(items)
+            out.extend(items[: max(0, int(counts[fam]))])
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Backward-compat shim — cc / hipporag2 standalone baselines
 # ---------------------------------------------------------------------------

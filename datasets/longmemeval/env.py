@@ -46,7 +46,11 @@ DATA_PATHS: Dict[str, Path] = {
     "m": _DATA_DIR / "longmemeval_m_cleaned.json",
 }
 
-SEARCH_SIZE = 50
+# 6:4 split (300 search / 200 test), aligned with the other benchmarks and
+# sized so staged evaluation's stage3 (100 questions) fits inside the search
+# pool. NOTE: changed from 50/450 on 2026-07-06 — scores from runs before
+# that date are not comparable (different search/test membership).
+SEARCH_SIZE = 300
 SEARCH_SPLIT_SEED = "longmemeval.search.v1"
 
 

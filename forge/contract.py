@@ -62,7 +62,9 @@ def load_harness_class(harness_dir: Path) -> Type[MemoStructure]:
 
     candidates = [
         obj for _, obj in inspect.getmembers(module, inspect.isclass)
-        if issubclass(obj, MemoStructure) and obj is not MemoStructure
+        # isabstract excludes the common ABC AND forge.harness_base's
+        # still-abstract MemoStructure subclass that harnesses import.
+        if issubclass(obj, MemoStructure) and not inspect.isabstract(obj)
     ]
     if not candidates:
         raise HarnessError(f"No MemoStructure subclass found in {harness_py}")

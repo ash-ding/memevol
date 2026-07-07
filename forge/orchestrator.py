@@ -1,6 +1,6 @@
 """Forge outer loop.
 
-Per-harness flow (`status=search` or `test`):
+Per-harness flow (`mode=search` or `test`):
 
     propose → ensure_image
            → sanity_check_harness (small real-data run per dataset, if
@@ -11,8 +11,8 @@ Per-harness flow (`status=search` or `test`):
                              └─ all retries exhausted → skip eval,
                                  enter frontier with sanity_failed + score=0
 
-For `status=devtest`: skip sanity entirely and run evaluator with
-`check_n_*` sizes (devtest IS the sanity-size dev verification).
+For `mode=dev`: skip sanity entirely and run the evaluator once per
+benchmark at `stages.sanity_check` sizes (dev IS the sanity-size verification).
 
 Two ways to launch:
 
@@ -21,7 +21,7 @@ Two ways to launch:
 
     # (b) CLI-first (quick iteration; uniform params across all datasets)
     python -m forge.orchestrator --steps 3 --datasets dynamicmem,locomo \
-        --status devtest --eval-n-samples 2 --eval-n-qa 10
+        --mode dev
 
 CLI flags always override the config file when both are given. See
 `configs/smoke.yaml` and `configs/search.yaml` for the full config schema.
@@ -98,10 +98,10 @@ class ProposerInfraError(RuntimeError):
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "steps": 1,
-    # search  — train/explore on search split, full eval size, sanity respected
-    # test    — held-out test split, full eval size, sanity respected
-    # devtest — quick dev verification: search split, check eval size, sanity always skipped
-    "status": "search",
+    # search — training/exploration on the search (training) split, full staged gauntlet
+    # test   — held-out evaluation on the test split, full staged gauntlet
+    # dev    — run the whole pipeline at stages.sanity_check sizes only (search split, no gauntlet, no sanity gate)
+    "mode": "search",
     "model": "gpt-5-mini",
     "judge_model": "gpt-5-mini",
     "update_type": "all_at_once",
@@ -190,6 +190,144 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Staged evaluation — per-benchmark stage schema
+#
+# Each benchmark's `datasets.<ds>` block carries a `stages` mapping with four
+# entries (sanity_check + stage1..3). Sizes use the benchmark's NATIVE
+# hierarchy fields; `threshold` on stage1/stage2 is the promotion gate (the
+# stage's normalized score must be >= threshold to advance; per-benchmark
+# independent). stage3 is terminal (no threshold). Sizes are PER-UNIT
+# (DynamicMem task counts are per checkpoint; LoCoMo QA counts are per
+# conversation). Nested sampling guarantees a smaller stage's task set is a
+# subset of a larger one.
+# ---------------------------------------------------------------------------
+
+STAGE_ORDER = ("stage1", "stage2", "stage3")
+
+# Benchmark-family field vocabulary: <family> -> (sample-count field, extras)
+_FAMILY_FIELDS = {
+    "dynamicmem": ("n_users", ("n_checkpoints", "n_task_a", "n_task_c")),
+    "locomo": ("n_conversations", ("n_qa",)),
+    "longmemeval": ("n_questions", ()),
+}
+
+# Initial thresholds are DELIBERATELY conservative (only clearly-broken
+# candidates get eliminated early) — calibrate against stage-score
+# distributions after the first real search run. LoCoMo/LongMemEval have a
+# non-zero no-memory floor (e.g. LoCoMo cat-5 adversarial questions are free
+# points), hence higher thresholds than DynamicMem.
+DEFAULT_STAGES: Dict[str, Dict[str, Dict[str, Any]]] = {
+    "dynamicmem": {
+        "sanity_check": {"n_users": 1, "n_checkpoints": 1, "n_task_a": 1, "n_task_c": 1},
+        "stage1": {"n_users": 2, "n_checkpoints": 1, "n_task_a": 5, "n_task_c": 5, "threshold": 0.05},
+        "stage2": {"n_users": 4, "n_checkpoints": 3, "n_task_a": 5, "n_task_c": 5, "threshold": 0.10},
+        "stage3": {"n_users": 6, "n_checkpoints": 5, "n_task_a": 5, "n_task_c": 5},
+    },
+    "locomo": {
+        "sanity_check": {"n_conversations": 1, "n_qa": 3},
+        "stage1": {"n_conversations": 2, "n_qa": 20, "threshold": 0.30},
+        "stage2": {"n_conversations": 4, "n_qa": 40, "threshold": 0.35},
+        "stage3": {"n_conversations": 6, "n_qa": 60},
+    },
+    "longmemeval": {
+        "sanity_check": {"n_questions": 2},
+        "stage1": {"n_questions": 20, "threshold": 0.25},
+        "stage2": {"n_questions": 50, "threshold": 0.30},
+        "stage3": {"n_questions": 100},
+    },
+}
+
+_OLD_SIZE_FIELDS = ("eval_n_samples", "eval_n_qa", "check_n_samples", "check_n_qa")
+
+
+def _benchmark_family(ds: str) -> str:
+    """Map a dataset name to its stage-schema family (longmemeval_s/m share one)."""
+    if ds.startswith("longmemeval"):
+        return "longmemeval"
+    if ds not in _FAMILY_FIELDS:
+        raise ValueError(
+            f"Unknown benchmark {ds!r} — no stage schema. Known families: "
+            f"{sorted(_FAMILY_FIELDS)} (longmemeval_s / longmemeval_m share 'longmemeval')."
+        )
+    return ds
+
+
+def stage_wire_spec(ds: str, stage_params: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize a stage's benchmark-native size fields to the wire spec the
+    container consumes: {"n_samples": int, ...family extras}. `threshold`
+    is an orchestrator-side concern and is stripped."""
+    family = _benchmark_family(ds)
+    sample_field, extras = _FAMILY_FIELDS[family]
+    spec: Dict[str, Any] = {"n_samples": int(stage_params[sample_field])}
+    for f in extras:
+        spec[f] = int(stage_params[f])
+    return spec
+
+
+def stage_plan(ds: str, ds_params: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any], Optional[float]]]:
+    """Ordered promotion plan for one benchmark:
+    [(stage_name, wire_spec, threshold_or_None), ...] for stage1..3."""
+    stages = ds_params["stages"]
+    plan = []
+    for name in STAGE_ORDER:
+        params = stages[name]
+        threshold = params.get("threshold")
+        plan.append((name, stage_wire_spec(ds, params), float(threshold) if threshold is not None else None))
+    return plan
+
+
+def _resolve_dataset_stages(ds: str, params: Dict[str, Any]) -> None:
+    """Fill defaults + validate the `stages` block of one dataset, in place."""
+    family = _benchmark_family(ds)
+    sample_field, extras = _FAMILY_FIELDS[family]
+    allowed = {sample_field, *extras, "threshold"}
+
+    # Old flat schema is gone — fail loudly with a migration hint.
+    stale = [f for f in _OLD_SIZE_FIELDS if f in params]
+    if stale:
+        raise ValueError(
+            f"datasets.{ds}: fields {stale} were removed — evaluation sizes now "
+            f"live in a `stages` block. Example:\n"
+            f"  {ds}:\n    stages:\n"
+            f"      sanity_check: {DEFAULT_STAGES[family]['sanity_check']}\n"
+            f"      stage1: {DEFAULT_STAGES[family]['stage1']}\n"
+            f"      stage2: {DEFAULT_STAGES[family]['stage2']}\n"
+            f"      stage3: {DEFAULT_STAGES[family]['stage3']}"
+        )
+
+    stages = params.setdefault("stages", {})
+    if not isinstance(stages, dict):
+        raise ValueError(f"datasets.{ds}.stages must be a mapping")
+    for name in ("sanity_check", *STAGE_ORDER):
+        block = stages.setdefault(name, {})
+        if not isinstance(block, dict):
+            raise ValueError(f"datasets.{ds}.stages.{name} must be a mapping")
+        unknown = set(block) - allowed
+        if unknown:
+            raise ValueError(
+                f"datasets.{ds}.stages.{name}: unknown field(s) {sorted(unknown)} "
+                f"for family {family!r}; allowed: {sorted(allowed)}"
+            )
+        for field, default in DEFAULT_STAGES[family][name].items():
+            block.setdefault(field, default)
+        # sanity_check and stage3 never gate
+        if name in ("sanity_check", "stage3"):
+            block.pop("threshold", None)
+        thr = block.get("threshold")
+        if thr is not None and not (0.0 <= float(thr) <= 1.0):
+            raise ValueError(f"datasets.{ds}.stages.{name}.threshold must be in [0,1], got {thr}")
+
+    # Monotonic non-decreasing sizes across stage1..3 (nesting depends on it).
+    for field in (sample_field, *extras):
+        seq = [int(stages[name][field]) for name in STAGE_ORDER]
+        if any(b < a for a, b in zip(seq, seq[1:])):
+            raise ValueError(
+                f"datasets.{ds}.stages: {field} must be non-decreasing across "
+                f"stage1..stage3 (got {seq}) — staged nesting depends on it"
+            )
+
+
 def _deep_merge(base: Dict[str, Any], overlay: Dict[str, Any]) -> None:
     """In-place deep merge of overlay into base (dicts only)."""
     for k, v in overlay.items():
@@ -219,9 +357,21 @@ def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
             raise ValueError(f"config file must be a mapping at top level: {path}")
         _deep_merge(cfg, file_cfg)
 
+    if "status" in cfg:
+        raise ValueError(
+            "top-level `status:` was renamed to `mode:` "
+            "(search / test / dev; the old `devtest` value is now `dev`). "
+            "Update the YAML and re-run."
+        )
+    if cfg.get("mode", "search") not in ("search", "test", "dev"):
+        raise ValueError(
+            f"mode must be one of search / test / dev, got {cfg.get('mode')!r} "
+            "(the old `devtest` value is now `dev`)"
+        )
+
     # Top-level CLI overrides (each applied only if explicitly provided)
     for key in (
-        "steps", "status", "model", "judge_model",
+        "steps", "mode", "model", "judge_model",
         "update_type", "max_sample_concurrent", "memory_dumps",
     ):
         val = getattr(args, key, None)
@@ -279,37 +429,12 @@ def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
     # Datasets
     cli_datasets = getattr(args, "datasets", None)
     if cli_datasets is not None:
-        # CLI --datasets replaces the YAML datasets block entirely. Uses the
-        # global --eval-n-samples / --eval-n-qa / --check-n-samples / --check-n-qa
-        # (or their defaults) for every benchmark in the list.
+        # CLI --datasets replaces the YAML datasets block entirely; each
+        # benchmark gets its family's DEFAULT_STAGES (see that constant).
         ds_list = [d.strip() for d in cli_datasets.split(",") if d.strip()]
-        eval_ns = args.eval_n_samples if args.eval_n_samples is not None else 1
-        eval_nq = args.eval_n_qa  # None is fine; longmemeval ignores it
-        check_ns = args.check_n_samples if args.check_n_samples is not None else 1
-        check_nq = args.check_n_qa if args.check_n_qa is not None else 3
-        cfg["datasets"] = {
-            ds: {
-                "eval_n_samples": eval_ns, "eval_n_qa": eval_nq,
-                "check_n_samples": check_ns, "check_n_qa": check_nq,
-            }
-            for ds in ds_list
-        }
-    else:
-        # Global CLI args override every dataset in the YAML
-        if args.eval_n_samples is not None and cfg.get("datasets"):
-            for ds in cfg["datasets"]:
-                cfg["datasets"][ds]["eval_n_samples"] = args.eval_n_samples
-        if args.eval_n_qa is not None and cfg.get("datasets"):
-            for ds in cfg["datasets"]:
-                cfg["datasets"][ds]["eval_n_qa"] = args.eval_n_qa
-        if args.check_n_samples is not None and cfg.get("datasets"):
-            for ds in cfg["datasets"]:
-                cfg["datasets"][ds]["check_n_samples"] = args.check_n_samples
-        if args.check_n_qa is not None and cfg.get("datasets"):
-            for ds in cfg["datasets"]:
-                cfg["datasets"][ds]["check_n_qa"] = args.check_n_qa
+        cfg["datasets"] = {ds: {} for ds in ds_list}
 
-    # Validation
+    # Validation + stage-schema resolution
     if not cfg.get("datasets"):
         raise ValueError(
             "No datasets specified. Provide `datasets:` in --config YAML, "
@@ -320,10 +445,7 @@ def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
             raise ValueError(
                 f"datasets.{ds} must be a mapping, got {type(params).__name__}"
             )
-        params.setdefault("eval_n_samples", 1)
-        params.setdefault("eval_n_qa", None)
-        params.setdefault("check_n_samples", 1)
-        params.setdefault("check_n_qa", 3)
+        _resolve_dataset_stages(ds, params)
         # Per-dataset judge override; falls back to the global judge_model.
         # (DynamicMem pins the official TCE judge gpt-5.4-2026-03-05 in the
         # YAML; other benchmarks typically inherit the global value.)
@@ -593,12 +715,15 @@ def _sanity_dir(harness_dir: Path, dataset: str) -> Path:
     return harness_dir / dataset / "sanity"
 
 
-def _read_dataset_metrics(harness_dir: Path, dataset: str) -> Dict[str, Any]:
+def _read_dataset_metrics(harness_dir: Path, dataset: str, subdir: Optional[str] = None) -> Dict[str, Any]:
     """Read score.json + token_usage.json for one dataset, return a metrics dict.
+
+    `subdir` selects a stage subdirectory (e.g. "stage2") under the dataset
+    dir; None reads the dataset root (the final-stage copy).
 
     Keys:
       raw_score:        float, benchmark_overall_eval_score (native scale)
-      score_max:        int, judge's max score (10 for DynamicMem, 1 for LoCoMo/LongMemEval)
+      score_max:        int, judge's max score (1 for all current benchmarks)
       per_user_stddev:  Optional[float], population stddev of per_user[*].reward;
                         None when fewer than 2 valid users (stddev undefined)
       tokens:           int, sum of total_tokens across all models in token_usage.json
@@ -613,6 +738,8 @@ def _read_dataset_metrics(harness_dir: Path, dataset: str) -> Dict[str, Any]:
         "tokens": 0,
     }
     ds_dir = _dataset_dir(harness_dir, dataset)
+    if subdir:
+        ds_dir = ds_dir / subdir
 
     # score.json: raw_score + score_max + per_user_stddev
     score_json = ds_dir / "score.json"
@@ -747,6 +874,12 @@ def _build_objectives(
             stddev = m.get("per_user_stddev")
             if stddev is not None:
                 out[f"robustness_{ds}"] = float(stddev)
+            # Staged-evaluation telemetry: highest stage this benchmark
+            # reached (1/2/3; 0 = sanity-size dev run). `accuracy_<ds>`
+            # is the score AT that stage — compare candidates at the same
+            # stage_<ds> when reading frontier.json.
+            if m.get("stage") is not None:
+                out[f"stage_{ds}"] = float(m["stage"])
             normalized.append(raw / score_max if score_max > 0 else 0.0)
             total_tokens += int(m.get("tokens", 0))
         out["accuracy"] = sum(normalized) / len(normalized)  # ∈ [0, 1]
@@ -803,7 +936,7 @@ async def sanity_check_harness(
     image_path: Path,
     *,
     datasets_config: Dict[str, Dict[str, Any]],
-    status: str,
+    split: str,   # search | test — which benchmark split (mode=dev never reaches here)
     model: str,
     judge_model: str,
     update_type: str,
@@ -826,17 +959,14 @@ async def sanity_check_harness(
                 image_path=image_path,
                 out_dir=run_dir,
                 dataset=ds,
-                status=status,
-                mode="check",
-                eval_n_samples=params["eval_n_samples"],  # unused at mode=check but required
-                eval_n_qa=params["eval_n_qa"],
-                check_n_samples=params["check_n_samples"],
-                check_n_qa=params["check_n_qa"],
+                split=split,
+                stage="sanity",
+                stage_spec=stage_wire_spec(ds, params["stages"]["sanity_check"]),
                 model=model,
                 judge_model=params.get("judge_model", judge_model),
                 update_type=update_type,
                 max_sample_concurrent=max_sample_concurrent,
-                memory_dumps="none",   # sanity never dumps
+                memory_dumps="none",   # sanity never dumps (stage!=stage3 anyway)
                 gpu=gpu,
             )
         except Exception as exc:
@@ -860,7 +990,7 @@ async def evaluate_harness(
     image_path: Path,
     *,
     datasets_config: Dict[str, Dict[str, Any]],
-    status: str,                  # search | test | devtest
+    mode: str,                    # search | test | dev
     model: str,
     judge_model: str,
     update_type: str,
@@ -868,61 +998,126 @@ async def evaluate_harness(
     memory_dumps: str,
     gpu: bool = False,
 ) -> Dict[str, Dict[str, Any]]:
-    """Run the harness on every dataset (serial). Returns per-dataset metrics
-    dicts (raw_score, score_max, per_user_stddev, tokens) — see
-    `_read_dataset_metrics`. Consumed by `_build_objectives` which normalizes
-    raw_score by score_max before mean and surfaces telemetry axes.
+    """Run the STAGED evaluation gauntlet on every dataset (serial).
 
-    `status` is the user-facing 3-value enum. Translation to the container's
-    (mode, status) wire format:
-      search   → (mode=eval,  container_status=search)
-      test     → (mode=eval,  container_status=test)
-      devtest  → (mode=check, container_status=search)   # search-split + small size
+    Per benchmark (independent promotion): run stage1 → stage2 → stage3,
+    publishing each stage's artifacts to `harnesses/<id>/<ds>/<stage>/`.
+    After a gated stage (stage1/stage2), the normalized score must be
+    >= that stage's threshold to advance; otherwise the benchmark stops
+    there ("eliminated"). The final (highest-reached) stage's score.json +
+    token_usage.json are copied to the dataset root for browsing/back-compat,
+    and a `stages.json` summary is written alongside.
+
+    `mode=dev` bypasses the gauntlet entirely: one sanity_check-sized
+    run per benchmark on the search split, published at the dataset root.
+
+    Returns per-dataset metrics dicts (raw_score, score_max, per_user_stddev,
+    tokens, stage, eliminated) — consumed by `_build_objectives`.
     """
-    if status == "devtest":
-        container_mode, container_status = "check", "search"
-    else:
-        container_mode, container_status = "eval", status
-
     harness_dir = paths.harnesses_dir / harness_id
 
     scores: Dict[str, Dict[str, Any]] = {}
     for ds, params in datasets_config.items():
-        eval_ns = int(params.get("eval_n_samples", 1))
-        eval_nq = params.get("eval_n_qa")
-        check_ns = int(params.get("check_n_samples", 1))
-        check_nq = int(params.get("check_n_qa", 3))
-        run_dir = paths.runs_dir / f"{harness_id}_{int(time.time())}_{ds}"
-        crashed: Optional[Exception] = None
-        try:
-            await run_evaluation(
-                harness_dir=harness_dir,
-                image_path=image_path,
-                out_dir=run_dir,
-                dataset=ds,
-                status=container_status,
-                mode=container_mode,
-                eval_n_samples=eval_ns,
-                eval_n_qa=eval_nq,
-                check_n_samples=check_ns,
-                check_n_qa=check_nq,
-                model=model,
-                judge_model=params.get("judge_model", judge_model),
-                update_type=update_type,
-                max_sample_concurrent=max_sample_concurrent,
-                memory_dumps=memory_dumps,
-                gpu=gpu,
+        ds_judge = params.get("judge_model", judge_model)
+        dst_root = _dataset_dir(harness_dir, ds)
+
+        async def _run_stage(stage_name: str, spec: Dict[str, Any], dst: Path,
+                             split: str) -> Optional[Exception]:
+            run_dir = paths.runs_dir / f"{harness_id}_{int(time.time())}_{ds}_{stage_name}"
+            crashed: Optional[Exception] = None
+            try:
+                await run_evaluation(
+                    harness_dir=harness_dir,
+                    image_path=image_path,
+                    out_dir=run_dir,
+                    dataset=ds,
+                    split=split,
+                    stage=stage_name,
+                    stage_spec=spec,
+                    model=model,
+                    judge_model=ds_judge,
+                    update_type=update_type,
+                    max_sample_concurrent=max_sample_concurrent,
+                    memory_dumps=memory_dumps,
+                    gpu=gpu,
+                )
+            except Exception as exc:
+                log.error(f"evaluation crashed for {harness_id} [{ds}/{stage_name}]: {exc}")
+                crashed = exc
+            # Always publish + cleanup. If the container died mid-write,
+            # subprocess.log + any partial score.json are still useful for triage.
+            _publish_run_artifacts(run_dir, dst)
+            if not (dst / "score.json").exists():
+                _write_failure(dst, f"eval_crashed: {crashed}" if crashed else "no score.json produced")
+            return crashed
+
+        if mode == "dev":
+            # Sanity-size single run, no gating, artifacts at the dataset root.
+            spec = stage_wire_spec(ds, params["stages"]["sanity_check"])
+            await _run_stage("sanity", spec, dst_root, "search")
+            m = _read_dataset_metrics(harness_dir, ds)
+            m["stage"] = 0.0  # 0 = sanity-size dev run (not a gauntlet tier)
+            m["eliminated"] = False
+            scores[ds] = m
+            continue
+
+        # ---- staged gauntlet (mode = search | test; mode IS the split) ----
+        plan = stage_plan(ds, params)
+        stage_summary: Dict[str, Any] = {}
+        final_metrics: Dict[str, Any] = {}
+        reached = ""
+        eliminated = False
+        for stage_name, spec, threshold in plan:
+            crashed = await _run_stage(stage_name, spec, dst_root / stage_name, mode)
+            m = _read_dataset_metrics(harness_dir, ds, subdir=stage_name)
+            score_max = int(m.get("score_max", 10)) or 1
+            normalized = float(m.get("raw_score", 0.0)) / score_max
+            stage_summary[stage_name] = {
+                "raw_score": m["raw_score"],
+                "score_max": m["score_max"],
+                "normalized": normalized,
+                "threshold": threshold,
+                "tokens": m["tokens"],
+                "spec": spec,
+            }
+            # Cost accounting spans ALL executed stages, not just the last.
+            m["tokens"] += sum(
+                s["tokens"] for n, s in stage_summary.items() if n != stage_name
             )
-        except Exception as exc:
-            log.error(f"evaluation crashed for {harness_id} [{ds}]: {exc}")
-            crashed = exc
-        # Always publish + cleanup. If the container died mid-write,
-        # subprocess.log + any partial score.json are still useful for triage.
-        dst = _dataset_dir(harness_dir, ds)
-        _publish_run_artifacts(run_dir, dst)
-        if not (dst / "score.json").exists():
-            _write_failure(dst, f"eval_crashed: {crashed}" if crashed else "no score.json produced")
-        scores[ds] = _read_dataset_metrics(harness_dir, ds)
+            final_metrics = m
+            reached = stage_name
+            if crashed is not None:
+                eliminated = True
+                stage_summary[stage_name]["crashed"] = repr(crashed)
+                break
+            if threshold is not None and normalized < threshold:
+                eliminated = True
+                log.info(
+                    f"{harness_id} [{ds}] ELIMINATED at {stage_name}: "
+                    f"{normalized:.3f} < threshold {threshold}"
+                )
+                break
+            if threshold is not None:
+                log.info(
+                    f"{harness_id} [{ds}] promoted past {stage_name}: "
+                    f"{normalized:.3f} >= {threshold}"
+                )
+
+        # Final-stage artifacts to the dataset root (CC browsing + the
+        # frontier reader default path).
+        for fname in ("score.json", "token_usage.json"):
+            src = dst_root / reached / fname
+            if src.exists():
+                shutil.copy2(src, dst_root / fname)
+        with (dst_root / "stages.json").open("w", encoding="utf-8") as f:
+            json.dump(
+                {"reached": reached, "eliminated": eliminated, "stages": stage_summary},
+                f, indent=2, ensure_ascii=False,
+            )
+
+        final_metrics["stage"] = float(STAGE_ORDER.index(reached) + 1)
+        final_metrics["eliminated"] = eliminated
+        scores[ds] = final_metrics
 
     return scores
 
@@ -955,12 +1150,12 @@ async def propose_eval_one(
     """
     datasets_config = cfg["datasets"]
     dataset_names = list(datasets_config.keys())
-    status = cfg["status"]   # search | test | devtest
+    mode = cfg["mode"]   # search | test | dev
 
-    # Sanity is skipped entirely when status=devtest (devtest IS a sanity-size
-    # quick check by definition; running another sanity layer is redundant).
+    # Sanity is skipped entirely when mode=dev (dev IS a sanity-size quick
+    # check by definition; running another sanity layer is redundant).
     # For search/test, sanity respects cfg["sanity"]["enabled"].
-    sanity_enabled = (status != "devtest") and cfg["sanity"]["enabled"]
+    sanity_enabled = (mode != "dev") and cfg["sanity"]["enabled"]
 
     harness_dir = paths.harnesses_dir / new_id
     final_id = new_id  # may get renamed to f"{new_id}_{hash8}" below
@@ -1028,7 +1223,7 @@ async def propose_eval_one(
             passed, error_trace = await sanity_check_harness(
                 new_id, image_path,
                 datasets_config=datasets_config,
-                status=cfg["status"],
+                split=cfg["mode"],   # sanity only runs at mode search/test
                 model=cfg["model"], judge_model=cfg["judge_model"],
                 update_type=cfg["update_type"],
                 max_sample_concurrent=cfg["max_sample_concurrent"],
@@ -1097,7 +1292,7 @@ async def propose_eval_one(
     per_ds = await evaluate_harness(
         final_id, image_path,
         datasets_config=datasets_config,
-        status=status,
+        mode=mode,
         model=cfg["model"], judge_model=cfg["judge_model"],
         update_type=cfg["update_type"],
         max_sample_concurrent=cfg["max_sample_concurrent"],
@@ -1453,7 +1648,7 @@ async def _adopt_orphan(
     per_ds = await evaluate_harness(
         name, image_path,
         datasets_config=cfg["datasets"],
-        status=cfg["status"],
+        mode=cfg["mode"],
         model=cfg["model"], judge_model=cfg["judge_model"],
         update_type=cfg["update_type"],
         max_sample_concurrent=cfg["max_sample_concurrent"],
@@ -1594,7 +1789,7 @@ def _read_parent_ids(harness_dir: Path) -> List[str]:
 # CLI
 # ---------------------------------------------------------------------------
 
-def main() -> None:
+def build_arg_parser() -> argparse.ArgumentParser:
     # allow_abbrev=False: avoid surprising prefix matching. Without this,
     # `--mode check` would be parsed as `--model check` (since "mode" is a
     # prefix of "model"), silently using "check" as the OpenAI model name
@@ -1610,25 +1805,18 @@ def main() -> None:
     parser.add_argument(
         "--datasets", default=None,
         help="Comma-separated dataset names. If given, replaces any YAML "
-             "`datasets:` block and applies global eval_n_*/check_n_* uniformly.",
+             "`datasets:` block; each benchmark gets its family's default "
+             "`stages` sizes/thresholds (customize via YAML for non-defaults).",
     )
     parser.add_argument(
-        "--status",
+        "--mode",
         default=None,
-        choices=["search", "test", "devtest"],
-        help="search = training/exploration on search split; "
-             "test = held-out evaluation on test split; "
-             "devtest = quick dev verification (search split + check sizes + skip sanity).",
+        choices=["search", "test", "dev"],
+        help="search = training/exploration on the search (training) split; "
+             "test = held-out evaluation on the test split; "
+             "dev = run the whole pipeline at stages.sanity_check sizes "
+             "(search split, no gauntlet, no sanity gate).",
     )
-
-    parser.add_argument("--eval-n-samples", type=int, default=None,
-                        help="Full-eval task-list cap (overrides every dataset's eval_n_samples)")
-    parser.add_argument("--eval-n-qa", type=int, default=None,
-                        help="Full-eval per-sample QA cap (ignored for longmemeval)")
-    parser.add_argument("--check-n-samples", type=int, default=None,
-                        help="Sanity-check task-list cap (default 1)")
-    parser.add_argument("--check-n-qa", type=int, default=None,
-                        help="Sanity-check per-sample QA cap (default 3, ignored for longmemeval)")
 
     parser.add_argument("--model", default=None)
     parser.add_argument("--judge-model", default=None)
@@ -1691,7 +1879,11 @@ def main() -> None:
                              "explicit stem for A/B comparisons of prompt revisions.")
 
     parser.add_argument("--verbose", action="store_true")
-    args = parser.parse_args()
+    return parser
+
+
+def main() -> None:
+    args = build_arg_parser().parse_args()
 
     _setup_logging(args.verbose)
     cfg = _resolve_config(args)

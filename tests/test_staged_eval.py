@@ -1,0 +1,277 @@
+"""Tests for staged evaluation: nested sampling + stages config schema.
+
+Zero-dependency runner (no pytest in the venvs):
+
+    venv/bin/python tests/test_staged_eval.py          # root venv
+    baselines/venv/bin/python tests/test_staged_eval.py
+
+Covers:
+  - datasets/dynamicmem/env.py::sample_items_staged (per-checkpoint A/C
+    counts, nesting across stages, determinism)
+  - datasets/locomo/env.py QA sampling (prefix nesting)
+  - datasets/longmemeval/env.py 300/200 stratified split
+  - forge/orchestrator.py stages config schema (defaults, validation,
+    old-field migration error, wire-spec normalization)
+"""
+import argparse
+import os
+import sys
+import tempfile
+import traceback
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+os.environ.setdefault("OPENAI_API_KEY", "test-dummy-key")
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DM_USER = os.path.join(REPO, "datasets", "dynamicmem", "user_data", "001_user_001")
+
+
+def _item_key(i):
+    return (i["checkpoint_id"], i["task_family"], i["state_key"], i["qa_id"])
+
+
+# ---------------- DynamicMem: sample_items_staged ----------------
+
+def test_dm_staged_counts():
+    from datasets.dynamicmem.env import load_user_checkpoints, sample_items_staged
+    _, cps = load_user_checkpoints(DM_USER)
+    out = sample_items_staged(cps, n_checkpoints=3, n_task_a=5, n_task_c=5, seed=DM_USER)
+    assert len(out) == 30, f"expected 3cp*10, got {len(out)}"
+    by_cp = {}
+    for i in out:
+        by_cp.setdefault(i["checkpoint_id"], {"state_completion": 0, "apply_service": 0})
+        by_cp[i["checkpoint_id"]][i["task_family"]] += 1
+    assert len(by_cp) == 3
+    # first 3 checkpoints in order
+    assert list(by_cp) == [cp["checkpoint_id"] for cp in cps[:3]]
+    for cid, fam_counts in by_cp.items():
+        assert fam_counts == {"state_completion": 5, "apply_service": 5}, (cid, fam_counts)
+
+
+def test_dm_staged_caps_at_available():
+    """Requesting more than a bucket holds returns what exists (no crash)."""
+    from datasets.dynamicmem.env import load_user_checkpoints, sample_items_staged
+    _, cps = load_user_checkpoints(DM_USER)
+    out = sample_items_staged(cps, n_checkpoints=1, n_task_a=999, n_task_c=999, seed=DM_USER)
+    a = sum(1 for i in out if i["task_family"] == "state_completion")
+    c = sum(1 for i in out if i["task_family"] == "apply_service")
+    assert a == 30 and c == 30, (a, c)  # user001 cp1 has 30/30 (jq-verified)
+
+
+def test_dm_staged_nesting():
+    """sanity ⊂ stage1 ⊂ stage2 ⊂ stage3 (same seed)."""
+    from datasets.dynamicmem.env import load_user_checkpoints, sample_items_staged
+    _, cps = load_user_checkpoints(DM_USER)
+    sanity = sample_items_staged(cps, n_checkpoints=1, n_task_a=1, n_task_c=1, seed=DM_USER)
+    s1 = sample_items_staged(cps, n_checkpoints=1, n_task_a=5, n_task_c=5, seed=DM_USER)
+    s2 = sample_items_staged(cps, n_checkpoints=3, n_task_a=5, n_task_c=5, seed=DM_USER)
+    s3 = sample_items_staged(cps, n_checkpoints=5, n_task_a=5, n_task_c=5, seed=DM_USER)
+    k = lambda items: {_item_key(i) for i in items}
+    assert len(sanity) == 2
+    assert k(sanity) <= k(s1), "sanity not subset of stage1"
+    assert k(s1) <= k(s2), "stage1 not subset of stage2"
+    assert k(s2) <= k(s3), "stage2 not subset of stage3"
+    assert len(k(s3)) == 50
+
+
+def test_dm_staged_deterministic():
+    from datasets.dynamicmem.env import load_user_checkpoints, sample_items_staged
+    _, cps = load_user_checkpoints(DM_USER)
+    a = sample_items_staged(cps, n_checkpoints=2, n_task_a=3, n_task_c=3, seed=DM_USER)
+    b = sample_items_staged(cps, n_checkpoints=2, n_task_a=3, n_task_c=3, seed=DM_USER)
+    assert [_item_key(i) for i in a] == [_item_key(i) for i in b]
+
+
+# ---------------- LoCoMo: prefix-nested QA sampling ----------------
+
+def test_locomo_qa_nesting():
+    from datasets.locomo.env import load_user_data, get_task_list
+    conv = get_task_list("search", 1)[0]
+    _, _, qa20 = load_user_data(conv, 20)
+    _, _, qa40 = load_user_data(conv, 40)
+    assert len(qa20) == 20 and len(qa40) == 40
+    q = lambda qs: [x["query"] for x in qs]
+    assert q(qa20) == q(qa40)[:20], "LoCoMo sampling is not prefix-nested"
+    # determinism
+    _, _, qa20b = load_user_data(conv, 20)
+    assert q(qa20) == q(qa20b)
+
+
+# ---------------- LongMemEval: 300/200 split ----------------
+
+def test_longmemeval_split_300_200():
+    from datasets.longmemeval.env import _compute_split, get_task_list
+    search_qids, test_qids = _compute_split()
+    assert len(search_qids) == 300, f"search={len(search_qids)}"
+    assert len(test_qids) == 200, f"test={len(test_qids)}"
+    assert not (set(search_qids) & set(test_qids))
+    # prefix nesting of the task list
+    t20 = get_task_list("search", 20)
+    t50 = get_task_list("search", 50)
+    assert t20 == t50[:20]
+
+
+def test_longmemeval_split_stratified():
+    import json
+    from datasets.longmemeval.env import _compute_split
+    data = json.load(open(os.path.join(REPO, "datasets", "longmemeval", "longmemeval_s_cleaned.json")))
+    by_type_total = {}
+    type_of = {}
+    for d in data:
+        by_type_total[d["question_type"]] = by_type_total.get(d["question_type"], 0) + 1
+        type_of[d["question_id"]] = d["question_type"]
+    search_qids, _ = _compute_split()
+    by_type_search = {}
+    for qid in search_qids:
+        by_type_search[type_of[qid]] = by_type_search.get(type_of[qid], 0) + 1
+    for t, total in by_type_total.items():
+        expected = total * 300 / 500
+        got = by_type_search.get(t, 0)
+        assert abs(got - expected) <= 2, f"{t}: got {got}, expected ~{expected:.0f}"
+
+
+# ---------------- Config schema ----------------
+
+def _resolve(yaml_text):
+    """Run _resolve_config against a temp YAML with an all-defaults Namespace."""
+    from forge.orchestrator import _resolve_config, build_arg_parser
+    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+        f.write(yaml_text)
+        path = f.name
+    try:
+        args = build_arg_parser().parse_args(["--config", path])
+        return _resolve_config(args)
+    finally:
+        os.unlink(path)
+
+
+def test_config_defaults_fill():
+    cfg = _resolve("datasets:\n  dynamicmem: {}\n  locomo: {}\n  longmemeval_s: {}\n")
+    dm = cfg["datasets"]["dynamicmem"]["stages"]
+    assert dm["sanity_check"] == {"n_users": 1, "n_checkpoints": 1, "n_task_a": 1, "n_task_c": 1}
+    assert dm["stage1"]["n_users"] == 2 and dm["stage1"]["n_checkpoints"] == 1
+    assert dm["stage2"]["n_users"] == 4 and dm["stage2"]["n_checkpoints"] == 3
+    assert dm["stage3"]["n_users"] == 6 and dm["stage3"]["n_checkpoints"] == 5
+    assert "threshold" in dm["stage1"] and "threshold" in dm["stage2"]
+    assert "threshold" not in dm["stage3"]
+    lc = cfg["datasets"]["locomo"]["stages"]
+    assert lc["stage1"] == {"n_conversations": 2, "n_qa": 20, "threshold": lc["stage1"]["threshold"]}
+    lme = cfg["datasets"]["longmemeval_s"]["stages"]
+    assert lme["stage3"] == {"n_questions": 100}
+    # per-dataset judge_model default still applied
+    assert cfg["datasets"]["locomo"]["judge_model"] == cfg["judge_model"]
+
+
+def test_config_family_defaults_for_longmemeval_m():
+    cfg = _resolve("datasets:\n  longmemeval_m: {}\n")
+    assert cfg["datasets"]["longmemeval_m"]["stages"]["stage1"]["n_questions"] == 20
+
+
+def test_config_partial_override():
+    cfg = _resolve(
+        "datasets:\n"
+        "  dynamicmem:\n"
+        "    stages:\n"
+        "      stage1: {threshold: 0.42}\n"
+    )
+    s1 = cfg["datasets"]["dynamicmem"]["stages"]["stage1"]
+    assert s1["threshold"] == 0.42
+    assert s1["n_users"] == 2 and s1["n_task_a"] == 5, "defaults not preserved under partial override"
+
+
+def test_config_old_fields_error():
+    try:
+        _resolve("datasets:\n  dynamicmem: {eval_n_samples: 6, eval_n_qa: 20}\n")
+        assert False, "old fields must raise"
+    except ValueError as e:
+        assert "stages" in str(e), f"migration hint missing: {e}"
+
+
+def test_config_bad_threshold_error():
+    try:
+        _resolve(
+            "datasets:\n  dynamicmem:\n    stages:\n      stage1: {threshold: 1.5}\n"
+        )
+        assert False, "threshold > 1 must raise"
+    except ValueError:
+        pass
+
+
+def test_config_non_monotonic_error():
+    try:
+        _resolve(
+            "datasets:\n  dynamicmem:\n    stages:\n"
+            "      stage1: {n_users: 5}\n      stage2: {n_users: 2}\n"
+        )
+        assert False, "shrinking sizes must raise"
+    except ValueError:
+        pass
+
+
+def test_config_unknown_stage_field_error():
+    try:
+        _resolve(
+            "datasets:\n  locomo:\n    stages:\n      stage1: {n_users: 3}\n"
+        )
+        assert False, "n_users on locomo must raise (wrong family field)"
+    except ValueError:
+        pass
+
+
+def test_wire_spec_normalization():
+    from forge.orchestrator import stage_wire_spec
+    dm = stage_wire_spec("dynamicmem", {"n_users": 4, "n_checkpoints": 3, "n_task_a": 5, "n_task_c": 5, "threshold": 0.1})
+    assert dm == {"n_samples": 4, "n_checkpoints": 3, "n_task_a": 5, "n_task_c": 5}
+    lc = stage_wire_spec("locomo", {"n_conversations": 2, "n_qa": 20, "threshold": 0.3})
+    assert lc == {"n_samples": 2, "n_qa": 20}
+    lme = stage_wire_spec("longmemeval_m", {"n_questions": 50})
+    assert lme == {"n_samples": 50}
+
+
+def test_config_mode_dev_accepted():
+    cfg = _resolve("mode: dev\ndatasets:\n  dynamicmem: {}\n")
+    assert cfg["mode"] == "dev"
+    # default is search
+    cfg2 = _resolve("datasets:\n  dynamicmem: {}\n")
+    assert cfg2["mode"] == "search"
+
+
+def test_config_old_status_key_error():
+    try:
+        _resolve("status: search\ndatasets:\n  dynamicmem: {}\n")
+        assert False, "old top-level `status:` must raise a migration error"
+    except ValueError as e:
+        assert "mode" in str(e), f"migration hint missing: {e}"
+
+
+def test_stage_plan_order_and_thresholds():
+    from forge.orchestrator import stage_plan
+    cfg = _resolve("datasets:\n  dynamicmem: {}\n")
+    plan = stage_plan("dynamicmem", cfg["datasets"]["dynamicmem"])
+    names = [p[0] for p in plan]
+    assert names == ["stage1", "stage2", "stage3"]
+    # (name, wire_spec, threshold); stage3 threshold None
+    assert plan[0][2] is not None and plan[1][2] is not None and plan[2][2] is None
+
+
+# ---------------- runner ----------------
+
+def main():
+    tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
+    failed = []
+    for name, fn in tests:
+        try:
+            fn()
+            print(f"  PASS  {name}")
+        except Exception:
+            print(f"  FAIL  {name}")
+            traceback.print_exc()
+            failed.append(name)
+    print(f"\n{len(tests) - len(failed)}/{len(tests)} passed")
+    if failed:
+        print("failed:", ", ".join(failed))
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

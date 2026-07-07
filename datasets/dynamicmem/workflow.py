@@ -37,6 +37,7 @@ from datasets.dynamicmem.env import (
     load_user_checkpoints,
     observed_logs_for_checkpoint,
     sample_items,
+    sample_items_staged,
 )
 from datasets.dynamicmem import tce_prompts as tce
 
@@ -50,6 +51,14 @@ class DynamicMemWorkflow(BaseWorkflow):
     _default_qa_per_user_hint: int = 300
     judge_score_max: int = 1  # official holistic scores are 0.0-1.0 floats
 
+    def _qa_per_user_estimate(self, stage_spec: Optional[Dict]) -> int:
+        spec = stage_spec or {}
+        if "n_checkpoints" in spec:
+            return int(spec["n_checkpoints"]) * (
+                int(spec.get("n_task_a", 0)) + int(spec.get("n_task_c", 0))
+            )
+        return super()._qa_per_user_estimate(stage_spec)
+
     # ------------------------------------------------------------------
     # Main override: checkpoint-interleaved ingest + answer + judge
     # ------------------------------------------------------------------
@@ -57,21 +66,33 @@ class DynamicMemWorkflow(BaseWorkflow):
     async def run_single_user(
         self,
         user_dir: str,
-        mode: str = "eval",
+        *,
+        stage: str = "stage3",
+        stage_spec: Optional[Dict] = None,
         qa_tracker: Optional[_QAProgressTracker] = None,
-        check_n_qa: int = 3,
     ) -> Basic_Recorder:
         user_tag = user_dir[-15:]
         app_logs, checkpoints = load_user_checkpoints(user_dir)
+        spec = stage_spec or {}
 
-        if mode == "check":
-            # Sanity runs stay cheap: first checkpoint only (user001: 180
-            # logs ingested instead of 1455), check_n_qa items.
-            checkpoints_used = checkpoints[:1]
-            sampled = sample_items(checkpoints_used, check_n_qa, seed=user_dir)
+        if "n_checkpoints" in spec:
+            # Staged spec (forge path): first n_checkpoints checkpoints,
+            # n_task_a / n_task_c items per checkpoint (nested sampling).
+            checkpoints_used = checkpoints[: int(spec["n_checkpoints"])]
+            sampled = sample_items_staged(
+                checkpoints,
+                n_checkpoints=int(spec["n_checkpoints"]),
+                n_task_a=int(spec.get("n_task_a", 0)),
+                n_task_c=int(spec.get("n_task_c", 0)),
+                seed=user_dir,
+            )
         else:
-            checkpoints_used = checkpoints
-            sampled = sample_items(checkpoints_used, self.eval_n_qa, seed=user_dir)
+            # Legacy total-count spec (alma baseline path): n_qa items
+            # stratified across checkpoints; sanity stage = first cp only.
+            checkpoints_used = checkpoints[:1] if stage == "sanity" else checkpoints
+            sampled = sample_items(
+                checkpoints_used, spec.get("n_qa", self.eval_n_qa), seed=user_dir
+            )
 
         sampled_by_cp: Dict[str, List[Dict]] = {}
         for item in sampled:
@@ -103,9 +124,10 @@ class DynamicMemWorkflow(BaseWorkflow):
                 if qa_tracker:
                     await qa_tracker.increment()
 
-        # Memory dump AFTER all checkpoints (final memory state).
+        # Memory dump AFTER all checkpoints (final memory state); terminal
+        # stage only — sanity / stage1 / stage2 / devtest never dump.
         if (
-            mode == "eval"
+            stage == "stage3"
             and self.memory_dumps != "none"
             and self.output_run_dir is not None
         ):
