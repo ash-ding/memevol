@@ -103,21 +103,40 @@ class DynamicMemWorkflow(BaseWorkflow):
         recorder.user_id = user_tag
         await self.phase1_log_init(recorder, app_logs)
 
+        from common.memory_cache import user_key as _mc_user_key
+        ukey = _mc_user_key(user_dir)
+
         prev_end = 0
         total_ingested = 0
         t0 = time.time()
         for cp_idx, cp in enumerate(checkpoints_used, 1):
             visible = observed_logs_for_checkpoint(cp, app_logs)
-            segment = app_logs[prev_end: len(visible)]
-            prev_end = max(prev_end, len(visible))
-            if segment:
-                t1 = time.time()
-                await self._phase1_update(memo, segment)
-                total_ingested += len(segment)
-                log.info(
-                    f"[Checkpoint {cp_idx}/{len(checkpoints_used)}] User {user_tag} "
-                    f"ingested {len(segment)} logs ({total_ingested} total, {time.time() - t1:.1f}s)"
-                )
+            cp_meta = {
+                "checkpoint_id": cp["checkpoint_id"],
+                "log_end": len(visible),
+            }
+            # Cross-stage memory cache — PER-CHECKPOINT snapshots. Checkpoint
+            # isolation is a hard correctness constraint: cp_i's items must be
+            # answered with memory reflecting exactly app_logs[:log_index_i+1],
+            # and later stages still answer items at EARLY checkpoints, so the
+            # snapshot for each cp is loaded (replacing the memo) rather than
+            # reusing the final state.
+            loaded = self._cache_load(f"{ukey}__cp{cp_idx}", extra_meta=cp_meta)
+            if loaded is not None:
+                memo = loaded
+                prev_end = max(prev_end, len(visible))
+            else:
+                segment = app_logs[prev_end: len(visible)]
+                prev_end = max(prev_end, len(visible))
+                if segment:
+                    t1 = time.time()
+                    await self._phase1_update(memo, segment)
+                    total_ingested += len(segment)
+                    log.info(
+                        f"[Checkpoint {cp_idx}/{len(checkpoints_used)}] User {user_tag} "
+                        f"ingested {len(segment)} logs ({total_ingested} total, {time.time() - t1:.1f}s)"
+                    )
+                self._cache_save(memo, f"{ukey}__cp{cp_idx}", extra_meta=cp_meta)
 
             for item in sampled_by_cp.get(cp["checkpoint_id"], []):
                 await self._run_item(memo, recorder, item, visible)

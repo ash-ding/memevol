@@ -414,6 +414,42 @@ class BaseWorkflow(ABC):
             return int(n_qa)
         return self.eval_n_qa or self._default_qa_per_user_hint
 
+    # ---- Cross-stage memory cache (common/memory_cache.py) ----
+
+    def _cache_meta(self) -> Dict:
+        """Sidecar fields that must match for a cache entry to be reused —
+        different ingest config or harness code ⇒ different memory."""
+        return {
+            "model": self.model,
+            "update_type": self.update_type,
+            "n_chunks": self.n_chunks,
+            "max_logs": self.max_logs,
+            "harness_fingerprint": self.harness_fingerprint,
+        }
+
+    def _cache_load(self, key: str, extra_meta: Optional[Dict] = None):
+        if self.memory_cache_dir is None:
+            return None
+        from common import memory_cache as mc
+        expect = self._cache_meta()
+        if extra_meta:
+            expect.update(extra_meta)
+        loaded = mc.load_memo(self.memory_cache_dir, key, expect,
+                              memo_factory=self.memo_class)
+        if loaded is not None:
+            log.info(f"[memcache] hit: {key}")
+        return loaded
+
+    def _cache_save(self, memo, key: str, extra_meta: Optional[Dict] = None) -> None:
+        if self.memory_cache_dir is None:
+            return
+        from common import memory_cache as mc
+        meta = self._cache_meta()
+        if extra_meta:
+            meta.update(extra_meta)
+        if mc.save_memo(memo, self.memory_cache_dir, key, meta):
+            log.info(f"[memcache] saved: {key}")
+
     def _phase1_item_count(self, init_data) -> "int | str":
         """Return the count of "items" in Phase 1's init_data — used purely
         for the end-of-Phase-1 log message. Default: `len(init_data)` when
@@ -460,6 +496,12 @@ class BaseWorkflow(ABC):
         # Output directory — set by launch.py before run_all_users. Memory dumps
         # go to {output_run_dir}/memory_dumps/, full traces to {output_run_dir}/traces/.
         self.output_run_dir: Optional[Path] = None
+        # Cross-stage memory cache (common/memory_cache.py). Set by launch.py
+        # when the orchestrator passes a cache mount; None = caching off
+        # (baselines / sanity / dev runs). `harness_fingerprint` guards
+        # against reusing memory built by different harness code.
+        self.memory_cache_dir: Optional[Path] = None
+        self.harness_fingerprint: str = ""
         # Lazy-constructed Judge (per common.judge.Judge). Subclasses can
         # override `_make_judge` to customize prompt / score range.
         self._judge_instance = None
@@ -656,14 +698,27 @@ class BaseWorkflow(ABC):
 
         memo = self.memo_class()
 
+        # Cross-stage memory cache: Phase-1 input for this benchmark family is
+        # independent of the QA count, so the final memory built at an earlier
+        # stage is bit-for-bit reusable here.
+        from common.memory_cache import user_key as _mc_user_key
+        cache_key = f"{_mc_user_key(user_dir)}__final"
+
         t1 = time.time()
-        await self._phase1_update(memo, init_data)
-        t1_elapsed = time.time() - t1
-        item_count = self._phase1_item_count(init_data)
-        log.info(
-            f"[Phase 1] User {user_tag} update complete "
-            f"({item_count} {self._phase1_item_label}, {t1_elapsed:.1f}s)"
-        )
+        cached = self._cache_load(cache_key)
+        if cached is not None:
+            memo = cached
+            log.info(f"[Phase 1] User {user_tag} memory loaded from cache "
+                     f"({time.time() - t1:.1f}s)")
+        else:
+            await self._phase1_update(memo, init_data)
+            t1_elapsed = time.time() - t1
+            item_count = self._phase1_item_count(init_data)
+            log.info(
+                f"[Phase 1] User {user_tag} update complete "
+                f"({item_count} {self._phase1_item_label}, {t1_elapsed:.1f}s)"
+            )
+            self._cache_save(memo, cache_key)
 
         # Dump memory database for post-hoc inspection. Policy: dumps happen
         # ONLY at the terminal stage (stage3) — sanity / stage1 / stage2 /

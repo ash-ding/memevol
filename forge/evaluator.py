@@ -86,6 +86,7 @@ async def run_evaluation(
     update_type: str = "all_at_once",
     max_sample_concurrent: int = 3,
     memory_dumps: str = "full",
+    memcache_dir: Optional[Path] = None,
     gpu: bool = False,
 ) -> Path:
     """Evaluate a harness inside Singularity.
@@ -130,6 +131,12 @@ async def run_evaluation(
         "--bind", f"{PROJECT_ROOT}/forge/harness_base.py:/app/forge/harness_base.py:ro",
         "--bind", f"{harness_dir}:/harness:ro",
         "--bind", f"{out_dir}:/out:rw",
+    ]
+    if memcache_dir is not None:
+        # Cross-stage memory snapshots (RW; shared across this harness's
+        # stage execs for one dataset).
+        cmd += ["--bind", f"{memcache_dir}:/memcache:rw"]
+    cmd += [
         "--env", f"OPENAI_API_KEY={openai_key}",
         "--env", f"ANTHROPIC_API_KEY={anthropic_key}",
         "--env", "PYTHONPATH=/app",
@@ -152,6 +159,8 @@ async def run_evaluation(
         "--max-sample-concurrent", str(max_sample_concurrent),
         "--memory-dumps", memory_dumps,
     ]
+    if memcache_dir is not None:
+        cmd += ["--memcache-dir", "/memcache"]
 
     log.info(
         f"evaluator: launching {harness_dir.name} [{dataset}/{stage}] with {image_path.name} "

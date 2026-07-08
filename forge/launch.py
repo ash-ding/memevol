@@ -197,6 +197,14 @@ async def _async_main(args: argparse.Namespace) -> None:
     workflow.status = args.split
     workflow.output_run_dir = out_dir
 
+    # Cross-stage memory cache: active only for the gauntlet tiers (stage1..3);
+    # sanity/dev runs never read or write it (harness code can still change
+    # during the sanity-fix retry loop).
+    if args.memcache_dir and args.stage.startswith("stage"):
+        from common.memory_cache import harness_fingerprint
+        workflow.memory_cache_dir = Path(args.memcache_dir)
+        workflow.harness_fingerprint = harness_fingerprint(harness_dir)
+
     records, rlen = await workflow.run_all_users(
         task_list=task_list,
         stage=args.stage,
@@ -234,6 +242,9 @@ if __name__ == "__main__":
                         help='JSON stage spec, e.g. \'{"n_samples": 2, "n_qa": 20}\' '
                              '(dynamicmem: n_samples/n_checkpoints/n_task_a/n_task_c; '
                              'locomo: n_samples/n_qa; longmemeval: n_samples).')
+    parser.add_argument("--memcache-dir", default=None,
+                        help="RW dir for cross-stage memory snapshots "
+                             "(omit to disable caching)")
     parser.add_argument("--model", default="gpt-5-mini")
     parser.add_argument("--judge-model", default="gpt-5-mini")
     parser.add_argument("--update-type", default="all_at_once",

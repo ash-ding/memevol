@@ -107,6 +107,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "update_type": "all_at_once",
     "max_sample_concurrent": 3,
     "memory_dumps": "full",   # full | stats | none — post-Phase-1 memo dump policy
+    # Cross-stage memory cache: persist each user's Phase-1 memory per
+    # (harness, dataset) and reuse it at deeper gauntlet stages (nested
+    # sampling makes it bit-for-bit reusable). Stage1..3 only; sanity/dev
+    # never touch it. Disable via `memory_cache: false` or --no-memory-cache.
+    "memory_cache": True,
     "proposer": {
         # Generic propose-time controls (shared by both agents).
         "max_turns": 80,
@@ -402,6 +407,8 @@ def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
         cfg["selection"]["tau"] = args.tau
     if args.k_per_step is not None:
         cfg["propose"]["k_per_step"] = args.k_per_step
+    if args.no_memory_cache:
+        cfg["memory_cache"] = False
     if args.no_sanity:
         cfg["sanity"]["enabled"] = False
     if args.sanity_max_retries is not None:
@@ -996,6 +1003,7 @@ async def evaluate_harness(
     update_type: str,
     max_sample_concurrent: int,
     memory_dumps: str,
+    memory_cache: bool = True,
     gpu: bool = False,
 ) -> Dict[str, Dict[str, Any]]:
     """Run the STAGED evaluation gauntlet on every dataset (serial).
@@ -1024,6 +1032,12 @@ async def evaluate_harness(
         async def _run_stage(stage_name: str, spec: Dict[str, Any], dst: Path,
                              split: str) -> Optional[Exception]:
             run_dir = paths.runs_dir / f"{harness_id}_{int(time.time())}_{ds}_{stage_name}"
+            # Cross-stage memory cache: gauntlet tiers only (launch.py gates
+            # on the stage name too; sanity/dev execs never get the mount).
+            memcache_dir: Optional[Path] = None
+            if memory_cache and stage_name.startswith("stage"):
+                memcache_dir = dst_root / "memory_cache"
+                memcache_dir.mkdir(parents=True, exist_ok=True)
             crashed: Optional[Exception] = None
             try:
                 await run_evaluation(
@@ -1039,6 +1053,7 @@ async def evaluate_harness(
                     update_type=update_type,
                     max_sample_concurrent=max_sample_concurrent,
                     memory_dumps=memory_dumps,
+                    memcache_dir=memcache_dir,
                     gpu=gpu,
                 )
             except Exception as exc:
@@ -1297,6 +1312,7 @@ async def propose_eval_one(
         update_type=cfg["update_type"],
         max_sample_concurrent=cfg["max_sample_concurrent"],
         memory_dumps=cfg["memory_dumps"],
+        memory_cache=cfg.get("memory_cache", True),
         gpu=cfg["gpu"]["enabled"],
     )
     return final_id, per_ds, sanity_status, _read_parent_ids(harness_dir)
@@ -1653,6 +1669,7 @@ async def _adopt_orphan(
         update_type=cfg["update_type"],
         max_sample_concurrent=cfg["max_sample_concurrent"],
         memory_dumps=cfg["memory_dumps"],
+        memory_cache=cfg.get("memory_cache", True),
         gpu=cfg["gpu"]["enabled"],
     )
     entry = _build_adopted_entry(harness_dir, per_ds)
@@ -1841,6 +1858,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--k-per-step", type=int, default=None,
                         help="Harnesses proposed per outer-loop step (default 2)")
 
+    parser.add_argument("--no-memory-cache", action="store_true",
+                        help="Disable the cross-stage memory cache "
+                             "(harnesses rebuild Phase-1 memory at every stage)")
     parser.add_argument("--no-sanity", action="store_true",
                         help="Disable the pre-eval sanity-check stage (mode=eval only)")
     parser.add_argument("--sanity-max-retries", type=int, default=None,
