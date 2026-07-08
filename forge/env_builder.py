@@ -97,51 +97,65 @@ async def ensure_image(
         build_log_path = harness_dir / "build.log"
     build_log_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with tempfile.TemporaryDirectory() as tmp:
-        reqs_staged = Path(tmp) / "requirements.txt"
-        reqs_staged.write_text(normalized, encoding="utf-8")
-        def_path = Path(tmp) / "delta.def"
-        def_path.write_text(_delta_def(reqs_staged.name), encoding="utf-8")
+    # Build into a same-directory temp path, then os.replace() into the final
+    # content-addressed path. Consequences:
+    #   - a timed-out / failed / still-running build can NEVER be seen as a
+    #     cache hit (only complete images ever exist at the final path);
+    #   - two concurrent orchestrator runs (the documented parallel-A/B
+    #     workflow) building the same sha each write their own temp file and
+    #     the atomic replace is idempotent — last writer wins with a valid
+    #     image either way.
+    building = FORGE_IMAGES_DIR / f".{sha}.building.{os.getpid()}.sif"
 
-        env = {
-            **os.environ,
-            "PATH": f"{PROOT_BIN_DIR}:{os.environ.get('PATH', '')}",
-        }
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            reqs_staged = Path(tmp) / "requirements.txt"
+            reqs_staged.write_text(normalized, encoding="utf-8")
+            def_path = Path(tmp) / "delta.def"
+            def_path.write_text(_delta_def(reqs_staged.name), encoding="utf-8")
 
-        cmd = [
-            "singularity", "build", "--force",
-            str(cached),
-            str(def_path),
-        ]
+            env = {
+                **os.environ,
+                "PATH": f"{PROOT_BIN_DIR}:{os.environ.get('PATH', '')}",
+            }
 
-        with build_log_path.open("wb") as logf:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                cwd=tmp,
-                env=env,
-                stdout=logf,
-                stderr=asyncio.subprocess.STDOUT,
-            )
-            try:
-                rc = await asyncio.wait_for(proc.wait(), timeout=_BUILD_TIMEOUT_S)
-            except asyncio.TimeoutError:
-                try:
-                    proc.kill()
-                except ProcessLookupError:
-                    pass
-                await proc.wait()
-                raise EnvBuildError(
-                    f"Build timeout after {_BUILD_TIMEOUT_S}s; see {build_log_path}"
+            cmd = [
+                "singularity", "build", "--force",
+                str(building),
+                str(def_path),
+            ]
+
+            with build_log_path.open("wb") as logf:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    cwd=tmp,
+                    env=env,
+                    stdout=logf,
+                    stderr=asyncio.subprocess.STDOUT,
                 )
+                try:
+                    rc = await asyncio.wait_for(proc.wait(), timeout=_BUILD_TIMEOUT_S)
+                except asyncio.TimeoutError:
+                    try:
+                        proc.kill()
+                    except ProcessLookupError:
+                        pass
+                    await proc.wait()
+                    raise EnvBuildError(
+                        f"Build timeout after {_BUILD_TIMEOUT_S}s; see {build_log_path}"
+                    )
 
-    if rc != 0 or not cached.exists():
-        # Remove partial artifact so a retry doesn't falsely hit cache
+        if rc != 0 or not building.exists():
+            raise EnvBuildError(f"Build failed (rc={rc}); see {build_log_path}")
+
+        os.replace(building, cached)
+    finally:
+        # Whatever happened, never leave a partial temp artifact behind.
         try:
-            if cached.exists():
-                cached.unlink()
+            if building.exists():
+                building.unlink()
         except OSError:
             pass
-        raise EnvBuildError(f"Build failed (rc={rc}); see {build_log_path}")
 
     log.info(
         f"env_builder: built {cached.name} ({cached.stat().st_size / 1e6:.0f} MB)"

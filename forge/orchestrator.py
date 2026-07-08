@@ -823,8 +823,27 @@ def _publish_run_artifacts(run_dir: Path, dst_dir: Path) -> None:
     Includes `subprocess.log` (container-side Phase 1/2 progress) so users
     don't have to dig into runs/<...>/ to inspect what happened inside the
     container.
+
+    dst_dir is a PERSISTENT location that may hold artifacts from a prior
+    attempt (sanity retry N-1, orphan re-eval, resumed run). Those are
+    removed FIRST — unconditionally — so that after publishing, dst_dir
+    reflects exactly what THIS execution produced. Without this, a crashed
+    attempt would inherit the previous attempt's score.json and the caller's
+    "did we get a score?" check (and sanity-error collection, and stage
+    promotion) would silently operate on stale results.
     """
     dst_dir.mkdir(parents=True, exist_ok=True)
+    for name in ("score.json", "token_usage.json", "subprocess.log"):
+        stale = dst_dir / name
+        if stale.exists():
+            try:
+                stale.unlink()
+            except OSError as exc:
+                log.warning(f"publish: could not remove stale {stale}: {exc}")
+    stale_traces = dst_dir / "traces"
+    if stale_traces.exists():
+        shutil.rmtree(stale_traces, ignore_errors=True)
+
     for name in ("score.json", "token_usage.json", "subprocess.log"):
         src = run_dir / name
         if src.exists():
@@ -1068,6 +1087,14 @@ async def evaluate_harness(
             _publish_run_artifacts(run_dir, dst)
             if not (dst / "score.json").exists():
                 _write_failure(dst, f"eval_crashed: {crashed}" if crashed else "no score.json produced")
+                if crashed is None:
+                    # Container exited without a score (rc!=0, OOM-kill, ...).
+                    # Surface it as a crash so stages.json records it and the
+                    # gauntlet stops here — a scoreless run must never be
+                    # indistinguishable from a genuine 0-score run.
+                    crashed = RuntimeError(
+                        f"container produced no score.json [{ds}/{stage_name}]"
+                    )
             return crashed
 
         if mode == "dev":
