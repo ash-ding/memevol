@@ -90,7 +90,7 @@ against the same harness, scored to `[0, 1]` then averaged):
 | Dataset | Source | Protocol | Split |
 |---|---|---|---|
 | **[DynamicMem](datasets/dynamicmem/)** | App-activity logs (~1500/user over 15 months) | Official **TCE v2 checkpoint protocol**: ingestion interleaved with tasks at 5 quarterly checkpoints; two task families (state completion + personalized service); official holistic Core+Detail judge, scores 0–1 | 6 users search / 4 test |
-| **[LoCoMo](datasets/locomo/)** | Multi-session two-person conversations (~199 QA each) | Two-phase; binary CORRECT/WRONG judge (community-standard) | 6 conv search / 4 test |
+| **[LoCoMo](datasets/locomo/)** | Multi-session two-person conversations (~154 QA each after filtering) | Two-phase; binary CORRECT/WRONG judge (community-standard); QA **categories 1–4 only** (cat-5 adversarial excluded 2026-07-08 — the data carries no gold answers for them) | 6 conv search / 4 test |
 | **[LongMemEval](datasets/longmemeval/)** | 500 questions, each with its own haystack of chat sessions (`s` ~48, `m` ~476) | Two-phase, 1 QA per question; binary yes/no judge (paper) | 300 search / 200 test (stratified by question type) |
 
 Data files are **not** in the repo (DynamicMem `user_data/<user>/{app_log_large,task_packs}.json`,

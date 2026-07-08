@@ -185,6 +185,37 @@ gpu:
   enabled: false
 
 # -----------------------------------------------------------------------------
+# Pipeline toggles
+# -----------------------------------------------------------------------------
+
+# Cross-stage memory cache: persist each user's Phase-1 memory per
+# (harness, dataset) under harnesses/<id>/<ds>/memory_cache/ and reuse it at
+# deeper gauntlet stages (stage1..3 only; sanity/dev never touch it).
+# CLI off-switch: --no-memory-cache.
+memory_cache: true
+
+# On resume, scan harnesses/ for dirs on disk that aren't in frontier.json
+# (e.g. the orchestrator was killed mid-eval), classify them, and run only
+# their missing pipeline stages. CLI off-switch: --no-adopt-orphans.
+adopt_orphans: true
+
+# Which coding-agent backend the proposer drives: "claude_code" (default;
+# `claude` CLI in stream-json mode, subscription auth) or "codex" (OpenAI
+# Codex CLI, requires OPENAI_API_KEY exported on the host).
+agent: claude_code
+
+# -----------------------------------------------------------------------------
+# Prompt template version (forge/prompts/templates/)
+# -----------------------------------------------------------------------------
+
+prompts:
+  # "latest" (or null/"") → read forge/prompts/templates/_default at startup;
+  # the resolved stem is then PINNED for the whole run (config.yaml snapshot
+  # records it). Pin an explicit stem, e.g. "20260518_2221_eba58319", to lock
+  # a run for A/B comparisons. CLI: --prompts-version <stem>.
+  version: latest
+
+# -----------------------------------------------------------------------------
 # Datasets (per-benchmark eval and sanity sizes)
 #
 # Each key under `datasets:` MUST match a workflow registered in
@@ -203,8 +234,8 @@ gpu:
 #                   also the size used by mode=dev runs). No threshold.
 #   stage1/2/3    — the promotion gauntlet. After stage1/stage2, the stage's
 #                   normalized score must be >= `threshold` to advance
-#                   (per-benchmark independent). stage3 is terminal — memory
-#                   dumps happen only there.
+#                   (per-benchmark independent). stage3 is terminal (no
+#                   threshold; its score is the benchmark's final accuracy).
 #
 # Sizes use each benchmark's NATIVE hierarchy and are PER-UNIT; sampling is
 # deterministic and NESTED (a smaller stage's task set is a strict subset of

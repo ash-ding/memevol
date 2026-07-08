@@ -29,10 +29,12 @@ In-container runtime (set by propose_in_container.py from CLI args):
   system_prompt              build_proposer_system(sanity_enabled), where
                              sanity_enabled reflects this run's actual
                              sanity-layer behavior.
-  max_turns                  caps the agent loop
+  max_turns                  soft budget only — NOT enforced (kept for
+                             backward compat; not plumbed to the agent CLI —
+                             see propose_in_container.py --max-turns help)
   timeout_s                  wall-clock cap; enforced via subprocess.wait
                              + SIGTERM/SIGKILL escalation on the singularity
-                             exec process group.
+                             exec process group. This is the hard limit.
 
 The proposer ONLY writes files (into /workspace, RW). It never executes the
 harness end-to-end — evaluation happens later in a separate Singularity
@@ -122,8 +124,9 @@ def _check_environment(agent: str = "claude_code") -> None:
         if not os.environ.get("OPENAI_API_KEY"):
             raise ProposerLaunchError(
                 "OPENAI_API_KEY env var not set on host. Required for codex "
-                "agent. Put it in the project .env (already loaded by "
-                "forge.orchestrator) or export before launching."
+                "agent. Export it before launching (the orchestrator does NOT "
+                "load .env into the host environment — only the evaluator "
+                "reads .env, for container injection)."
             )
     else:
         raise ProposerLaunchError(f"unknown agent: {agent!r}")

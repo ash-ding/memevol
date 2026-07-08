@@ -12,8 +12,10 @@ Steps:
   3. Write score.json, traces/, token_usage.json → /out.
 
 The harness_dir is bind-mounted read-only; /out is bind-mounted read-write.
-The project root is bind-mounted at /app so `datasets.dynamicmem.env` and
-`baselines.alma.*` are importable.
+Binds are SELECTIVE (v10): only common/, datasets/, forge/{__init__,launch,
+harness_base}.py are mounted under /app — the rest of forge/ (host outer
+loop) and baselines/ are deliberately NOT visible in-container. See
+forge/evaluator.py's module docstring for the authoritative bind list.
 """
 from __future__ import annotations
 
@@ -130,8 +132,9 @@ def _build_score(records: List[Any], score_max: int = 10) -> dict:
             "benchmark_overall_eval_score": overall,
             "benchmark_overall_eval_standard_deviation": se,
             # Maximum score the judge can produce — orchestrator uses this to
-            # normalize each benchmark to [0, 1] before mean (so DynamicMem 0-10
-            # and LoCoMo/LongMemEval 0-1 carry equal weight).
+            # normalize each benchmark to [0, 1] before mean. All three current
+            # benchmarks report 1 (DynamicMem TCE holistic 0.0-1.0 partial
+            # credit; LoCoMo/LongMemEval 0/1 binary).
             "score_max": int(score_max),
         },
         "per_user": per_user,
@@ -235,8 +238,8 @@ if __name__ == "__main__":
     parser.add_argument("--stage", default="stage3",
                         choices=["sanity", "stage1", "stage2", "stage3"],
                         help="Staged-evaluation tier this run belongs to. "
-                             "Controls side effects only (memory dumps happen "
-                             "at stage3); sizes come from --stage-spec.")
+                             "Gates the cross-stage memory cache (active for "
+                             "stage1..3 only); sizes come from --stage-spec.")
     parser.add_argument("--stage-spec", required=True,
                         help='JSON stage spec, e.g. \'{"n_samples": 2, "n_qa": 20}\' '
                              '(dynamicmem: n_samples/n_checkpoints/n_task_a/n_task_c; '

@@ -151,7 +151,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "k_per_step": 2,
     },
     "sanity": {
-        "enabled": True,      # run pre-eval sanity (mode=check small run) when top-level mode=eval
+        "enabled": True,      # run the pre-eval sanity gate (mode=search/test; mode=dev always skips)
         "max_retries": 2,     # on sanity failure, call propose_with_fix up to this many times
     },
     "seed": {
@@ -876,7 +876,8 @@ def _build_objectives(
     """Aggregate per-dataset metrics + harness-level attrs into a frontier objectives dict.
 
     Per-benchmark fields (one set per dataset, native scale preserved):
-      - `accuracy_<dataset>`     raw judge score (DynamicMem 0-10, LoCoMo/LongMemEval 0-1)
+      - `accuracy_<dataset>`     raw judge score (all three benchmarks 0-1:
+                                 DynamicMem TCE holistic, LoCoMo/LME binary)
       - `score_max_<dataset>`    judge's max — so consumers can normalize themselves
       - `robustness_<dataset>`   stddev of per-user reward (lower = more reliable);
                                  omitted when fewer than 2 valid users (stddev undefined)
@@ -976,7 +977,7 @@ async def sanity_check_harness(
     max_sample_concurrent: int,
     gpu: bool = False,
 ) -> Tuple[bool, str]:
-    """Run a small mode=check evaluation on every dataset. Never dumps memory.
+    """Run a sanity_check-sized evaluation on every dataset (wire: --stage sanity).
 
     Returns (passed, error_trace). Artifacts go to `<harness>/<dataset>/sanity/`.
     """
@@ -1248,7 +1249,8 @@ async def propose_eval_one(
     # harness anymore — that used to live in `forge.contract.validate` but
     # required host venv to mirror the container's package list (issue #6).
     # Now: validation happens naturally inside the container at sanity time
-    # (or at evaluate time in mode=check) via launch.py::_load_harness_class.
+    # (or at the first gauntlet stage when sanity is disabled) via
+    # launch.py::_load_harness_class.
     try:
         image_path = await ensure_image(harness_dir)
     except EnvBuildError as exc:
@@ -1889,7 +1891,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         help="Disable the cross-stage memory cache "
                              "(harnesses rebuild Phase-1 memory at every stage)")
     parser.add_argument("--no-sanity", action="store_true",
-                        help="Disable the pre-eval sanity-check stage (mode=eval only)")
+                        help="Disable the pre-eval sanity gate (mode=search/test; dev always skips it)")
     parser.add_argument("--sanity-max-retries", type=int, default=None,
                         help="Max propose_with_fix retries when sanity fails (default 2)")
 

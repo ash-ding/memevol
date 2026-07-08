@@ -9,13 +9,17 @@ Launched by `forge/proposer.py` via:
             --task-file          /workspace/harnesses/<id>/.prompt_task.txt   \\
             --agent <claude_code|codex> --model <model> --timeout-s <s>
 
-Inside the Singularity sandbox we have:
-  /app                project root, RO  (forge.* + datasets.* importable)
-  /workspace          this run's workspace, RW  (cwd for the agent)
+Inside the Singularity sandbox we have (v10 SELECTIVE binds — see
+forge/proposer.py::_build_singularity_cmd for the authoritative list):
+  /app/forge/{__init__,propose_in_container,harness_base}.py   RO
+  /app/common/{__init__,harness_base,llm,logger}.py            RO
+  /app/datasets/       full pkg RO (env/workflow/prompts + raw data)
+  /workspace           this run's workspace, RW  (cwd for the agent)
   /usr/local/bin/claude         host's claude binary, RO bind (CC)
   /usr/local/share/claude/      host's claude install, RO bind (CC)
   /usr/local/bin/codex          host's codex binary, RO bind (codex)
-  /root/.claude/.credentials.json     host's OAuth creds, RW (CC fallback)
+  /root/.claude/.credentials.json     per-run COPY of the host's OAuth
+                                      creds (refreshed each propose), RW
 
 The agent's filesystem-readable surface is exactly the binds above; nothing
 else from the host is visible (`--containall` strips $HOME, /tmp, etc).

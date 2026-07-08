@@ -43,5 +43,7 @@ datasets:
     stages: {}
 
 prompts:
-  version: latest                # → reads forge/prompts/templates/_default
-                                 #   currently 20260519_0534_99fc82ac
+  # Pinned (2026-07-08): this config documents a specific experiment; with
+  # `latest` a later default-bump would silently rerun it on a different
+  # prompt than the header claims.
+  version: 20260519_0534_99fc82ac

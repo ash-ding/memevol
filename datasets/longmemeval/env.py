@@ -10,12 +10,13 @@ Each sample is a single (question, answer) pair with a "haystack" of chat
 sessions to retrieve from. Forge's BaseWorkflow treats one sample as one
 "user" and the single QA as one Phase-2 step.
 
-Train/test split (deterministic, same question_ids across variants):
-  * search  — 50 question_ids, stratified by question_type
-                multi-session: 13, temporal-reasoning: 13,
-                knowledge-update: 8, single-session-user: 7,
-                single-session-assistant: 6, single-session-preference: 3
-  * test    — remaining 450 question_ids
+Train/test split (deterministic, same question_ids across variants;
+changed from 50/450 on 2026-07-07):
+  * search  — 300 question_ids, stratified by question_type
+                (multi-session 80, temporal-reasoning 80,
+                 knowledge-update 47, single-session-user 42,
+                 single-session-assistant 33, single-session-preference 18)
+  * test    — remaining 200 question_ids
 
 Judging is provided by `common.judge.Judge` (used by BaseWorkflow's default
 `judge()` method); this module no longer re-exports any judge symbol.
