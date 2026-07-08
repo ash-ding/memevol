@@ -4,7 +4,6 @@
 steps: 10
 mode: search
 max_sample_concurrent: 3
-memory_dumps: full        # full | stats | none — full dumps written per-user after Phase 1
 
 model: gpt-5-mini/low   # "/low" pins reasoning effort — cuts generation latency (timeout-storm fix)
 judge_model: gpt-5-mini

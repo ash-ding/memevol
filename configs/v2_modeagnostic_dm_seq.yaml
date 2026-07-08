@@ -13,7 +13,6 @@
 steps: 10
 mode: search
 max_sample_concurrent: 3
-memory_dumps: full
 
 model: gpt-5-mini
 judge_model: gpt-5-mini

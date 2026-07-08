@@ -85,7 +85,6 @@ async def run_evaluation(
     judge_model: str = "gpt-5-mini",
     update_type: str = "all_at_once",
     max_sample_concurrent: int = 3,
-    memory_dumps: str = "full",
     memcache_dir: Optional[Path] = None,
     gpu: bool = False,
 ) -> Path:
@@ -157,7 +156,6 @@ async def run_evaluation(
         "--judge-model", judge_model,
         "--update-type", update_type,
         "--max-sample-concurrent", str(max_sample_concurrent),
-        "--memory-dumps", memory_dumps,
     ]
     if memcache_dir is not None:
         cmd += ["--memcache-dir", "/memcache"]

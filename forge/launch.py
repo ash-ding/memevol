@@ -9,7 +9,7 @@ Steps:
   2. Run datasets.dynamicmem.workflow.DynamicMemWorkflow across task users.
      (The workflow is methodology-neutral per-user execution — two phases,
      timeouts, trace capture, token tracker — and is reused directly.)
-  3. Write score.json, traces/, memory_dumps/, token_usage.json → /out.
+  3. Write score.json, traces/, token_usage.json → /out.
 
 The harness_dir is bind-mounted read-only; /out is bind-mounted read-write.
 The project root is bind-mounted at /app so `datasets.dynamicmem.env` and
@@ -191,7 +191,6 @@ async def _async_main(args: argparse.Namespace) -> None:
         n_chunks=args.n_chunks,
         max_logs=args.max_logs,
         judge_model=args.judge_model,
-        memory_dumps=args.memory_dumps,
     )
     workflow.memo_sha = harness_dir.name
     workflow.status = args.split
@@ -252,9 +251,6 @@ if __name__ == "__main__":
     parser.add_argument("--n-chunks", type=int, default=5)
     parser.add_argument("--max-logs", type=int, default=None)
     parser.add_argument("--max-sample-concurrent", type=int, default=3)
-    parser.add_argument("--memory-dumps", default="full",
-                        choices=["full", "stats", "none"],
-                        help="After Phase 1, dump memo state: full / stats / none")
     args = parser.parse_args()
     asyncio.run(_async_main(args))
     os._exit(0)

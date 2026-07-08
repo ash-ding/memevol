@@ -29,7 +29,7 @@ from typing import Any, Dict, List, Optional, Tuple, Type
 
 import httpx
 
-from common.workflow import BaseWorkflow, _QAProgressTracker, _dump_memory, log
+from common.workflow import BaseWorkflow, _QAProgressTracker, log
 from datasets.dynamicmem.env import (
     Basic_Recorder,
     DynamicMemRecorder,
@@ -142,19 +142,6 @@ class DynamicMemWorkflow(BaseWorkflow):
                 await self._run_item(memo, recorder, item, visible)
                 if qa_tracker:
                     await qa_tracker.increment()
-
-        # Memory dump AFTER all checkpoints (final memory state); terminal
-        # stage only — sanity / stage1 / stage2 / devtest never dump.
-        if (
-            stage == "stage3"
-            and self.memory_dumps != "none"
-            and self.output_run_dir is not None
-        ):
-            _dump_memory(
-                memo, user_tag,
-                self.output_run_dir / "memory_dumps",
-                full=(self.memory_dumps == "full"),
-            )
 
         scores = [s["score"] for s in recorder.steps]
         avg = sum(scores) / len(scores) if scores else 0.0

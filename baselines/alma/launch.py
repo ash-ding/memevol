@@ -4,7 +4,7 @@ Alma subprocess entry point.
 Invoked by baselines/alma/eval_runner.py. Steps:
   1. Dynamically load the MemoStructure subclass from the staged memo file.
   2. Run DynamicMemWorkflow across all users.
-  3. Write score.json, full traces (per-user), memory dumps, and token usage
+  3. Write score.json, full traces (per-user), and token usage
      to the caller-supplied output_run_dir.
 
 No QA sampling is done here — alma's sampling.py reads the full traces
@@ -13,7 +13,6 @@ in the main process when constructing the meta-agent analysis input.
 Output layout under <output_run_dir>:
   score.json                 — overall + per_user + invalid_users
   traces/<user_id>.json      — full QA trajectory for each user
-  memory_dumps/<user_id>.json— memory state after Phase 1 (eval mode only)
   token_usage.json           — per-model token totals
 """
 
@@ -163,8 +162,8 @@ async def main(
 
     # 4. Build workflow and run. alma maps its legacy (mode, *_n_qa) knobs
     # onto the shared workflow's staged API: check → the cheap "sanity" tier
-    # (DynamicMem: first checkpoint only), eval → the terminal "stage3" tier
-    # (memory dumps enabled). The spec's n_qa drives the legacy total-count
+    # (DynamicMem: first checkpoint only), eval → the terminal "stage3" tier.
+    # The spec's n_qa drives the legacy total-count
     # sampling path in DynamicMemWorkflow.
     workflow = DynamicMemWorkflow(
         memo_class=memo_class,
@@ -212,7 +211,7 @@ async def main(
     # alive that prevent the interpreter from exiting for several minutes,
     # causing the parent's process.communicate() (with pidfd+epoll) to miss
     # the child-exit event. All on-disk artifacts (score.json, traces/,
-    # memory_dumps/, token_usage.json) have already been flushed above, so
+    # token_usage.json) have already been flushed above, so
     # abrupt termination is safe.
     os._exit(0)
 
@@ -259,7 +258,7 @@ if __name__ == "__main__":
     # Force immediate process termination. Python's normal shutdown runs
     # atexit handlers + GC, which can hang for minutes on
     # langchain_chroma / httpx background threads & connection-pool cleanup.
-    # All artifacts (score.json, traces/, memory_dumps/, token_usage.json)
+    # All artifacts (score.json, traces/, token_usage.json)
     # are already flushed to disk by this point, so bypassing graceful
     # shutdown is safe and prevents the parent from waiting on a zombie
     # that asyncio's pidfd watcher occasionally fails to observe.

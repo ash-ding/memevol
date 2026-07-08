@@ -27,7 +27,7 @@ CLI flags always override the config file when both are given. See
 `configs/smoke.yaml` and `configs/search.yaml` for the full config schema.
 
 Outputs (per-run, under workspace/<run_id>/):
-    harnesses/<int>_<hash>/<dataset>/         full-eval score + traces + memory_dumps
+    harnesses/<int>_<hash>/<dataset>/         full-eval score + traces
     harnesses/<int>_<hash>/<dataset>/sanity/  small sanity-check score + traces
     harnesses/<int>_<hash>/harness.py         the harness code itself
     harnesses/<int>_<hash>/meta.json          parent_ids, description, content_hash, created_at
@@ -106,7 +106,6 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "judge_model": "gpt-5-mini",
     "update_type": "all_at_once",
     "max_sample_concurrent": 3,
-    "memory_dumps": "full",   # full | stats | none — post-Phase-1 memo dump policy
     # Cross-stage memory cache: persist each user's Phase-1 memory per
     # (harness, dataset) and reuse it at deeper gauntlet stages (nested
     # sampling makes it bit-for-bit reusable). Stage1..3 only; sanity/dev
@@ -368,6 +367,13 @@ def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
             "(search / test / dev; the old `devtest` value is now `dev`). "
             "Update the YAML and re-run."
         )
+    if "memory_dumps" in cfg:
+        raise ValueError(
+            "`memory_dumps:` was removed (2026-07-08) — the lossy post-Phase-1 "
+            "memory dump mechanism is gone. To inspect a harness's built "
+            "memory, unpickle harnesses/<id>/<ds>/memory_cache/*.pkl instead. "
+            "Delete the field from the YAML and re-run."
+        )
     if cfg.get("mode", "search") not in ("search", "test", "dev"):
         raise ValueError(
             f"mode must be one of search / test / dev, got {cfg.get('mode')!r} "
@@ -377,7 +383,7 @@ def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
     # Top-level CLI overrides (each applied only if explicitly provided)
     for key in (
         "steps", "mode", "model", "judge_model",
-        "update_type", "max_sample_concurrent", "memory_dumps",
+        "update_type", "max_sample_concurrent",
     ):
         val = getattr(args, key, None)
         if val is not None:
@@ -822,7 +828,7 @@ def _publish_run_artifacts(run_dir: Path, dst_dir: Path) -> None:
         src = run_dir / name
         if src.exists():
             shutil.copy2(str(src), str(dst_dir / name))
-    for sub in ("traces", "memory_dumps"):
+    for sub in ("traces",):
         src_dir = run_dir / sub
         if not src_dir.exists():
             continue
@@ -973,7 +979,6 @@ async def sanity_check_harness(
                 judge_model=params.get("judge_model", judge_model),
                 update_type=update_type,
                 max_sample_concurrent=max_sample_concurrent,
-                memory_dumps="none",   # sanity never dumps (stage!=stage3 anyway)
                 gpu=gpu,
             )
         except Exception as exc:
@@ -1002,7 +1007,6 @@ async def evaluate_harness(
     judge_model: str,
     update_type: str,
     max_sample_concurrent: int,
-    memory_dumps: str,
     memory_cache: bool = True,
     gpu: bool = False,
 ) -> Dict[str, Dict[str, Any]]:
@@ -1052,7 +1056,6 @@ async def evaluate_harness(
                     judge_model=ds_judge,
                     update_type=update_type,
                     max_sample_concurrent=max_sample_concurrent,
-                    memory_dumps=memory_dumps,
                     memcache_dir=memcache_dir,
                     gpu=gpu,
                 )
@@ -1311,7 +1314,6 @@ async def propose_eval_one(
         model=cfg["model"], judge_model=cfg["judge_model"],
         update_type=cfg["update_type"],
         max_sample_concurrent=cfg["max_sample_concurrent"],
-        memory_dumps=cfg["memory_dumps"],
         memory_cache=cfg.get("memory_cache", True),
         gpu=cfg["gpu"]["enabled"],
     )
@@ -1668,7 +1670,6 @@ async def _adopt_orphan(
         model=cfg["model"], judge_model=cfg["judge_model"],
         update_type=cfg["update_type"],
         max_sample_concurrent=cfg["max_sample_concurrent"],
-        memory_dumps=cfg["memory_dumps"],
         memory_cache=cfg.get("memory_cache", True),
         gpu=cfg["gpu"]["enabled"],
     )
@@ -1840,8 +1841,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--update-type", default=None,
                         choices=["all_at_once", "chunked", "sequential"])
     parser.add_argument("--max-sample-concurrent", type=int, default=None)
-    parser.add_argument("--memory-dumps", default=None, choices=["full", "stats", "none"],
-                        help="Post-Phase-1 memo dump policy: full / stats / none")
 
     parser.add_argument("--proposer-model", default=None)
     parser.add_argument("--proposer-max-turns", type=int, default=None)

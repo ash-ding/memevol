@@ -69,14 +69,6 @@ update_type: all_at_once
 # more container memory. 3-6 is sane.
 max_sample_concurrent: 3
 
-# full | stats | none — what to write under harnesses/<id>/<dataset>/memory_dumps/
-# after Phase 1, per user. Dumps happen ONLY at stage3 (never in dev/sanity).
-#   full  — complete memo state (Chroma docs+metas, NetworkX nodes+edges, dict raw)
-#           — can be MB-scale per user for LongMemEval_m
-#   stats — sizes + 3-5 sample entries (cheap, alma's old behavior)
-#   none  — skip the dump entirely
-memory_dumps: full
-
 # -----------------------------------------------------------------------------
 # Proposer — runs OUTSIDE the eval container, in its own Singularity sandbox
 # (proposer-base.sif). Two agent backends supported:
