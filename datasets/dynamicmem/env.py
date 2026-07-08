@@ -216,7 +216,11 @@ def get_task_list(status: str, eval_n_samples: int) -> List[str]:
 
     status:
       'search' → first eval_n_samples users from the search split (users 001–006)
-      'test'   → held-out test users (users 007–010)
+      'test'   → first eval_n_samples held-out test users (users 007–010)
+
+    Both splits honour the eval_n_samples cap (a deterministic prefix, so
+    staged nesting holds on the test split too — mode=test stage sizing
+    was silently void before 2026-07-08).
     """
     all_dirs = _get_all_user_dirs()
     train_dirs = all_dirs[:TRAIN_USERS]
@@ -225,7 +229,7 @@ def get_task_list(status: str, eval_n_samples: int) -> List[str]:
     if status == "search":
         return train_dirs[:int(eval_n_samples)]
     else:  # test
-        return eval_dirs
+        return eval_dirs[:int(eval_n_samples)]
 
 
 # ---------------------------------------------------------------------------

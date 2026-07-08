@@ -130,7 +130,11 @@ def get_task_list(status: str, eval_n_samples: int) -> List[str]:
     """Return sample_id strings for the requested split.
 
     status='search' → first TRAIN_SAMPLES (6) samples, capped at eval_n_samples
-    status='test'   → last EVAL_SAMPLES (4) samples (held-out)
+    status='test'   → last EVAL_SAMPLES (4) samples (held-out), same cap
+
+    Both splits honour the eval_n_samples cap (deterministic prefix ⇒
+    staged nesting holds on the test split too — mode=test stage sizing
+    was silently void before 2026-07-08).
     """
     all_samples = _load_all()
     sample_ids = [s["sample_id"] for s in all_samples]
@@ -140,7 +144,7 @@ def get_task_list(status: str, eval_n_samples: int) -> List[str]:
 
     if status == "search":
         return train_ids[:int(eval_n_samples)]
-    return eval_ids
+    return eval_ids[:int(eval_n_samples)]
 
 
 def _find_sample(sample_id: str) -> Dict:

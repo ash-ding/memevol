@@ -97,6 +97,30 @@ def test_locomo_qa_nesting():
     assert q(qa20) == q(qa20b)
 
 
+def test_test_split_honours_sample_cap():
+    """Audit M7: get_task_list(status='test') ignored eval_n_samples for
+    dynamicmem/locomo, so mode=test stage sizing silently ran the full
+    held-out split at every gauntlet tier."""
+    from datasets.locomo.env import get_task_list as locomo_tasks
+    assert len(locomo_tasks("test", 1)) == 1
+    assert len(locomo_tasks("test", 2)) == 2
+    assert locomo_tasks("test", 1) == locomo_tasks("test", 2)[:1], "prefix nesting"
+    assert len(locomo_tasks("test", 99)) == 4  # cap at available
+
+    from datasets.longmemeval.env import get_task_list as lme_tasks
+    assert len(lme_tasks("test", 5)) == 5
+
+    # dynamicmem user_data/ is gitignored — only assert when data is present
+    from datasets.dynamicmem.env import get_task_list as dm_tasks
+    try:
+        full = dm_tasks("test", 99)
+    except Exception:
+        return  # no local data; the code path is identical to locomo's
+    if full:
+        assert len(dm_tasks("test", 1)) == 1
+        assert dm_tasks("test", 1) == full[:1]
+
+
 def test_locomo_cat5_excluded():
     """Category-5 adversarial QAs (no gold answer in locomo10.json) are
     excluded at load time — full pool and sampled prefixes alike."""
