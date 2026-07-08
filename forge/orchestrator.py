@@ -1936,13 +1936,6 @@ def main() -> None:
     cfg = _resolve_config(args)
     paths.set_run_id(cfg["run_name"])
     run_log = _attach_run_log()
-    cfg_snapshot = _write_resolved_config(cfg)
-    log.info(
-        f"run config: {json.dumps(_snapshot_view(cfg), default=str)}"
-    )
-    log.info(f"workspace: {paths.workspace}")
-    log.info(f"run log: {run_log}")
-    log.info(f"config snapshot: {cfg_snapshot}")
     try:
         resolved_prompts_version = resolve_version(cfg["prompts"]["version"])
         # Load now so missing file / missing exports surface at startup, not
@@ -1955,6 +1948,21 @@ def main() -> None:
         f"prompts version: {resolved_prompts_version} "
         f"(cfg.prompts.version={cfg['prompts']['version']!r})"
     )
+    # PIN the resolved stem for the whole run (before the config snapshot,
+    # so config.yaml records it too). Without this, "latest" is re-resolved
+    # against templates/_default on EVERY propose call — running
+    # `bump_prompt.sh finalize --set-default` while a long search is in
+    # flight would silently switch prompt versions mid-run while the startup
+    # log and config.yaml snapshot still claim the old stem (breaking the
+    # A/B integrity the versioning system exists for).
+    cfg["prompts"]["version"] = resolved_prompts_version
+    cfg_snapshot = _write_resolved_config(cfg)
+    log.info(
+        f"run config: {json.dumps(_snapshot_view(cfg), default=str)}"
+    )
+    log.info(f"workspace: {paths.workspace}")
+    log.info(f"run log: {run_log}")
+    log.info(f"config snapshot: {cfg_snapshot}")
     try:
         asyncio.run(search_loop(cfg))
     except ProposerInfraError as exc:
