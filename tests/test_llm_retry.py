@@ -372,6 +372,64 @@ def test_judge_never_raises_on_exhaustion():
     assert "error" in reason.lower() or "timed" in reason.lower(), f"reason={reason!r}"
 
 
+def test_judge_strips_effort_suffix():
+    """Audit M8: 'gpt-5-mini/low' sent verbatim would 404 every judge call
+    and silently zero the whole benchmark. The suffix must be parsed like
+    Agent does, with the explicit effort reaching the payload."""
+    from common.judge import Judge
+    fake = FakeAsyncClient([_fake_response('{"reason": "ok", "score": 9}')])
+    with _Patched(fake):
+        judge = Judge(model="gpt-5-mini/high")
+        score, _ = asyncio.run(judge.score("q", "p", "r"))
+    assert score == 9
+    assert fake.calls[0]["model"] == "gpt-5-mini", fake.calls[0]["model"]
+    assert fake.calls[0]["reasoning_effort"] == "high"
+
+
+def test_judge_default_low_effort_without_suffix():
+    from common.judge import Judge
+    fake = FakeAsyncClient([_fake_response('{"reason": "ok", "score": 5}')])
+    with _Patched(fake):
+        judge = Judge(model="gpt-5-mini")
+        asyncio.run(judge.score("q", "p", "r"))
+    assert fake.calls[0]["model"] == "gpt-5-mini"
+    assert fake.calls[0]["reasoning_effort"] == "low"
+
+
+def test_judge_coerces_string_float_score():
+    """A '8.5' score string must coerce (int(float(...))) instead of falling
+    into the broad except and skipping the parse retry."""
+    from common.judge import Judge
+    fake = FakeAsyncClient([_fake_response('{"reason": "ok", "score": "8.5"}')])
+    with _Patched(fake):
+        judge = Judge(model="gpt-4.1")
+        score, reason = asyncio.run(judge.score("q", "p", "r"))
+    assert score == 8, f"score={score}, reason={reason}"
+    assert len(fake.calls) == 1
+
+
+def test_judge_non_dict_json_retries_then_min():
+    from common.judge import Judge
+    fake = FakeAsyncClient([_fake_response('["valid json", "but not a dict"]')])
+    with _Patched(fake):
+        judge = Judge(model="gpt-4.1")
+        score, reason = asyncio.run(judge.score("q", "p", "r"))
+    assert score == 0
+    assert len(fake.calls) == 2, f"expected parse retry, got {len(fake.calls)} calls"
+
+
+def test_judge_bad_template_degrades_not_raises():
+    from common.judge import Judge
+    fake = FakeAsyncClient([_fake_response('{"reason": "ok", "score": 1}')])
+    with _Patched(fake):
+        judge = Judge(model="gpt-4.1",
+                      prompt_template="Broken {placeholder} {query}")
+        score, reason = asyncio.run(judge.score("q", "p", "r"))
+    assert score == 0
+    assert "template" in reason.lower(), reason
+    assert len(fake.calls) == 0, "must fail before any API call"
+
+
 # ---------------- runner ----------------
 
 def main():

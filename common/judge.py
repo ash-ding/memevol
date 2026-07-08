@@ -28,7 +28,7 @@ import httpx
 # late-bound — monkeypatching common.llm._get_async_client (tests) or any
 # future swap of the kernel takes effect here too.
 from common import llm as _llm
-from common.llm import EmptyResponseError, _supports_reasoning
+from common.llm import EmptyResponseError, _split_model_effort, _supports_reasoning
 
 log = logging.getLogger("main")
 
@@ -57,7 +57,13 @@ Output ONLY a JSON object:
         timeout: float = 300.0,
         max_retries: int = 5,
     ):
-        self.model = model
+        # Honour the repo-wide "model/effort" suffix convention (same parsing
+        # as Agent) — "gpt-5-mini/low" must NOT be sent verbatim to the API
+        # (deterministic 404 → every judge call would silently score 0).
+        self.model, effort = _split_model_effort(model)
+        # Explicit suffix wins; otherwise judges default to low effort
+        # (scoring is a short structured task).
+        self.reasoning_effort = effort or "low"
         self.prompt_template = prompt_template or self.DEFAULT_PROMPT_TEMPLATE
         self.score_min = score_min
         self.score_max = score_max
@@ -74,9 +80,15 @@ Output ONLY a JSON object:
         retried once before giving up (a whole QA step's signal is worth one
         extra call).
         """
-        user_msg = self.prompt_template.format(
-            query=query, reference=reference, prediction=predicted
-        )
+        try:
+            user_msg = self.prompt_template.format(
+                query=query, reference=reference, prediction=predicted
+            )
+        except (KeyError, IndexError, ValueError) as exc:
+            # A template with unescaped braces must degrade like every other
+            # judge failure (this method's contract is "never raises").
+            log.warning(f"Judge prompt template failed to render: {exc!r}")
+            return self.score_min, f"Judge error: bad prompt template ({exc!r})"
 
         chat_kwargs = {
             "model": self.model,
@@ -84,7 +96,7 @@ Output ONLY a JSON object:
             "response_format": {"type": "json_object"},
         }
         if _supports_reasoning(self.model):
-            chat_kwargs["reasoning_effort"] = "low"
+            chat_kwargs["reasoning_effort"] = self.reasoning_effort
 
         client = _llm._get_async_client()
         request_timeout = httpx.Timeout(self.timeout, connect=10.0)
@@ -120,7 +132,16 @@ Output ONLY a JSON object:
                         continue
                     return self.score_min, f"Judge returned non-JSON: {raw[:200]}"
 
-                score = int(result.get("score", self.score_min))
+                try:
+                    # int(float(...)) so a "8.5"/"8" string or 8.5 float from
+                    # the judge coerces instead of falling into the broad
+                    # except below (which would skip the parse retry).
+                    score = int(float(result.get("score", self.score_min)))
+                except (TypeError, ValueError, AttributeError):
+                    if parse_attempt == 0:
+                        log.warning(f"Judge returned malformed score, retrying once: {raw[:120]}")
+                        continue
+                    return self.score_min, f"Judge returned malformed score: {raw[:200]}"
                 score = max(self.score_min, min(self.score_max, score))
                 reason = str(result.get("reason", ""))
                 return score, reason
