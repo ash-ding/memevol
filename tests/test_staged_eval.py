@@ -97,6 +97,37 @@ def test_locomo_qa_nesting():
     assert q(qa20) == q(qa20b)
 
 
+def test_selection_prefers_fully_staged():
+    """Audit M5: a lucky small-sample stage1 score must not outrank a
+    stage3 score in top-K selection / parent sampling."""
+    from forge.selection import Entry, Frontier
+
+    lucky_stage1 = Entry(id="1_aaaa", objectives={
+        "accuracy": 0.50, "accuracy_locomo": 0.50, "stage_locomo": 1.0,
+    })
+    solid_stage3 = Entry(id="2_bbbb", objectives={
+        "accuracy": 0.45, "accuracy_locomo": 0.45, "stage_locomo": 3.0,
+    })
+    f = Frontier([lucky_stage1, solid_stage3])
+    assert f.pareto_ids() == ["2_bbbb"], f.pareto_ids()
+    picks = {f.sample_parent(tau=0.5, seed=s) for s in range(20)}
+    assert picks == {"2_bbbb"}, picks
+
+    # fallback: nothing fully staged yet → compare everyone
+    f2 = Frontier([lucky_stage1])
+    assert f2.pareto_ids() == ["1_aaaa"]
+    assert f2.sample_parent(seed=0) == "1_aaaa"
+
+    # multi-dataset: one benchmark short of stage3 → not fully staged
+    partial = Entry(id="3_cccc", objectives={
+        "accuracy": 0.60,
+        "accuracy_locomo": 0.60, "stage_locomo": 3.0,
+        "accuracy_dynamicmem": 0.60, "stage_dynamicmem": 2.0,
+    })
+    f3 = Frontier([partial, solid_stage3])
+    assert f3.pareto_ids() == ["2_bbbb"], f3.pareto_ids()
+
+
 def test_test_split_honours_sample_cap():
     """Audit M7: get_task_list(status='test') ignored eval_n_samples for
     dynamicmem/locomo, so mode=test stage sizing silently ran the full

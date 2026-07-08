@@ -31,6 +31,28 @@ class Entry:
     created_at: Optional[str] = None
 
 
+# Highest gauntlet tier (stage3). `stage_<ds>` objectives record the tier a
+# benchmark reached; see forge/orchestrator.py::evaluate_harness.
+FINAL_STAGE = 3.0
+
+
+def _fully_staged(entry: Entry) -> bool:
+    """True iff every evaluated benchmark reached the final gauntlet stage.
+
+    Scores from different stages are NOT comparable (a lucky stage1 score
+    over 2 users vs a stage3 score over 6), so selection restricts to
+    fully-staged entries when any exist. Entries without per-dataset axes
+    (pre-staged-era or dev runs) count as not fully staged."""
+    ds_axes = [k for k in entry.objectives if k.startswith("accuracy_")]
+    if not ds_axes:
+        return False
+    for k in ds_axes:
+        stage_key = "stage_" + k[len("accuracy_"):]
+        if float(entry.objectives.get(stage_key, 0.0)) < FINAL_STAGE:
+            return False
+    return True
+
+
 class Frontier:
     """Population + Pareto helpers."""
 
@@ -74,18 +96,29 @@ class Frontier:
     # Frontier
     # ------------------------------------------------------------------
 
+    def _selection_pool(self) -> List[Entry]:
+        """Entries eligible for score comparison: the fully-staged subset
+        when non-empty (same-stage scores are the only comparable ones),
+        otherwise everyone (early runs where nothing finished stage3)."""
+        staged = [e for e in self._entries if _fully_staged(e)]
+        return staged or list(self._entries)
+
     def pareto_ids(self) -> List[str]:
-        """Ids on the Pareto frontier (for multi-axis) or top-1 (single axis)."""
-        if not self._entries:
+        """Ids on the Pareto frontier (for multi-axis) or top-1 (single axis).
+
+        Compares within `_selection_pool()` — an entry eliminated at stage1
+        with a lucky small-sample score must not outrank a stage3 entry."""
+        pool = self._selection_pool()
+        if not pool:
             return []
         if len(self.OBJECTIVES) == 1:
             axis = self.OBJECTIVES[0]
-            best = max(self._entries, key=lambda e: e.objectives.get(axis, 0.0))
+            best = max(pool, key=lambda e: e.objectives.get(axis, 0.0))
             return [best.id]
         frontier_ids: List[str] = []
-        for a in self._entries:
+        for a in pool:
             dominated = False
-            for b in self._entries:
+            for b in pool:
                 if a.id == b.id:
                     continue
                 ge_all = all(
@@ -118,11 +151,15 @@ class Frontier:
         score(e)  = e.objectives[primary_axis]
         prob(e)   ∝ exp(score / tau)
         Primary axis is OBJECTIVES[0].
+
+        Samples within `_selection_pool()` — restricted to fully-staged
+        entries when any exist, since cross-stage scores aren't comparable.
         """
-        if not self._entries:
+        pool = self._selection_pool()
+        if not pool:
             return None
         axis = self.OBJECTIVES[0]
-        logits = [float(e.objectives.get(axis, 0.0)) / max(1e-6, tau) for e in self._entries]
+        logits = [float(e.objectives.get(axis, 0.0)) / max(1e-6, tau) for e in pool]
         m = max(logits)
         exps = [math.exp(l - m) for l in logits]
         total = sum(exps)
@@ -130,11 +167,11 @@ class Frontier:
         rng = random.Random(seed)
         r = rng.random()
         acc = 0.0
-        for e, p in zip(self._entries, probs):
+        for e, p in zip(pool, probs):
             acc += p
             if r <= acc:
                 return e.id
-        return self._entries[-1].id
+        return pool[-1].id
 
     # ------------------------------------------------------------------
     # Persistence (with backward-compat for v3 frontier.json)
