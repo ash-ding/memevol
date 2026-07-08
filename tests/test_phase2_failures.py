@@ -147,6 +147,68 @@ def test_clean_run_leaves_failure_info_none():
     assert all(s["score"] == 1 for s in rec.steps)
 
 
+# ---------------- judge-outage abort (audit D2) ----------------
+
+class OutageJudgeWorkflow(FakeWorkflow):
+    """Every judge call fails at the transport level."""
+    async def judge(self, query, predicted, reference, qa_metadata=None):
+        return 0, "Judge error: Request timed out."
+
+
+class FlakyJudgeWorkflow(FakeWorkflow):
+    """Judge fails on every other step (50% — at the threshold, not above)."""
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self._n = 0
+
+    async def judge(self, query, predicted, reference, qa_metadata=None):
+        self._n += 1
+        if self._n % 2 == 0:
+            return 0, "Judge error: Request timed out."
+        return 1, "fake-judge: correct"
+
+
+def _run_all(wf, n_users=2, n_qa=2):
+    import common.llm as llm_mod
+
+    async def _ok(self, *a, **kw):
+        return "answer"
+
+    orig = llm_mod.Agent.ask
+    llm_mod.Agent.ask = _ok
+    try:
+        return asyncio.run(wf.run_all_users(
+            task_list=[f"user_{i}" for i in range(n_users)],
+            stage="stage1", stage_spec={"n_qa": n_qa},
+        ))
+    finally:
+        llm_mod.Agent.ask = orig
+
+
+def test_judge_outage_aborts_eval():
+    wf = OutageJudgeWorkflow(GoodMemo)
+    try:
+        _run_all(wf)
+        assert False, "majority judge transport failure must abort the eval"
+    except RuntimeError as exc:
+        assert "judge outage" in str(exc), exc
+
+
+def test_judge_half_failures_do_not_abort():
+    wf = FlakyJudgeWorkflow(GoodMemo)
+    results, n = _run_all(wf)
+    assert n == 2  # completes normally: 50% is not ABOVE the threshold
+
+
+def test_phase2_error_steps_dont_count_as_judge_outage():
+    """A broken harness (all retrieve errors) means the judge never ran —
+    that's a sanity-gate matter, not a judge outage."""
+    wf = FakeWorkflow(BadRetrieveMemo)
+    results, n = _run_all(wf)
+    assert n == 2
+    assert all(r.failure_info for r in results)
+
+
 # ---------------- sanity gate consumes failure_info ----------------
 
 def _write_sanity_score(harness_dir: Path, ds: str, per_user: Dict) -> None:

@@ -391,7 +391,48 @@ class BaseWorkflow(ABC):
         elapsed = time.time() - t0
         valid_count = sum(1 for r in results if not isinstance(r, Exception))
         log.info(f"Evaluation complete: {valid_count}/{len(task_list)} users succeeded in {elapsed:.1f}s")
+        self._raise_on_judge_outage(results)
         return list(results), len(results)
+
+    # Fraction of judged steps whose judge failed at transport level above
+    # which the whole eval aborts instead of publishing a fake near-0 score.
+    JUDGE_OUTAGE_FRACTION = 0.5
+
+    def _raise_on_judge_outage(self, results: List[Any]) -> None:
+        """Abort the eval when the judge itself was down for most steps.
+
+        The official DynamicMem protocol aborts on judge failure; our port
+        scores isolated judge failures 0 per item (documented deviation).
+        Without this guard, an OpenAI outage during Phase 2 produces a
+        legitimate-looking near-0 score.json that can wrongly ELIMINATE a
+        harness at a gauntlet threshold. Raising here means no score.json
+        is written — the orchestrator records an eval failure (retryable)
+        rather than a score.
+
+        Counts only steps the judge actually ran on (Phase2_* error steps
+        are harness-side, judge never invoked). Needs >= 2 judged steps so
+        a single flaky call in a 1-QA sanity run doesn't abort.
+        """
+        judged = 0
+        failed = 0
+        for r in results:
+            if isinstance(r, Exception):
+                continue
+            for s in getattr(r, "steps", []):
+                reason = str(s.get("judge_reason", ""))
+                if reason.startswith("[Phase2_"):
+                    continue
+                judged += 1
+                # "Judge error:" = common.judge.Judge transport exhaustion;
+                # "JUDGE_ERROR:" = DynamicMem TCE judge-call failure marker.
+                if reason.startswith("Judge error:") or "JUDGE_ERROR:" in reason:
+                    failed += 1
+        if judged >= 2 and failed / judged > self.JUDGE_OUTAGE_FRACTION:
+            raise RuntimeError(
+                f"judge outage: {failed}/{judged} judged steps failed at the "
+                f"transport level — aborting eval instead of publishing a "
+                f"fake near-0 score (official protocol aborts on judge failure)"
+            )
 
     # ---- Single-user execution ----
 

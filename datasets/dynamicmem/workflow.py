@@ -363,8 +363,12 @@ class DynamicMemWorkflow(BaseWorkflow):
 
         client = _llm._get_async_client()
         request_timeout = httpx.Timeout(300.0, connect=10.0)
+        # Strip the repo-wide "/effort" suffix if present (same as Agent and
+        # common.judge.Judge); the effort itself is deliberately NOT sent —
+        # the official judge config passes no reasoning_effort.
+        judge_model, _ = _llm._split_model_effort(self.judge_model)
         kwargs = {
-            "model": self.judge_model,
+            "model": judge_model,
             "messages": [{"role": "user", "content": prompt}],
         }
 
