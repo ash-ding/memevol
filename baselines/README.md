@@ -5,6 +5,16 @@ against the same benchmark set as the main method ([forge/](../forge/)),
 producing comparable metrics: per-user reward, judge-scored accuracy, and
 (for some) token / latency telemetry.
 
+**DynamicMem protocol status (since the 2026-07 TCE upgrade)**: alma runs
+the shared `DynamicMemWorkflow`, so it automatically follows the official
+TCE v2 checkpoint protocol (checkpoint-interleaved ingestion, two task
+families, official holistic 0–1 judge) — its numbers ARE comparable with
+forge. `cc` and `hipporag2` still run two-phase via the
+`load_user_data` compat shim (last checkpoint only, generic 0–10 judge) —
+temporally self-consistent but **not** the official protocol and **not**
+directly comparable with forge/alma DynamicMem numbers; full adaptation is
+deferred (see PROGRESS.md).
+
 All baselines share **`baselines/venv/`** (full ML install:
 `pip install -r baselines/requirements.txt`) and write artifacts under
 each baseline's own `logs/` and `results/` directories (gitignored).
@@ -113,8 +123,9 @@ All baselines (and forge) build on the same dataset adapters and judge:
 - **[`datasets/<bench>/env.py`](../datasets/)** — `load_user_data`,
   `get_task_list`, per-benchmark Recorder.
 - **[`common/judge.py`](../common/judge.py)** — LLM-as-judge with
-  configurable prompt template and score range. Scores from baselines
-  and forge are directly comparable when they use the same judge config.
+  configurable prompt template and score range. Scores are directly
+  comparable when methods share the same judge config (see the DynamicMem
+  protocol-status note above for the current exception).
 - **[`common/llm.py`](../common/llm.py)** — `Agent` / `Embedding`
   wrappers with automatic token tracking; baselines use these so their
   cost numbers are comparable to forge's.
