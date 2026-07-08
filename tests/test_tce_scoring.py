@@ -390,6 +390,33 @@ def test_env_compat_shim_last_checkpoint_only():
     assert len(cps) == 1
 
 
+def test_task_c_text_prompt_keeps_upstream_brace_quirk():
+    """Audit M9 (user decision: align to official): upstream's text-mode
+    Task C instructions block escapes braces for .format() but is never
+    formatted, so the OFFICIAL prompt literally shows '{{' / '}}'. Our
+    rendered text must match byte-for-byte — verbatim A/B comparability
+    wins over fixing the quirk."""
+    prompt = tce.build_task_c_prompt(
+        task_body="Please draft a message",
+        service_family="user_communication",
+        output_template=None,
+        memory_blocks=["log_00001 | note"],
+    )
+    # literal doubled braces around the JSON skeleton (the quirk)
+    assert "{{\n  \"answer\": \"<specific and complete assistant message>\"" in prompt, (
+        "text-mode Task C prompt lost the upstream literal-brace quirk"
+    )
+    assert "}}" in prompt
+    # structured mode: braces are single (that branch IS .format()ed upstream)
+    sprompt = tce.build_task_c_prompt(
+        task_body="Remind me",
+        service_family="schedule_reminder",
+        output_template={"title": "<t>"},
+        memory_blocks=["log_00001 | note"],
+    )
+    assert "{{" not in sprompt, "structured Task C prompt must render single braces"
+
+
 # ---------------- runner ----------------
 
 def main():

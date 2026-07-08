@@ -211,6 +211,13 @@ Output JSON ONLY:
             output_template=json.dumps(output_template, ensure_ascii=False, indent=2),
         )
     else:
+        # NOTE the doubled braces below are DELIBERATE and render literally:
+        # upstream's text-mode instructions block escapes braces as if it
+        # were headed for .format() but is never formatted (only the
+        # structured branch is — tce_core/prompts.py:1373-1434), so the
+        # official prompt the baselines saw literally shows "{{" / "}}".
+        # Verbatim A/B comparability wins over fixing the upstream quirk
+        # (protocol decision, 2026-07-08 audit M9).
         instructions = """[Instructions]
 - Use [Assistant Task] and the system-maintained memory of the user's trajectory in [Memory]...[/Memory] to complete the assistant task.
 - Put the completed task result in `answer`.
@@ -223,15 +230,15 @@ Output JSON ONLY:
 
 [Output format]
 Output JSON ONLY:
-{
+{{
   "answer": "<specific and complete assistant message>",
   "evidence": [
-    {
+    {{
       "app_log_id": "<app_log_id>",
       "evidence_content": "<supporting snippet from the same log>"
-    }
+    }}
   ]
-}"""
+}}"""
     return "{instructions}\n\n[Assistant Task]\n{task_body}\n[/Assistant Task]\n\n{memory_section}\n".format(
         instructions=instructions,
         task_body=task_body,
