@@ -22,6 +22,8 @@ import json
 import time
 import traceback
 from abc import ABC, abstractmethod
+from collections import Counter, defaultdict
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Type
 
@@ -29,6 +31,53 @@ from common.harness_base import Basic_Recorder, MemoStructure
 from common.logger import get_logger
 
 log = get_logger("main")
+
+
+class _MemoryEncoder(json.JSONEncoder):
+    """JSON encoder for common non-serializable types harnesses put into
+    `steps[].retrieved_memory` (sets, Counters, datetimes, numpy scalars...).
+    Used by `save_full_traces` — anything still unknown degrades to repr()."""
+
+    def default(self, obj):
+        if isinstance(obj, set):
+            return sorted(obj) if all(isinstance(x, str) for x in obj) else list(obj)
+        if isinstance(obj, (Counter, defaultdict)):
+            return dict(obj)
+        if isinstance(obj, (datetime, date)):
+            return obj.isoformat()
+        if hasattr(obj, '__float__'):
+            return float(obj)
+        if hasattr(obj, '__int__'):
+            return int(obj)
+        try:
+            return super().default(obj)
+        except TypeError:
+            return repr(obj)
+
+
+_JSON_KEY_NATIVE = (str, int, float, bool, type(None))
+
+
+def _json_safe_keys(obj):
+    """Recursively coerce dict keys that aren't JSON-native (str/int/float/bool/None)
+    to their `str(...)` form. Returns a new structure; leaves values alone.
+
+    Why this can't live in `_MemoryEncoder.default()`: Python's `json.dump`
+    enforces the dict-key type constraint BEFORE calling the encoder's
+    `default()` hook, so a custom encoder can't intercept e.g. tuple keys —
+    they must be coerced via pre-processing. Harnesses commonly use
+    tuple-keyed inverted indices (`Dict[Tuple[int, int], ...]` for
+    (year, month), (app, api), etc.) in retrieved_memory; without this,
+    every such harness's per-step retrieval record would be lost.
+    """
+    if isinstance(obj, dict):
+        return {
+            (k if isinstance(k, _JSON_KEY_NATIVE) else str(k)): _json_safe_keys(v)
+            for k, v in obj.items()
+        }
+    if isinstance(obj, (list, tuple)):
+        return [_json_safe_keys(x) for x in obj]
+    return obj
 
 
 class _QAProgressTracker:
@@ -552,7 +601,12 @@ class BaseWorkflow(ABC):
             safe = user_id.replace("/", "_").replace("\\", "_") or "unknown"
             file_path = traces_dir / f"{safe}.json"
             try:
-                with file_path.open("w", encoding="utf-8") as f:
-                    json.dump(payload, f, indent=2, ensure_ascii=False, cls=_MemoryEncoder)
+                # Serialize FIRST, write only on success — a serialization
+                # error must never leave a truncated/0-byte trace file.
+                text = json.dumps(
+                    _json_safe_keys(payload),
+                    indent=2, ensure_ascii=False, cls=_MemoryEncoder,
+                )
+                file_path.write_text(text, encoding="utf-8")
             except Exception as e:
                 log.warning(f"Failed to save trace for {user_id}: {e}")
