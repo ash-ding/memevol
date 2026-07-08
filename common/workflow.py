@@ -6,7 +6,10 @@ The base class handles (all unchanged from the prior DynamicMem_Workflow):
   - concurrency over users (semaphore) + per-user Exception capture
   - QA progress tracking (`_QAProgressTracker`)
   - Phase 1 dispatch: `all_at_once` / `chunked` / `sequential`
-  - Phase 2 QA loop with timeout + partial-preservation + failure_info
+  - Phase 2 QA loop with per-QA failure isolation (a retrieve/answer error
+    records a score=0 step with a `[Phase2_*_ERROR]` marker and continues;
+    the per-user error tally lands in `recorder.failure_info`, which the
+    orchestrator's sanity gate inspects)
   - `save_full_traces` (one JSON per user under traces/)
   - per-user isolation (fresh MemoStructure instance per user)
 
@@ -119,13 +122,13 @@ class BaseWorkflow(ABC):
     """Progress-bar hint when eval_n_qa is None (purely cosmetic)."""
 
     judge_score_max: int = 10
-    """Maximum integer score the judge can produce for this benchmark.
-    Single source of truth for the score range — `_make_judge` reads it,
-    and the host orchestrator reads it (via score.json) to normalize each
-    benchmark's accuracy to [0, 1] before averaging across benchmarks
-    (so DynamicMem 0-10 and LoCoMo 0-1 carry equal weight in the mean).
-    Override per benchmark: 10 for DynamicMem (partial credit), 1 for
-    LoCoMo / LongMemEval (binary)."""
+    """Maximum score the judge can produce for this benchmark. Single
+    source of truth for the score range — `_make_judge` reads it, and the
+    host orchestrator reads it (via score.json::score_max) to normalize
+    each benchmark's accuracy to [0, 1] before averaging across benchmarks.
+    All three current benchmarks override it to 1 (DynamicMem: official TCE
+    holistic 0.0-1.0 partial credit; LoCoMo / LongMemEval: 0/1 binary);
+    the class default of 10 only applies to the generic Judge prompt."""
 
     def _qa_per_user_estimate(self, stage_spec: Optional[Dict]) -> int:
         """Expected number of QAs per user/sample — drives the Phase-2 progress-tracker total.
@@ -345,8 +348,10 @@ class BaseWorkflow(ABC):
         """Run Phase 1 + Phase 2 for every user in task_list.
 
         `stage` is the staged-evaluation tier this run belongs to
-        (sanity / stage1 / stage2 / stage3); it controls side effects only
-        (memory dumps happen at stage3). `stage_spec` carries the
+        (sanity / stage1 / stage2 / stage3). The base implementation treats
+        it as informational (the memory cache is gated host-side by
+        launch.py: `memory_cache_dir` is only set for stage1..3); DynamicMem's
+        legacy alma branch also dispatches on it. `stage_spec` carries the
         benchmark-native size fields (e.g. n_qa, n_checkpoints, ...).
 
         task_list is expected to be pre-capped by the caller (a deterministic
@@ -440,6 +445,15 @@ class BaseWorkflow(ABC):
         # in common/llm.py are the single source of truth.
         agent = Agent(system_prompt="", model=self.model)
 
+        # Phase-2 error tally → recorder.failure_info. The sanity gate
+        # (forge/orchestrator.py::_collect_sanity_errors) fails a harness
+        # whose per_user entries carry a non-empty failure_info, so a
+        # broken general_retrieve is caught at sanity size instead of
+        # silently burning a full stage1 eval on all-zero steps.
+        n_retrieve_err = 0
+        n_answer_err = 0
+        first_err = ""
+
         for qa in qa_pairs:
             retrieve_recorder = self.recorder_class()
             retrieve_recorder.init = self.build_query_recorder_init(init_data, qa)
@@ -451,6 +465,8 @@ class BaseWorkflow(ABC):
                 # to the next QA — a single bad query must not silently
                 # truncate the rest of the user's QA loop (which would
                 # under-report the harness's real capability).
+                n_retrieve_err += 1
+                first_err = first_err or f"{type(exc).__name__}: {str(exc)[:200]}"
                 log.warning(
                     f"general_retrieve failed for {user_tag} on QA "
                     f"{len(recorder.steps)+1}/{len(qa_pairs)} "
@@ -493,8 +509,31 @@ class BaseWorkflow(ABC):
                     reasoning_effort=self.reasoning_effort,
                 )
             except Exception as exc:
-                log.warning(f"Agent ask failed for {user_dir}: {exc}")
-                answer = ""
+                # QA-agent transport failure (retries already exhausted in
+                # common.llm). Mirror the retrieve-error path: record a
+                # marked score=0 step instead of judging an empty answer —
+                # otherwise an API outage is indistinguishable in traces
+                # from a genuinely wrong answer.
+                n_answer_err += 1
+                first_err = first_err or f"{type(exc).__name__}: {str(exc)[:200]}"
+                log.warning(f"Agent ask failed for {user_tag}: {exc}")
+                await self.log_qa_step(
+                    recorder=recorder,
+                    query=qa["query"],
+                    predicted="",
+                    reference=qa.get("reference", ""),
+                    score=0,
+                    judge_reason=(
+                        f"[Phase2_Answer_ERROR] {type(exc).__name__}: "
+                        f"{str(exc)[:200]}"
+                    ),
+                    qa_metadata=qa_metadata,
+                    retrieved_memory=retrieved,
+                    relevant_context=relevant_context,
+                )
+                if qa_tracker:
+                    await qa_tracker.increment()
+                continue
 
             score, judge_reason = await self.judge(
                 qa["query"], answer, qa.get("reference", ""),
@@ -515,6 +554,12 @@ class BaseWorkflow(ABC):
 
             if qa_tracker:
                 await qa_tracker.increment()
+
+        if n_retrieve_err or n_answer_err:
+            recorder.failure_info = (
+                f"phase2_errors: retrieve={n_retrieve_err}/{len(qa_pairs)} "
+                f"answer={n_answer_err}/{len(qa_pairs)}; first: {first_err}"
+            )
 
         t2_elapsed = time.time() - t2
         scores = [s["score"] for s in recorder.steps]

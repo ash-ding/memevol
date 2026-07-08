@@ -108,6 +108,7 @@ class DynamicMemWorkflow(BaseWorkflow):
 
         prev_end = 0
         total_ingested = 0
+        phase2_errs: List[Tuple[str, str]] = []   # (kind, first-error text)
         t0 = time.time()
         for cp_idx, cp in enumerate(checkpoints_used, 1):
             visible = observed_logs_for_checkpoint(cp, app_logs)
@@ -139,9 +140,20 @@ class DynamicMemWorkflow(BaseWorkflow):
                 self._cache_save(memo, f"{ukey}__cp{cp_idx}", extra_meta=cp_meta)
 
             for item in sampled_by_cp.get(cp["checkpoint_id"], []):
-                await self._run_item(memo, recorder, item, visible)
+                err = await self._run_item(memo, recorder, item, visible)
+                if err is not None:
+                    phase2_errs.append(err)
                 if qa_tracker:
                     await qa_tracker.increment()
+
+        # Phase-2 error tally → failure_info (the orchestrator's sanity gate
+        # inspects it; see BaseWorkflow.run_single_user for the same pattern).
+        if phase2_errs:
+            kinds = {k: sum(1 for e, _ in phase2_errs if e == k) for k in ("retrieve", "answer")}
+            recorder.failure_info = (
+                f"phase2_errors: retrieve={kinds['retrieve']}/{len(sampled)} "
+                f"answer={kinds['answer']}/{len(sampled)}; first: {phase2_errs[0][1]}"
+            )
 
         scores = [s["score"] for s in recorder.steps]
         avg = sum(scores) / len(scores) if scores else 0.0
@@ -179,7 +191,10 @@ class DynamicMemWorkflow(BaseWorkflow):
         recorder: Basic_Recorder,
         item: Dict,
         visible_logs: List[Dict],
-    ) -> None:
+    ) -> Optional[Tuple[str, str]]:
+        """Returns None on a clean run, or ("retrieve"|"answer", error text)
+        when the harness/agent leg failed — the caller tallies these into
+        recorder.failure_info for the sanity gate."""
         qa_metadata = self.build_qa_metadata(item)
         relevant_context = self.extract_relevant_context(item, visible_logs)
 
@@ -202,7 +217,7 @@ class DynamicMemWorkflow(BaseWorkflow):
                 qa_metadata=qa_metadata, retrieved_memory={},
                 relevant_context=relevant_context,
             )
-            return
+            return ("retrieve", f"{type(exc).__name__}: {str(exc)[:200]}")
 
         # 2. Answer generation (official prompt; official default answer_query
         #    behavior — pipeline.py:1147-1215).
@@ -211,10 +226,14 @@ class DynamicMemWorkflow(BaseWorkflow):
 
         from common.llm import Agent
         agent = Agent(system_prompt="", model=self.model)
+        answer_err: Optional[Tuple[str, str]] = None
         try:
             raw_answer = await agent.ask(prompt, reasoning_effort=self.reasoning_effort)
         except Exception as exc:
+            # Keep the official empty-answer semantics (parse failure → 0)
+            # but surface the transport error to the failure_info tally.
             log.warning(f"Answer agent failed for {recorder.user_id}: {exc}")
+            answer_err = ("answer", f"{type(exc).__name__}: {str(exc)[:200]}")
             raw_answer = ""
 
         # 3. Official holistic Core+Detail judging (0.0-1.0).
@@ -227,6 +246,7 @@ class DynamicMemWorkflow(BaseWorkflow):
             judge_reason=judge_reason, qa_metadata=qa_metadata,
             retrieved_memory=retrieved, relevant_context=relevant_context,
         )
+        return answer_err
 
     def _build_answer_prompt(self, item: Dict, memory_blocks: List[str]) -> str:
         if item["task_family"] == TASK_FAMILY_STATE_COMPLETION:
