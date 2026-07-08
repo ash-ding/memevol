@@ -192,8 +192,8 @@ def build_analysis_prompt(memo_info):
                         "description": "The question being analyzed (copied from the example for reference)."
                     },
                     "score": {
-                        "type": "integer",
-                        "description": "The judge score (0–10) for this QA pair."
+                        "type": "number",
+                        "description": "The judge score (0.0–1.0) for this QA pair."
                     },
                     "gap_diagnosis": {
                         "type": "string",
@@ -295,11 +295,11 @@ def build_analysis_prompt(memo_info):
         - `retrieved_memory`: the dict returned by `general_retrieve` for this question
         - `predicted`: the agent's answer
         - `reference`: the ground-truth answer
-        - `score`: integer 0–10, rated by an LLM judge with the following criteria:
-            - 0–2: Mostly or completely incorrect. Contains major factual errors, contradicts the reference, or misses almost all key points.
-            - 3–5: Partially correct but missing significant key points from the reference, or contains notable factual errors.
-            - 6–8: Covers most key points from the reference correctly. Minor omissions or inaccuracies may exist, but core information is accurate.
-            - 9–10: Fully covers all key points from the reference accurately. No factual errors or contradictions. (Extra details beyond the reference are acceptable.)
+        - `score`: float 0.0–1.0, rated by the official DynamicMem TCE holistic judge (per-field 0.8·core_correct + 0.2·detail_quality/2, averaged across the item's fields; missing fields score 0). Interpretation:
+            - 0.0–0.2: mostly or completely incorrect — core facts wrong or missing for nearly all fields.
+            - 0.3–0.7: partially correct — a subset of fields has the core fact right; details and/or the remaining fields are wrong or missing.
+            - 0.8–0.9: all (or nearly all) core facts correct, with imperfect detail quality.
+            - 1.0: fully correct on every field, core and details.
         - `judge_reason`: the LLM judge's brief explanation of why it gave that score — highlights which key points were hit or missed
         - `relevant_app_logs`: the specific app log entries that contain the ground-truth evidence for this question
 
@@ -315,7 +315,7 @@ def build_analysis_prompt(memo_info):
     An error_info entry signals a runtime crash in the generated code, not a low-quality answer. Route it to `execution_errors` in your output, NOT to `trajectory_score_assessment`. All execution errors are included (at most one per user), so if you see an error_info entry for every user the generated code is broadly broken and crash-fix is the highest priority; if only one or two users show up, the bug is user-data-specific.
 
 3. **benchmark_eval_score**
-    - Mean QA score (0–10) across all users and questions. Use this to identify structural bottlenecks.
+    - Mean QA score (0.0–1.0) across all users and questions. Use this to identify structural bottlenecks.
 
 ### Your Task:
 Analyse past suggestion examples and current QA trajectories, then produce concrete, prioritised suggestions to improve the memory structure.
@@ -370,7 +370,7 @@ Return a JSON object following this schema:
 <CURRENT QA TRAJECTORY EXAMPLES>
 {json.dumps(memo_info["examples"], indent=2, ensure_ascii=False)}
 </CURRENT QA TRAJECTORY EXAMPLES>
-<CURRENT BENCHMARK SCORE (0–10 scale, higher is better)>
+<CURRENT BENCHMARK SCORE (0.0–1.0 scale, higher is better)>
 {memo_info.get('benchmark_eval_score', {}).get('benchmark_overall_eval_score', 0.0)}
 </CURRENT BENCHMARK SCORE>
 """
@@ -540,7 +540,7 @@ and retrieves the right facts for any personalisation question.
         {memo_info.get('source_code', '')}
         </CURRENT_CODE>
 
-        Here is the score of current code (0–10 scale, higher is better):
+        Here is the score of current code (0.0–1.0 scale, higher is better):
         <REWARD>
         {memo_info.get('benchmark_eval_score', {}).get('benchmark_overall_eval_score', 0.0)}
         </REWARD>

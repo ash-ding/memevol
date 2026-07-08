@@ -217,8 +217,8 @@ class MetaAgent:
                 n_score_bins=n_score_bins,
                 samples_per_bin=samples_per_bin,
                 judge_model=judge_model,
-                check_n_samples=kargs.get('check_n_samples', 3),
-                check_n_qa=kargs.get('check_n_qa', 10),
+                check_n_samples=kargs.get('check_n_samples', 6),
+                check_n_qa=kargs.get('check_n_qa', 3),
             )
 
             self.memo_manager.update_analysis(memo_sha=new_memo_SHA, suggestion=analysis_result)

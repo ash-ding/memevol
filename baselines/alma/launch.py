@@ -233,8 +233,8 @@ if __name__ == "__main__":
     parser.add_argument("--max_sample_concurrent", type=int, default=3)
     parser.add_argument("--mode", default="eval", choices=["eval", "check"])
     parser.add_argument("--judge_model", default="gpt-5-mini")
-    parser.add_argument("--check_n_samples", type=int, default=3)
-    parser.add_argument("--check_n_qa", type=int, default=10)
+    parser.add_argument("--check_n_samples", type=int, default=6)
+    parser.add_argument("--check_n_qa", type=int, default=3)
 
     args = parser.parse_args()
     asyncio.run(main(

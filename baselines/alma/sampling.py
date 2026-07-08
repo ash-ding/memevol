@@ -34,9 +34,20 @@ from common.logger import get_logger
 log = get_logger("main")
 
 
-def _sample_steps_from_bins(steps: List[Dict[str, Any]], n_score_bins: int, samples_per_bin: int) -> List[Dict[str, Any]]:
-    """Bin steps by score and sample up to samples_per_bin from each bin."""
-    bin_width = 10.0 / n_score_bins
+def _sample_steps_from_bins(
+    steps: List[Dict[str, Any]],
+    n_score_bins: int,
+    samples_per_bin: int,
+    score_max: float = 1.0,
+) -> List[Dict[str, Any]]:
+    """Bin steps by score and sample up to samples_per_bin from each bin.
+
+    score_max defaults to 1.0 — DynamicMem scores are official TCE holistic
+    (0.0-1.0) since 2026-07-06. The old hardcoded 10.0 put every step in
+    bin 0, degenerating the low/mid/high stratification the meta-agent's
+    contrast signal depends on.
+    """
+    bin_width = float(score_max) / n_score_bins
     binned: Dict[int, List[Dict[str, Any]]] = {i: [] for i in range(n_score_bins)}
     for step in steps:
         s = step["score"]
