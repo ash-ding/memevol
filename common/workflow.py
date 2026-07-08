@@ -267,12 +267,10 @@ class BaseWorkflow(ABC):
     ) -> List[Dict]:
         """Two-message prompt (system + user) for the QA agent.
 
-        `reference` is the gold answer; most benchmarks ignore it (they shouldn't
-        leak gold to the QA agent), but LoCoMo's category-5 adversarial QAs use
-        it to construct a binary-choice prompt per the LoCoMo paper / A-mem
-        baseline (the model is shown two options including the truth and asked
-        which is correct — testing whether it hallucinates or correctly says
-        "Not mentioned in the conversation").
+        `reference` is the gold answer. No current benchmark feeds it into
+        the prompt (gold must not leak to the QA agent); the parameter is
+        kept on the hook signature for benchmarks whose official protocol
+        requires reference-derived prompt content.
 
         `qa_metadata` is the dict returned by `build_qa_metadata(qa)` for this
         step — benchmarks that need extra context (e.g. LongMemEval uses the

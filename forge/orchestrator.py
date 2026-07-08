@@ -219,8 +219,9 @@ _FAMILY_FIELDS = {
 # Initial thresholds are DELIBERATELY conservative (only clearly-broken
 # candidates get eliminated early) — calibrate against stage-score
 # distributions after the first real search run. LoCoMo/LongMemEval have a
-# non-zero no-memory floor (e.g. LoCoMo cat-5 adversarial questions are free
-# points), hence higher thresholds than DynamicMem.
+# non-zero no-memory floor (some questions are answerable from the question
+# text alone), hence higher thresholds than DynamicMem. (LoCoMo runs on
+# categories 1-4 only since 2026-07-08 — cat-5 adversarial QAs are excluded.)
 DEFAULT_STAGES: Dict[str, Dict[str, Dict[str, Any]]] = {
     "dynamicmem": {
         "sanity_check": {"n_users": 1, "n_checkpoints": 1, "n_task_a": 1, "n_task_c": 1},

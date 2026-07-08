@@ -49,8 +49,9 @@ class LoCoMoRecorder(Basic_Recorder):
     """Records one sample's conversation ingestion + QA session.
 
     init:
-      Phase 1 chunk:     {"sessions": List[(idx, date_time, turns)],
-                          "speaker_a": str, "speaker_b": str}
+      Phase 1 chunk:     {"conversation": <minimal conversation dict — only
+                          speaker_*, session_N, session_N_date_time keys;
+                          possibly a session-subset chunk>}
       Phase 2 retrieve:  {"conversation": <full conversation dict>, "query": str}
 
     steps: one entry per answered QA pair.
@@ -177,7 +178,16 @@ def load_user_data(
 
     conversation = sample["conversation"]
 
-    qa_src: List[Dict] = sample.get("qa", [])
+    # Category-5 (adversarial) QAs are EXCLUDED (2026-07-08): 444/446 of them
+    # carry no `answer` key at all (only `adversarial_answer`, the trap
+    # option), so every prior run judged them against an empty gold — scores
+    # were noise. Protocol decision: LoCoMo runs on categories 1-4 only.
+    # NOTE this changes the QA pool the shuffle-then-prefix sampler sees, so
+    # LoCoMo scores are NOT comparable with pre-2026-07-08 runs (which were
+    # contaminated anyway).
+    qa_src: List[Dict] = [
+        q for q in sample.get("qa", []) if int(q.get("category", 0)) != 5
+    ]
     qa_pairs: List[Dict] = []
     for q in qa_src:
         qa_pairs.append({

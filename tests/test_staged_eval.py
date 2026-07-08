@@ -97,6 +97,23 @@ def test_locomo_qa_nesting():
     assert q(qa20) == q(qa20b)
 
 
+def test_locomo_cat5_excluded():
+    """Category-5 adversarial QAs (no gold answer in locomo10.json) are
+    excluded at load time — full pool and sampled prefixes alike."""
+    from datasets.locomo.env import load_user_data, get_task_list
+    for conv in get_task_list("search", 6) + get_task_list("test", 4):
+        _, _, qa_all = load_user_data(conv, None)
+        cats = {qa["metadata"]["category"] for qa in qa_all}
+        assert 5 not in cats, f"{conv}: cat-5 leaked into QA pool"
+        assert qa_all, f"{conv}: QA pool empty after filtering"
+        # every remaining QA must have a non-empty gold reference
+        empty_refs = [qa["query"] for qa in qa_all if not qa["reference"].strip()]
+        assert not empty_refs, f"{conv}: {len(empty_refs)} QAs with empty gold"
+        # sampled prefix inherits the filter
+        _, _, qa20 = load_user_data(conv, 20)
+        assert all(qa["metadata"]["category"] != 5 for qa in qa20)
+
+
 # ---------------- LongMemEval: 300/200 split ----------------
 
 def test_longmemeval_split_300_200():

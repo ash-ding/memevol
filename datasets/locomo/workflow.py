@@ -140,13 +140,12 @@ class LoCoMoWorkflow(BaseWorkflow):
         self, query: str, retrieved: Dict, qa_metadata: Dict, reference: str = ""
     ) -> List[Dict]:
         # LoCoMo dispatches by qa_metadata.category (see datasets/locomo/prompts.py).
-        # cat 5 (adversarial) needs `reference` to construct the binary-choice
-        # prompt; the other categories ignore it.
+        # Only categories 1-4 occur (cat-5 adversarial QAs are filtered at
+        # load time); `reference` never reaches the QA prompt.
         return get_locomo_prompt(
             query=query,
             memory_retrived=retrieved,
             category=qa_metadata.get("category", 0),
-            reference=reference,
         )
 
     def extract_relevant_context(self, qa: Dict, init_data: Dict) -> List[Dict]:

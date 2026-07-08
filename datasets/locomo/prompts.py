@@ -41,19 +41,13 @@ First decide CORRECT or WRONG. Output ONLY a JSON object:
 
 
 # --- QA prompt (per LoCoMo question category) ------------------------------
-# LoCoMo has 5 question categories (per the original paper). The IREM_impl
-# A-mem baseline (test_advanced.py:140-181) uses 4 distinct user-message
-# variants: cat 2 (temporal/date), cat 3 (open-domain phrase), cat 5
-# (adversarial), and a default for cat 1 / 4. We follow that convention,
-# adapted to our two-message wire format (empty system + full user).
-#
-# Cat 5 is adversarial: the gold answer is empty (the question's answer is
-# "Not mentioned in the conversation"). Per LoCoMo / A-mem, the QA prompt for
-# cat 5 offers two options — the gold answer (which is "Not mentioned ...")
-# and a distractor, in random order — and asks the model to pick. This is
-# half-cheating but it's how the original benchmark is run.
-
-import random
+# LoCoMo has 5 question categories (per the original paper). We run on
+# categories 1-4 ONLY (protocol decision 2026-07-08; see env.py::load_user_data
+# — cat-5 adversarial QAs carry no gold answer in locomo10.json and were
+# judged against an empty reference). Prompt variants follow the IREM_impl
+# A-mem baseline (test_advanced.py:140-181): cat 2 (temporal/date), cat 3
+# (open-domain phrase), and a default for cat 1 / 4, adapted to our
+# two-message wire format (empty system + full user).
 
 
 _LOCOMO_USER_DEFAULT = """\
@@ -74,12 +68,6 @@ Based on the context: {context}, write an answer in the form of a short phrase f
 Question: {query} Short answer:"""
 
 
-_LOCOMO_USER_CAT5_TEMPLATE = """\
-Based on the context: {context}, answer the following question. {query}
-
-Select the correct answer: {opt_a} or {opt_b}  Short answer:"""
-
-
 def _format_context(memory_retrived: Dict) -> str:
     if not memory_retrived:
         return "(no relevant context retrieved)"
@@ -90,8 +78,6 @@ def get_locomo_prompt(
     query: str,
     memory_retrived: Dict = {},
     category: int = 0,
-    reference: str = "",
-    rng: random.Random = None,
     **kwargs,
 ):
     """Build the per-category QA prompt for the LoCoMo QA agent.
@@ -100,8 +86,8 @@ def get_locomo_prompt(
     expected wire shape, but the entire prompt lives in the user message
     per the IREM A-mem baseline).
 
-    `reference` is needed only for cat 5 (adversarial) — the model is shown
-    the gold answer alongside a distractor and asked which is correct.
+    Only categories 1-4 reach this function (cat-5 adversarial QAs are
+    filtered out at load time — see env.py::load_user_data).
     """
     context = _format_context(memory_retrived)
 
@@ -109,24 +95,6 @@ def get_locomo_prompt(
         user_message = _LOCOMO_USER_CAT2.format(context=context, query=query)
     elif category == 3:
         user_message = _LOCOMO_USER_CAT3.format(context=context, query=query)
-    elif category == 5:
-        # Adversarial: present gold + distractor in random order.
-        # Gold answer for cat 5 is typically empty / "Not mentioned"; we
-        # use a fixed canned distractor matching A-mem's design.
-        rng = rng or random.Random()
-        distractor = "Not mentioned in the conversation"
-        gold = (reference or "").strip() or distractor
-        # If gold IS the distractor (truly "not mentioned"), still produce
-        # two visually distinct options so the question makes sense.
-        if gold == distractor:
-            opt_a, opt_b = distractor, "An answer found in the conversation"
-        elif rng.random() < 0.5:
-            opt_a, opt_b = distractor, gold
-        else:
-            opt_a, opt_b = gold, distractor
-        user_message = _LOCOMO_USER_CAT5_TEMPLATE.format(
-            context=context, query=query, opt_a=opt_a, opt_b=opt_b,
-        )
     else:
         # cat 1, 4, or unknown → default phrase prompt
         user_message = _LOCOMO_USER_DEFAULT.format(context=context, query=query)
