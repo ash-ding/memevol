@@ -87,8 +87,19 @@ async def run_evaluation(
     max_sample_concurrent: int = 3,
     memcache_dir: Optional[Path] = None,
     gpu: bool = False,
+    anthropic_transport: str = "api",
+    vertex_cfg: Optional[Dict[str, Any]] = None,
 ) -> Path:
     """Evaluate a harness inside Singularity.
+
+    `anthropic_transport` / `vertex_cfg` (from cfg.llm.*) configure how any
+    claude-* model inside the container (QA agent / judge via common.llm)
+    reaches Anthropic: "api" needs nothing beyond the ANTHROPIC_API_KEY env
+    already injected below; "vertex" additionally injects
+    MEMEVOL_ANTHROPIC_TRANSPORT + the official Vertex env vars and RO-binds
+    the GCP credentials json at /gcp/credentials.json. NOTE: in-container
+    vertex requires google-auth in the image — eval-base images built before
+    2026-07-08 lack it (see containers/base_requirements_cpu.txt).
 
     Returns out_dir on success (or on score.json-observed completion); raises
     RuntimeError if the subprocess hangs past the wall-clock cap.
@@ -135,6 +146,23 @@ async def run_evaluation(
         # Cross-stage memory snapshots (RW; shared across this harness's
         # stage execs for one dataset).
         cmd += ["--bind", f"{memcache_dir}:/memcache:rw"]
+
+    # Anthropic transport for claude-* models inside the container. "api" is
+    # common.llm's default — inject nothing so the env stays minimal.
+    if anthropic_transport == "vertex":
+        vc = vertex_cfg or {}
+        # Same resolution chain as the proposer's vertex auth (explicit path →
+        # $GOOGLE_APPLICATION_CREDENTIALS → gcloud ADC default).
+        from forge.proposer import _resolve_gcp_credentials
+        gcp_creds = _resolve_gcp_credentials(vc)
+        cmd += [
+            "--bind", f"{gcp_creds}:/gcp/credentials.json:ro",
+            "--env", "MEMEVOL_ANTHROPIC_TRANSPORT=vertex",
+            "--env", f"ANTHROPIC_VERTEX_PROJECT_ID={vc.get('project_id', '')}",
+            "--env", f"CLOUD_ML_REGION={vc.get('region', '')}",
+            "--env", "GOOGLE_APPLICATION_CREDENTIALS=/gcp/credentials.json",
+        ]
+
     cmd += [
         "--env", f"OPENAI_API_KEY={openai_key}",
         "--env", f"ANTHROPIC_API_KEY={anthropic_key}",

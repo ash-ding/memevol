@@ -111,6 +111,22 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # sampling makes it bit-for-bit reusable). Stage1..3 only; sanity/dev
     # never touch it. Disable via `memory_cache: false` or --no-memory-cache.
     "memory_cache": True,
+    # How claude-* models (QA agent / retrieve agent / judge via common.llm)
+    # reach Anthropic — applies host-side AND inside the eval container.
+    # OpenAI models are unaffected. CLI override: --anthropic-transport.
+    "llm": {
+        "anthropic_transport": "api",   # api | vertex
+        # Consumed only when anthropic_transport=vertex. NOTE: in-container
+        # vertex needs google-auth in eval-base.sif (images built before
+        # 2026-07-08 lack it — rebuild from containers/eval-base.def).
+        "vertex": {
+            "project_id": "itpc-gcp-ai-eng-claude",
+            "region": "us-east5",
+            # Explicit GCP credentials json path; None → auto-detect
+            # ($GOOGLE_APPLICATION_CREDENTIALS, then gcloud ADC default).
+            "credentials": None,
+        },
+    },
     "proposer": {
         # Generic propose-time controls (shared by both agents).
         "max_turns": 80,
@@ -466,6 +482,23 @@ def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
         # benchmark gets its family's DEFAULT_STAGES (see that constant).
         ds_list = [d.strip() for d in cli_datasets.split(",") if d.strip()]
         cfg["datasets"] = {ds: {} for ds in ds_list}
+
+    # llm block: --anthropic-transport override + validation.
+    if getattr(args, "anthropic_transport", None) is not None:
+        cfg.setdefault("llm", {})["anthropic_transport"] = args.anthropic_transport
+    llm_cfg = cfg.get("llm", {}) or {}
+    transport = llm_cfg.get("anthropic_transport", "api")
+    if transport not in ("api", "vertex"):
+        raise ValueError(
+            f"llm.anthropic_transport must be 'api' or 'vertex', got {transport!r}"
+        )
+    if transport == "vertex":
+        vc = llm_cfg.get("vertex") or {}
+        if not vc.get("project_id") or not vc.get("region"):
+            raise ValueError(
+                "llm.anthropic_transport=vertex requires llm.vertex."
+                "{project_id, region} to be set."
+            )
 
     # claude_code auth-mode validation (fail at startup, not mid-run).
     cc_cfg = (cfg.get("proposer", {}) or {}).get("claude_code", {}) or {}
@@ -1023,12 +1056,14 @@ async def sanity_check_harness(
     update_type: str,
     max_sample_concurrent: int,
     gpu: bool = False,
+    llm_cfg: Optional[Dict[str, Any]] = None,
 ) -> Tuple[bool, str]:
     """Run a sanity_check-sized evaluation on every dataset (wire: --stage sanity).
 
     Returns (passed, error_trace). Artifacts go to `<harness>/<dataset>/sanity/`.
     """
     harness_dir = paths.harnesses_dir / harness_id
+    _llm_cfg = llm_cfg or {}
 
     for ds, params in datasets_config.items():
         sanity_dst = _sanity_dir(harness_dir, ds)
@@ -1048,6 +1083,8 @@ async def sanity_check_harness(
                 update_type=update_type,
                 max_sample_concurrent=max_sample_concurrent,
                 gpu=gpu,
+                anthropic_transport=_llm_cfg.get("anthropic_transport", "api"),
+                vertex_cfg=_llm_cfg.get("vertex"),
             )
         except Exception as exc:
             log.error(f"sanity crashed for {harness_id} [{ds}]: {exc}")
@@ -1077,6 +1114,7 @@ async def evaluate_harness(
     max_sample_concurrent: int,
     memory_cache: bool = True,
     gpu: bool = False,
+    llm_cfg: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Dict[str, Any]]:
     """Run the STAGED evaluation gauntlet on every dataset (serial).
 
@@ -1126,6 +1164,8 @@ async def evaluate_harness(
                     max_sample_concurrent=max_sample_concurrent,
                     memcache_dir=memcache_dir,
                     gpu=gpu,
+                    anthropic_transport=(llm_cfg or {}).get("anthropic_transport", "api"),
+                    vertex_cfg=(llm_cfg or {}).get("vertex"),
                 )
             except Exception as exc:
                 log.error(f"evaluation crashed for {harness_id} [{ds}/{stage_name}]: {exc}")
@@ -1326,6 +1366,7 @@ async def propose_eval_one(
                 update_type=cfg["update_type"],
                 max_sample_concurrent=cfg["max_sample_concurrent"],
                 gpu=cfg["gpu"]["enabled"],
+                llm_cfg=cfg.get("llm"),
             )
             if passed:
                 sanity_status = "passed" if attempt == 0 else f"passed_on_retry_{attempt}"
@@ -1399,6 +1440,7 @@ async def propose_eval_one(
         max_sample_concurrent=cfg["max_sample_concurrent"],
         memory_cache=cfg.get("memory_cache", True),
         gpu=cfg["gpu"]["enabled"],
+        llm_cfg=cfg.get("llm"),
     )
     return final_id, per_ds, sanity_status, _read_parent_ids(harness_dir)
 
@@ -1755,6 +1797,7 @@ async def _adopt_orphan(
         max_sample_concurrent=cfg["max_sample_concurrent"],
         memory_cache=cfg.get("memory_cache", True),
         gpu=cfg["gpu"]["enabled"],
+        llm_cfg=cfg.get("llm"),
     )
     entry = _build_adopted_entry(harness_dir, per_ds)
     frontier.add(entry)
@@ -1928,6 +1971,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--proposer-model", default=None)
     parser.add_argument("--proposer-max-turns", type=int, default=None)
     parser.add_argument("--proposer-timeout-s", type=int, default=None)
+    parser.add_argument("--anthropic-transport", default=None,
+                        choices=["api", "vertex"],
+                        help="How claude-* QA/judge models reach Anthropic "
+                             "(overrides llm.anthropic_transport). api = "
+                             "ANTHROPIC_API_KEY direct; vertex = Google Vertex "
+                             "via llm.vertex (GCP ADC credentials).")
     parser.add_argument("--claude-auth", default=None,
                         choices=["subscription", "api_key", "vertex"],
                         help="claude_code credential route (overrides "

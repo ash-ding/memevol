@@ -15,6 +15,14 @@ from scipy.spatial.distance import cosine
 
 from common.logger import get_logger
 
+# Guarded import: the anthropic SDK is only needed when a claude-* model is
+# requested. Environments without it (e.g. a venv predating the multi-provider
+# kernel) keep the OpenAI path fully functional.
+try:
+    import anthropic
+except ImportError:
+    anthropic = None  # type: ignore[assignment]
+
 log = get_logger("main")
 load_dotenv()
 
@@ -26,6 +34,51 @@ _REASONING_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 
 def _supports_reasoning(model: str) -> bool:
     return any(model.startswith(p) for p in _REASONING_MODEL_PREFIXES)
+
+
+# ---------------- Provider routing (OpenAI vs Anthropic) ----------------
+#
+# Model-name based: "claude-*" → anthropic, everything else → openai. The
+# anthropic TRANSPORT (direct API vs Google Vertex) is env-driven so the same
+# harness/judge code works on the host and inside the eval container:
+#   MEMEVOL_ANTHROPIC_TRANSPORT = api (default) | vertex
+#   vertex also needs ANTHROPIC_VERTEX_PROJECT_ID + CLOUD_ML_REGION (official
+#   variable names) and GCP credentials via GOOGLE_APPLICATION_CREDENTIALS /
+#   gcloud ADC — the SDK resolves those itself.
+
+def _provider_for_model(model: str) -> str:
+    return "anthropic" if (model or "").startswith("claude") else "openai"
+
+
+# Anthropic models accepting `output_config.effort` (prefix allowlist —
+# sending effort to e.g. claude-haiku-4-5 is a 400). Mirrors the
+# _supports_reasoning pattern on the OpenAI side.
+_ANTHROPIC_EFFORT_PREFIXES = (
+    "claude-opus-4-5", "claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8",
+    "claude-sonnet-4-6", "claude-sonnet-5", "claude-fable", "claude-mythos",
+)
+
+
+def _supports_anthropic_effort(model: str) -> bool:
+    return any(model.startswith(p) for p in _ANTHROPIC_EFFORT_PREFIXES)
+
+
+def _anthropic_transport() -> str:
+    transport = os.getenv("MEMEVOL_ANTHROPIC_TRANSPORT", "api").strip().lower()
+    if transport not in ("api", "vertex"):
+        raise RuntimeError(
+            f"MEMEVOL_ANTHROPIC_TRANSPORT must be 'api' or 'vertex', got {transport!r}"
+        )
+    return transport
+
+
+def _require_anthropic_sdk() -> None:
+    if anthropic is None:
+        raise RuntimeError(
+            "model routes to the Anthropic provider but the `anthropic` SDK is "
+            "not installed in this environment. Install `anthropic[vertex]` "
+            "(see requirements.txt) or use an OpenAI model."
+        )
 
 
 def _split_model_effort(model: str) -> Tuple[str, Optional[str]]:
@@ -59,7 +112,8 @@ def _split_model_effort(model: str) -> Tuple[str, Optional[str]]:
 
 DEFAULT_MAX_CONCURRENT = 48
 
-_ASYNC_CLIENTS: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, AsyncOpenAI]" = (
+# loop → {"openai": client, "anthropic": client, "anthropic_vertex": client}
+_ASYNC_CLIENTS: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, Dict[str, Any]]" = (
     weakref.WeakKeyDictionary()
 )
 _LLM_SEMAPHORES: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore]" = (
@@ -67,37 +121,89 @@ _LLM_SEMAPHORES: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.S
 )
 
 
-def _get_async_client() -> AsyncOpenAI:
-    """One shared AsyncOpenAI client per running event loop.
+def _build_anthropic_client():
+    """Construct the transport-appropriate async Anthropic client."""
+    _require_anthropic_sdk()
+    if _anthropic_transport() == "vertex":
+        project_id = os.getenv("ANTHROPIC_VERTEX_PROJECT_ID", "")
+        region = os.getenv("CLOUD_ML_REGION", "")
+        if not project_id or not region:
+            raise RuntimeError(
+                "MEMEVOL_ANTHROPIC_TRANSPORT=vertex requires "
+                "ANTHROPIC_VERTEX_PROJECT_ID and CLOUD_ML_REGION env vars "
+                "(GCP credentials resolve via GOOGLE_APPLICATION_CREDENTIALS "
+                "or gcloud ADC)."
+            )
+        try:
+            vertex_cls = anthropic.AsyncAnthropicVertex
+        except AttributeError as exc:
+            raise RuntimeError(
+                "anthropic SDK lacks the Vertex client — install the "
+                "`anthropic[vertex]` extra (pulls google-auth)."
+            ) from exc
+        return vertex_cls(
+            project_id=project_id,
+            region=region,
+            timeout=httpx.Timeout(600.0, connect=10.0),
+            max_retries=0,
+        )
+    return anthropic.AsyncAnthropic(
+        api_key=os.getenv("ANTHROPIC_API_KEY"),
+        timeout=httpx.Timeout(600.0, connect=10.0),
+        max_retries=0,
+    )
+
+
+def _get_async_client(provider: str = "openai"):
+    """One shared async client per (running event loop, provider).
 
     `max_retries=0` because retries live in `_call_with_retries` (the SDK's
     built-in retry would double-retry and ignore our backoff policy).
     Per-request timeouts are passed at call time, so one client serves
     callers with different timeout needs.
+
+    For provider="anthropic" the client class depends on the transport env
+    (MEMEVOL_ANTHROPIC_TRANSPORT); the two transports use distinct registry
+    keys so a mid-process env change can't hand back the wrong client.
     """
     loop = asyncio.get_running_loop()
-    client = _ASYNC_CLIENTS.get(loop)
+    per_loop = _ASYNC_CLIENTS.get(loop)
+    if per_loop is None:
+        per_loop = {}
+        _ASYNC_CLIENTS[loop] = per_loop
+
+    key = provider
+    if provider == "anthropic" and _anthropic_transport() == "vertex":
+        key = "anthropic_vertex"
+
+    client = per_loop.get(key)
     if client is None:
-        client = AsyncOpenAI(
-            api_key=os.getenv("OPENAI_API_KEY"),
-            timeout=httpx.Timeout(600.0, connect=10.0),
-            max_retries=0,
-        )
-        _ASYNC_CLIENTS[loop] = client
+        if provider == "openai":
+            client = AsyncOpenAI(
+                api_key=os.getenv("OPENAI_API_KEY"),
+                timeout=httpx.Timeout(600.0, connect=10.0),
+                max_retries=0,
+            )
+        elif provider == "anthropic":
+            client = _build_anthropic_client()
+        else:
+            raise ValueError(f"unknown LLM provider: {provider!r}")
+        per_loop[key] = client
     return client
 
 
 async def _close_loop_client() -> None:
-    """Close and drop the current loop's shared client (if any).
+    """Close and drop the current loop's shared clients (if any).
 
     Called by sync entry points that spin up a throwaway event loop
     (`Embedding.__call__`): the loop dies right after, so its pooled
     connections must be closed inside the loop to avoid httpx destructor
     noise ("Event loop is closed")."""
     loop = asyncio.get_running_loop()
-    client = _ASYNC_CLIENTS.pop(loop, None)
-    if client is not None:
-        await client.close()
+    per_loop = _ASYNC_CLIENTS.pop(loop, None)
+    if per_loop:
+        for client in per_loop.values():
+            await client.close()
 
 
 def _get_llm_semaphore() -> asyncio.Semaphore:
@@ -123,14 +229,33 @@ class LengthLimitError(Exception):
     deterministic, NOT retryable (reasoning tokens likely ate the budget)."""
 
 
-RETRYABLE_EXCEPTIONS = (
+class RefusalError(Exception):
+    """Anthropic safety classifiers declined the request (stop_reason=refusal)
+    — deterministic for a given prompt, NOT retryable."""
+
+
+_RETRYABLE = [
     openai.APITimeoutError,      # subclass of APIConnectionError; listed for clarity
     openai.APIConnectionError,
     openai.InternalServerError,  # any 5xx
     openai.RateLimitError,       # 429 — was previously NOT retried (instant fail)
     asyncio.TimeoutError,
     EmptyResponseError,
-)
+]
+_RATE_LIMIT_EXCEPTIONS = [openai.RateLimitError]
+if anthropic is not None:
+    # Same taxonomy as openai's SDK: connection/timeout, ≥500 (incl. 529
+    # overloaded), and 429 are transient; other 4xx classes fast-fail.
+    _RETRYABLE += [
+        anthropic.APITimeoutError,
+        anthropic.APIConnectionError,
+        anthropic.InternalServerError,
+        anthropic.RateLimitError,
+    ]
+    _RATE_LIMIT_EXCEPTIONS.append(anthropic.RateLimitError)
+
+RETRYABLE_EXCEPTIONS = tuple(_RETRYABLE)
+_RATE_LIMIT_EXCEPTIONS = tuple(_RATE_LIMIT_EXCEPTIONS)
 
 
 def _retry_after_seconds(exc: BaseException) -> Optional[float]:
@@ -155,7 +280,7 @@ def _retry_delay(
     Rate limits back off twice as hard; a server-provided Retry-After is a
     floor (never sleep less than the server asked)."""
     delay = min(cap, base_delay * (2 ** (attempt + 1)))
-    if isinstance(exc, openai.RateLimitError):
+    if isinstance(exc, _RATE_LIMIT_EXCEPTIONS):
         delay = min(cap, delay * 2)
     delay *= random.uniform(0.5, 1.5)
     retry_after = _retry_after_seconds(exc)
@@ -191,10 +316,172 @@ async def _call_with_retries(
             await asyncio.sleep(delay)
 
 
+# ---------------- Shared provider-agnostic chat call ----------------
+
+
+def _split_system_messages(messages: List[Dict]) -> Tuple[str, List[Dict]]:
+    """Split chat-format messages into (system_text, non_system_messages).
+
+    Anthropic's Messages API takes the system prompt as a separate `system`
+    parameter. Multiple system entries (possible via Agent's with_full_msg
+    escape hatch) are joined with blank lines; their relative order and the
+    order of the remaining messages are preserved.
+    """
+    system_parts: List[str] = []
+    rest: List[Dict] = []
+    for m in messages:
+        if m.get("role") == "system":
+            system_parts.append(str(m.get("content", "")))
+        else:
+            rest.append(m)
+    return "\n\n".join(p for p in system_parts if p), rest
+
+
+async def _chat_completion(
+    *,
+    model: str,
+    messages: List[Dict],
+    timeout: float,
+    max_retries: int,
+    json_mode: bool = False,
+    effort: Optional[str] = None,
+    max_tokens: Optional[int] = 16384,
+    temperature: Optional[float] = None,
+    what: str = "Agent",
+) -> Tuple[str, Dict[str, int]]:
+    """One chat call, provider-routed by model name, through the retry kernel.
+
+    Returns (text, usage) where usage is normalized to OpenAI-style keys
+    ({prompt,completion,total}_tokens [+ completion_tokens_details for
+    OpenAI reasoning models]) — feed it straight to TokenTracker.update.
+
+    Provider notes:
+      openai    — behavior identical to the pre-refactor Agent/Judge payloads
+                  (json_mode → response_format json_object; effort gated by
+                  _supports_reasoning; max_tokens → max_completion_tokens).
+      anthropic — system messages split into the `system` param; `max_tokens`
+                  is REQUIRED by the API (None falls back to 16384); effort is
+                  sent via extra_body.output_config for models on the
+                  _ANTHROPIC_EFFORT_PREFIXES allowlist (extra_body keeps
+                  compatibility with older SDKs in prebuilt images); no
+                  response_format equivalent — json_mode relies on the prompt
+                  (callers already parse-and-retry); temperature is never sent
+                  (rejected with 400 on current Claude models);
+                  stop_reason refusal → RefusalError (non-retryable),
+                  max_tokens with no text → LengthLimitError, empty text →
+                  EmptyResponseError (retryable).
+    """
+    provider = _provider_for_model(model)
+    request_timeout = httpx.Timeout(timeout, connect=10.0)
+
+    if provider == "openai":
+        kwargs: Dict[str, Any] = {"model": model, "messages": messages}
+        if json_mode:
+            kwargs["response_format"] = {"type": "json_object"}
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        if max_tokens is not None:
+            kwargs["max_completion_tokens"] = max_tokens
+        if effort and _supports_reasoning(model):
+            kwargs["reasoning_effort"] = effort
+
+        client = _get_async_client("openai")
+
+        async def _attempt():
+            resp = await client.chat.completions.create(**kwargs, timeout=request_timeout)
+            if not resp.choices:
+                raise EmptyResponseError("API returned no choices")
+            choice = resp.choices[0]
+            content = choice.message.content
+            if content is None or not content.strip():
+                if getattr(choice, "finish_reason", None) == "length":
+                    raise LengthLimitError(
+                        f"generation hit max_completion_tokens={max_tokens} "
+                        f"with no visible content (model={model}; reasoning tokens "
+                        f"likely consumed the budget) — raise max_completion_tokens "
+                        f"or lower the reasoning effort"
+                    )
+                raise EmptyResponseError("API returned empty content")
+            return resp
+
+        resp = await _call_with_retries(_attempt, what=what, max_retries=max_retries)
+        usage = getattr(resp, "usage", None)
+        usage_dict: Dict[str, int] = {}
+        if usage is not None:
+            def _get(obj, key):
+                return getattr(obj, key, 0) or 0
+            usage_dict = {
+                "prompt_tokens": _get(usage, "prompt_tokens"),
+                "completion_tokens": _get(usage, "completion_tokens"),
+                "total_tokens": _get(usage, "total_tokens"),
+            }
+            details = getattr(usage, "completion_tokens_details", None)
+            if details is not None:
+                usage_dict["completion_tokens_details"] = {
+                    "reasoning_tokens": _get(details, "reasoning_tokens"),
+                }
+        return resp.choices[0].message.content, usage_dict
+
+    # ---- anthropic (api or vertex transport, chosen at client build) ----
+    _require_anthropic_sdk()
+    system_text, chat_messages = _split_system_messages(messages)
+    a_kwargs: Dict[str, Any] = {
+        "model": model,
+        "messages": chat_messages,
+        # Required by the Messages API; mirror the OpenAI default when the
+        # caller disabled the cap.
+        "max_tokens": max_tokens if max_tokens is not None else 16384,
+    }
+    if system_text:
+        a_kwargs["system"] = system_text
+    if effort and _supports_anthropic_effort(model):
+        a_kwargs["extra_body"] = {"output_config": {"effort": effort}}
+
+    a_client = _get_async_client("anthropic")
+
+    async def _a_attempt():
+        resp = await a_client.messages.create(**a_kwargs, timeout=request_timeout)
+        stop_reason = getattr(resp, "stop_reason", None)
+        if stop_reason == "refusal":
+            raise RefusalError(
+                f"Anthropic safety classifiers declined the request "
+                f"(model={model}) — deterministic, not retried"
+            )
+        text = "".join(
+            block.text for block in (resp.content or [])
+            if getattr(block, "type", None) == "text"
+        )
+        if not text.strip():
+            if stop_reason == "max_tokens":
+                raise LengthLimitError(
+                    f"generation hit max_tokens={a_kwargs['max_tokens']} with no "
+                    f"visible text (model={model}) — raise max_tokens or lower "
+                    f"the effort"
+                )
+            raise EmptyResponseError("API returned empty content")
+        return resp, text
+
+    resp, text = await _call_with_retries(_a_attempt, what=what, max_retries=max_retries)
+    usage = getattr(resp, "usage", None)
+    usage_dict = {}
+    if usage is not None:
+        in_tok = getattr(usage, "input_tokens", 0) or 0
+        out_tok = getattr(usage, "output_tokens", 0) or 0
+        usage_dict = {
+            "prompt_tokens": in_tok,
+            "completion_tokens": out_tok,
+            "total_tokens": in_tok + out_tok,
+        }
+    return text, usage_dict
+
+
 # ---------------- Hire Agent ----------------
 class Agent:
     """
-    Asynchronous wrapper for the OpenAI Chat API.
+    Asynchronous chat wrapper, provider-routed by model name: OpenAI models
+    (gpt-*, o*) call the OpenAI API; claude-* models call Anthropic — either
+    the direct API or Google Vertex, per MEMEVOL_ANTHROPIC_TRANSPORT (see
+    module docstring on provider routing).
     Allows custom system prompt, user prompt, and optional JSON schema validation.
 
     All requests go through a per-event-loop shared client and a GLOBAL
@@ -256,49 +543,24 @@ class Agent:
         if with_full_msg:
             chat_messages = user_input
 
-        kwargs = {
-            'model': self.model,
-            'messages': chat_messages
-        }
-        if self.output_schema:
-            kwargs['response_format'] = {"type": "json_object"}
-        if temperature:
-            kwargs['temperature'] = temperature
-        if self.max_completion_tokens is not None:
-            kwargs['max_completion_tokens'] = self.max_completion_tokens
-        # Silently drop reasoning_effort when the backend model doesn't support it
-        # (gpt-4*, non-reasoning OpenAI endpoints reject the field with a 400).
-        effort = reasoning_effort or self._default_reasoning_effort
-        if effort and _supports_reasoning(self.model or ""):
-            kwargs['reasoning_effort'] = effort
-
-        client = _get_async_client()
-        request_timeout = httpx.Timeout(self.timeout, connect=10.0)
-
-        async def _attempt():
-            resp = await client.chat.completions.create(**kwargs, timeout=request_timeout)
-            if not resp.choices:
-                raise EmptyResponseError("API returned no choices")
-            choice = resp.choices[0]
-            content = choice.message.content
-            if content is None or not content.strip():
-                if getattr(choice, "finish_reason", None) == "length":
-                    raise LengthLimitError(
-                        f"generation hit max_completion_tokens={self.max_completion_tokens} "
-                        f"with no visible content (model={self.model}; reasoning tokens "
-                        f"likely consumed the budget) — raise max_completion_tokens or "
-                        f"lower the reasoning effort"
-                    )
-                raise EmptyResponseError("API returned empty content")
-            return resp
-
-        resp = await _call_with_retries(_attempt, what="Agent", max_retries=self.max_retries)
+        # `if temperature:` (not `is not None`) preserved from the pre-refactor
+        # behavior — temperature=0 was never sent. Anthropic models ignore
+        # temperature entirely (rejected by current Claude models).
+        answer, usage = await _chat_completion(
+            model=self.model,
+            messages=chat_messages,
+            timeout=self.timeout,
+            max_retries=self.max_retries,
+            json_mode=bool(self.output_schema),
+            effort=reasoning_effort or self._default_reasoning_effort,
+            max_tokens=self.max_completion_tokens,
+            temperature=temperature if temperature else None,
+            what="Agent",
+        )
 
         from common.tokens import GLOBAL_TOKEN_TRACKER
-        if GLOBAL_TOKEN_TRACKER is not None and hasattr(resp, "usage"):
-            await GLOBAL_TOKEN_TRACKER.update(model_name=self.model, usage=resp.usage)
-
-        answer = resp.choices[0].message.content
+        if GLOBAL_TOKEN_TRACKER is not None and usage:
+            await GLOBAL_TOKEN_TRACKER.update(model_name=self.model, usage=usage)
 
         self.messages.append({'role': 'assistant', 'content': answer})
 
@@ -345,6 +607,11 @@ class Embedding:
     MAX_TOKENS_PER_INPUT = 8192        # text-embedding-3-* per-input cap
 
     def __init__(self, model: str = "text-embedding-3-small", retries: int = 4, retry_delay: float = 1.0, timeout: float = 60.0):
+        if _provider_for_model(model) != "openai":
+            raise ValueError(
+                f"Embedding model {model!r}: Anthropic has no embeddings API — "
+                f"use an OpenAI embedding model (e.g. text-embedding-3-small)."
+            )
         self.model = model
         self.retries = retries
         self.retry_delay = retry_delay

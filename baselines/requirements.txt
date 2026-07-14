@@ -9,3 +9,4 @@ chromadb
 finch-clust
 networkx
 claude-code-sdk
+anthropic[vertex]

@@ -22,13 +22,11 @@ import json
 import logging
 from typing import Optional, Tuple
 
-import httpx
-
 # Module reference (not from-import) so the shared client/kernel stay
-# late-bound — monkeypatching common.llm._get_async_client (tests) or any
-# future swap of the kernel takes effect here too.
+# late-bound — monkeypatching common.llm internals (tests) or any future
+# swap of the kernel takes effect here too.
 from common import llm as _llm
-from common.llm import EmptyResponseError, _split_model_effort, _supports_reasoning
+from common.llm import _split_model_effort
 
 log = logging.getLogger("main")
 
@@ -90,40 +88,30 @@ Output ONLY a JSON object:
             log.warning(f"Judge prompt template failed to render: {exc!r}")
             return self.score_min, f"Judge error: bad prompt template ({exc!r})"
 
-        chat_kwargs = {
-            "model": self.model,
-            "messages": [{"role": "user", "content": user_msg}],
-            "response_format": {"type": "json_object"},
-        }
-        if _supports_reasoning(self.model):
-            chat_kwargs["reasoning_effort"] = self.reasoning_effort
-
-        client = _llm._get_async_client()
-        request_timeout = httpx.Timeout(self.timeout, connect=10.0)
-
-        async def _attempt():
-            resp = await client.chat.completions.create(
-                **chat_kwargs, timeout=request_timeout
-            )
-            if not resp.choices:
-                raise EmptyResponseError("Judge API returned no choices")
-
-            # Lazy-import to match Agent.ask pattern; tracker may be None.
-            from common.tokens import GLOBAL_TOKEN_TRACKER
-            if GLOBAL_TOKEN_TRACKER is not None and hasattr(resp, "usage") and resp.usage is not None:
-                try:
-                    await GLOBAL_TOKEN_TRACKER.update(model_name=self.model, usage=resp.usage)
-                except Exception as tracker_exc:
-                    log.debug(f"token tracker update failed: {tracker_exc}")
-
-            return resp
-
         try:
             for parse_attempt in range(2):  # 1 call + 1 retry on malformed JSON
-                resp = await _llm._call_with_retries(
-                    _attempt, what="Judge", max_retries=self.max_retries
+                # Provider-agnostic call (OpenAI / Anthropic API / Anthropic
+                # Vertex, routed by model name inside the kernel). json_mode
+                # maps to OpenAI's response_format; Claude models rely on the
+                # prompt's JSON demand + this parse-retry loop. Per-provider
+                # effort gating also lives in the kernel.
+                raw, usage = await _llm._chat_completion(
+                    model=self.model,
+                    messages=[{"role": "user", "content": user_msg}],
+                    timeout=self.timeout,
+                    max_retries=self.max_retries,
+                    json_mode=True,
+                    effort=self.reasoning_effort,
+                    what="Judge",
                 )
-                raw = resp.choices[0].message.content or ""
+                # Lazy-import to match Agent.ask pattern; tracker may be None.
+                from common.tokens import GLOBAL_TOKEN_TRACKER
+                if GLOBAL_TOKEN_TRACKER is not None and usage:
+                    try:
+                        await GLOBAL_TOKEN_TRACKER.update(model_name=self.model, usage=usage)
+                    except Exception as tracker_exc:
+                        log.debug(f"token tracker update failed: {tracker_exc}")
+                raw = raw or ""
                 try:
                     result = json.loads(raw)
                 except json.JSONDecodeError:

@@ -3,7 +3,11 @@
 
 # LLM APIs
 openai>=1.107
-anthropic
+# [vertex] extra pulls google-auth — required for common/llm.py's Claude-via-
+# Vertex transport (MEMEVOL_ANTHROPIC_TRANSPORT=vertex) inside the eval
+# container. Added 2026-07-08; images built before then lack google-auth
+# (API-direct transport still works there) — rebuild eval-base.sif to enable.
+anthropic[vertex]>=0.116
 claude-code-sdk>=0.0.25
 tiktoken
 

@@ -53,10 +53,28 @@ mode: search
 # (medium) effort was the main driver of historical LLM-timeout storms.
 model: gpt-5-mini/low
 
-# OpenAI model used by the LLM-as-judge that scores predicted vs reference
+# Model used by the LLM-as-judge that scores predicted vs reference
 # answers per QA. Cheaper models are usually fine; gpt-5-mini is a sensible
 # default that matches `model` for cost predictability.
 judge_model: gpt-5-mini
+
+# Both `model` and `judge_model` are provider-routed by name: gpt-*/o* call
+# the OpenAI API; claude-* call Anthropic via the transport below. `/effort`
+# suffixes work for both providers (OpenAI reasoning_effort / Anthropic
+# output_config.effort, each gated by a per-provider model allowlist).
+llm:
+  # How claude-* models reach Anthropic (host-side AND inside the eval
+  # container). CLI override: --anthropic-transport.
+  #   api    — direct Anthropic API; needs ANTHROPIC_API_KEY (env or .env)
+  #   vertex — Google Vertex AI via the block below; GCP credentials resolve
+  #            explicit `credentials:` path → $GOOGLE_APPLICATION_CREDENTIALS
+  #            → gcloud ADC default. NOTE: in-container vertex needs an
+  #            eval-base.sif built after 2026-07-08 (anthropic[vertex] extra).
+  anthropic_transport: api
+  vertex:
+    project_id: itpc-gcp-ai-eng-claude
+    region: us-east5
+    credentials: null
 
 # How Phase 1 chunks app_logs / sessions before calling general_update():
 #   all_at_once — one call with everything (default; cheapest, most context)
