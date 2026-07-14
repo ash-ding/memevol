@@ -9,6 +9,7 @@ block in dataset_info.py.
 """
 from __future__ import annotations
 
+from types import ModuleType
 from typing import Dict, List, Tuple
 
 from datasets.dynamicmem import env as dm_env
@@ -23,7 +24,7 @@ from datasets.longmemeval.workflow import LongMemEvalSWorkflow, LongMemEvalMWork
 
 # dataset → (workflow_cls, env_module, recorder_cls).
 # env_module must expose get_task_list(status, eval_n_samples).
-REGISTRY: Dict[str, Tuple] = {
+REGISTRY: Dict[str, Tuple[type, ModuleType, type]] = {
     "dynamicmem":    (DynamicMemWorkflow,   dm_env,     DynamicMemRecorder),
     "locomo":        (LoCoMoWorkflow,       locomo_env, LoCoMoRecorder),
     "longmemeval_s": (LongMemEvalSWorkflow, lme_env,    LongMemEvalRecorder),
@@ -33,7 +34,7 @@ REGISTRY: Dict[str, Tuple] = {
 DATASETS: List[str] = sorted(REGISTRY)
 
 
-def resolve(dataset: str) -> Tuple:
+def resolve(dataset: str) -> Tuple[type, ModuleType, type]:
     """Return (workflow_cls, env_module, recorder_cls) for `dataset`."""
     if dataset not in REGISTRY:
         raise ValueError(

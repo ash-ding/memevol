@@ -44,6 +44,9 @@ class MetaAgent:
         from baselines.alma.registry import resolve
         return resolve(self.dataset)[2]
 
+    def _history_ckpt_filename(self, result_dir: str, update_type: str, steps: int, timestamp: str) -> str:
+        return f"{result_dir}_{self.dataset}_{update_type}_{steps}_{timestamp}.json"
+
     def read_memo_info(
         self,
         memo_SHA: str,
@@ -354,7 +357,7 @@ class MetaAgent:
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         if not self.history_ckpt_path:
-            file_name = f"{result_dir}_dynamicmem_{update_type}_{steps}_{timestamp}.json"
+            file_name = self._history_ckpt_filename(result_dir, update_type, steps, timestamp)
         else:
             file_name = self.history_ckpt_path
 

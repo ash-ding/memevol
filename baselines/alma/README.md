@@ -43,12 +43,12 @@ baselines/alma/
 ├── sampling.py         # single-user bin sampling → analysis artifact (alma-only)
 ├── memo_archive/       # evolved memo code, one file per content SHA
 │   ├── baseline/memo_structure_no_mem.py
-│   └── dynamicmem/memo_structure_<SHA>.py
+│   └── <dataset>/memo_structure_<SHA>.py
 ├── memo_test/          # staging: eval_runner copies each memo to memo_test_<SHA>.py
 │                       # before running launch.py (per-SHA to survive concurrency)
 ├── logs/               # meta-learning checkpoints (check_*.json) + run logs
 ├── results/            # per-run eval outputs
-│   └── dynamicmem/<SHA>_<status>_<mode>/
+│   └── <dataset>/<SHA>_<status>_<mode>/
 │       ├── score.json
 │       ├── traces/<user_id>.json   # FULL trajectory (no sampling)
 │       └── token_usage.json

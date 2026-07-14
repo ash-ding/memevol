@@ -32,6 +32,12 @@ baselines/alma/logs/*
 # Generated (LLM-written) memo code is not checked in
 baselines/alma/memo_archive/dynamicmem/*
 !baselines/alma/memo_archive/dynamicmem/.gitkeep
+baselines/alma/memo_archive/locomo/*
+!baselines/alma/memo_archive/locomo/.gitkeep
+baselines/alma/memo_archive/longmemeval_s/*
+!baselines/alma/memo_archive/longmemeval_s/.gitkeep
+baselines/alma/memo_archive/longmemeval_m/*
+!baselines/alma/memo_archive/longmemeval_m/.gitkeep
 
 # Runtime staging for the eval subprocess (per-SHA to avoid concurrent-run races)
 baselines/alma/memo_test/memo_test_*.py

@@ -163,10 +163,11 @@ def test_memo_manager_archive_root_by_dataset():
     mm = Memo_Manager(dataset="locomo")
     assert mm.ARCHIVE_ROOT.name == "locomo"
     assert mm.ARCHIVE_ROOT.parent.name == "memo_archive"
-    # baseline seed stays shared across datasets
-    assert (mm.ARCHIVE_ROOT.parent / "baseline").name == "baseline"
     mm_dm = Memo_Manager()  # default
     assert mm_dm.ARCHIVE_ROOT.name == "dynamicmem"
+    # baseline seed dir is shared across datasets (same parent as any dataset archive)
+    from baselines.alma.memo_manager import Memo_Manager as _MM
+    assert _MM(dataset="locomo").ARCHIVE_ROOT.parent == _MM(dataset="dynamicmem").ARCHIVE_ROOT.parent
 
 
 def test_meta_agent_recorder_by_dataset():
@@ -310,6 +311,15 @@ def test_locomo_end_to_end_fake():
     assert captured.get("evidence_key") == "relevant_turns" == DATASET_INFO["locomo"]["evidence_key"]
     examples = [e for e in captured["artifact"]["examples"] if "error_info" not in e]
     assert examples and examples[0]["relevant_turns"] == [{"speaker": "A", "text": "hi", "turn_id": 3}]
+
+
+def test_history_ckpt_filename_includes_dataset():
+    from baselines.alma.meta_agent import MetaAgent
+    ma = MetaAgent(dataset="locomo")
+    fn = ma._history_ckpt_filename("check", "all_at_once", 10, "TS")
+    assert "locomo" in fn and fn == "check_locomo_all_at_once_10_TS.json"
+    # default preserves the historical dynamicmem filename byte-for-byte
+    assert MetaAgent()._history_ckpt_filename("check", "all_at_once", 10, "TS") == "check_dynamicmem_all_at_once_10_TS.json"
 
 
 # ---------------- runner ----------------
