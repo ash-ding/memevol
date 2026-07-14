@@ -63,6 +63,22 @@ from forge.prompts import (
     proposer_task_prompt,
 )
 
+try:
+    from dotenv import dotenv_values
+except ImportError:
+    def dotenv_values(path):  # type: ignore
+        out = {}
+        try:
+            with open(path) as f:
+                for line in f:
+                    s = line.strip()
+                    if s and not s.startswith("#") and "=" in s:
+                        k, _, v = s.partition("=")
+                        out[k.strip()] = v.strip().strip('"').strip("'")
+        except FileNotFoundError:
+            pass
+        return out
+
 log = logging.getLogger("forge.proposer")
 
 
@@ -89,14 +105,79 @@ _HOST_CODEX_BIN = _HOME / ".local" / "bin" / "codex"
 # (singularity can bind symlinks but it's cleaner to bind the resolved path).
 _HOST_CODEX_BIN_RESOLVED = _HOST_CODEX_BIN.resolve() if _HOST_CODEX_BIN.exists() else _HOST_CODEX_BIN
 
+# claude_code auth modes (cfg.proposer.claude_code.auth):
+#   subscription — `claude login` OAuth: oauth_token env injection when
+#                  ~/.claude/oauth_token exists, else credentials.json copy.
+#   api_key      — ANTHROPIC_API_KEY (host env, .env fallback) injected as
+#                  SINGULARITYENV_ANTHROPIC_API_KEY. Official auth precedence
+#                  puts ANTHROPIC_API_KEY above OAuth tokens, so a leftover
+#                  credentials.json in the scratch HOME can't win.
+#   vertex       — Google Vertex AI: CLAUDE_CODE_USE_VERTEX=1 + project/region
+#                  envs + GCP credentials json bound RO into the container.
+#                  Cloud-provider flags have the HIGHEST precedence in CC's
+#                  auth chain, so subscription leftovers are inert here too.
+CLAUDE_AUTH_MODES = ("subscription", "api_key", "vertex")
+
+# GCP Application Default Credentials — the path `gcloud auth
+# application-default login` writes to.
+_GCP_ADC_DEFAULT = _HOME / ".config" / "gcloud" / "application_default_credentials.json"
+# Container-side path the resolved GCP credentials json is bound to. Kept
+# OUTSIDE /root — that whole tree is the RW .proposer_home bind, and nesting
+# a RO file bind inside another bind is needlessly fragile.
+_VERTEX_CREDS_IN_CONTAINER = "/gcp/credentials.json"
+
 
 class ProposerLaunchError(RuntimeError):
     """Raised when the proposer subprocess cannot be launched or exits abnormally."""
 
 
-def _check_environment(agent: str = "claude_code") -> None:
+def _resolve_anthropic_api_key() -> str:
+    """ANTHROPIC_API_KEY for claude_auth=api_key: host env first, then the
+    project .env (same convention the evaluator uses for container keys).
+    Returns "" when neither source has it — caller decides how to fail."""
+    key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if key:
+        return key
+    return dotenv_values(str(PROJECT_ROOT / ".env")).get("ANTHROPIC_API_KEY", "") or ""
+
+
+def _resolve_gcp_credentials(vertex_cfg: Optional[Dict[str, Any]] = None) -> Path:
+    """Locate the GCP credentials json for claude_auth=vertex.
+
+    Precedence: explicit `vertex.credentials` config path →
+    $GOOGLE_APPLICATION_CREDENTIALS → gcloud ADC default location.
+    Raises ProposerLaunchError with setup instructions if none exists.
+    """
+    explicit = (vertex_cfg or {}).get("credentials")
+    candidates = []
+    if explicit:
+        candidates.append(Path(explicit).expanduser())
+    env_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
+    if env_path:
+        candidates.append(Path(env_path).expanduser())
+    candidates.append(_GCP_ADC_DEFAULT)
+
+    for cand in candidates:
+        if cand.is_file():
+            return cand
+    raise ProposerLaunchError(
+        "claude_auth=vertex: no GCP credentials json found. Tried: "
+        + ", ".join(str(c) for c in candidates)
+        + ". On the machine running the orchestrator, either run "
+        "`gcloud auth application-default login` (writes the ADC file), or "
+        "point GOOGLE_APPLICATION_CREDENTIALS / cfg.proposer.claude_code."
+        "vertex.credentials at a service-account or ADC json."
+    )
+
+
+def _check_environment(
+    agent: str = "claude_code",
+    *,
+    claude_auth: str = "subscription",
+    vertex_cfg: Optional[Dict[str, Any]] = None,
+) -> None:
     """Pre-flight checks. Raise with actionable messages so the user knows
-    exactly what to install or configure for the chosen agent."""
+    exactly what to install or configure for the chosen agent + auth mode."""
     if not PROPOSER_BASE_SIF.exists():
         raise ProposerLaunchError(
             f"proposer-base.sif missing at {PROPOSER_BASE_SIF}. "
@@ -105,16 +186,37 @@ def _check_environment(agent: str = "claude_code") -> None:
             f"{PROPOSER_BASE_SIF} containers/proposer-base.def"
         )
     if agent == "claude_code":
+        if claude_auth not in CLAUDE_AUTH_MODES:
+            raise ProposerLaunchError(
+                f"unknown claude_auth: {claude_auth!r}; valid: {CLAUDE_AUTH_MODES}"
+            )
         if not _HOST_CLAUDE_BIN.exists():
             raise ProposerLaunchError(
                 f"host claude CLI not found at {_HOST_CLAUDE_BIN}. "
-                f"Install Claude Code (subscription login) and ensure `which claude` resolves to it."
+                f"Install Claude Code and ensure `which claude` resolves to it."
             )
-        if not _HOST_CLAUDE_CREDS.exists():
-            raise ProposerLaunchError(
-                f"host claude credentials missing at {_HOST_CLAUDE_CREDS}. "
-                f"Run `claude login` first."
-            )
+        if claude_auth == "subscription":
+            if not _HOST_CLAUDE_CREDS.exists() and not _load_oauth_token():
+                raise ProposerLaunchError(
+                    f"claude_auth=subscription: no credentials. Run `claude login` "
+                    f"(writes {_HOST_CLAUDE_CREDS}) or `claude setup-token` "
+                    f"(write the token to {_HOST_OAUTH_TOKEN_FILE})."
+                )
+        elif claude_auth == "api_key":
+            if not _resolve_anthropic_api_key():
+                raise ProposerLaunchError(
+                    "claude_auth=api_key: ANTHROPIC_API_KEY not found. Export it "
+                    "in the host environment or add it to the project .env."
+                )
+        elif claude_auth == "vertex":
+            vc = vertex_cfg or {}
+            if not vc.get("project_id") or not vc.get("region"):
+                raise ProposerLaunchError(
+                    "claude_auth=vertex requires cfg.proposer.claude_code.vertex."
+                    "{project_id, region} to be set (e.g. project_id: "
+                    "itpc-gcp-ai-eng-claude, region: us-east5)."
+                )
+            _resolve_gcp_credentials(vc)  # raises with instructions if absent
     elif agent == "codex":
         if not _HOST_CODEX_BIN.exists():
             raise ProposerLaunchError(
@@ -132,7 +234,7 @@ def _check_environment(agent: str = "claude_code") -> None:
         raise ProposerLaunchError(f"unknown agent: {agent!r}")
 
 
-def _prepare_claude_home() -> Path:
+def _prepare_claude_home(claude_auth: str = "subscription") -> Path:
     """Stage a writable per-run HOME for the in-container coding agents.
 
     Both `claude` and `codex` are Bun/Rust-compiled binaries that appendFileSync
@@ -146,10 +248,14 @@ def _prepare_claude_home() -> Path:
     ephemeral — not synced back to the host's ~/.<agent>/, which is the
     right isolation behavior).
 
-    For claude_code:
+    For claude_code with claude_auth=subscription:
       - copies `~/.claude/.credentials.json` into `.proposer_home/.claude/`
         as a fallback (when CLAUDE_CODE_OAUTH_TOKEN env var injection is
         not used — see `_load_oauth_token`).
+      For api_key / vertex the copy is SKIPPED (and any stale copy from an
+      earlier subscription run is removed) so the scratch HOME carries no
+      second credential source — auth comes solely from the env vars
+      injected by `_agent_auth_extra_env`.
 
     For codex:
       - the codex-specific apikey auth.json is staged by
@@ -159,15 +265,22 @@ def _prepare_claude_home() -> Path:
     proposer_home = paths.workspace / ".proposer_home"
     claude_dir = proposer_home / ".claude"
     claude_dir.mkdir(parents=True, exist_ok=True)
-    # Always refresh from host so an expired/refreshed host token reaches
-    # the container next launch. Host token mtime check would be brittle.
-    # Skip the copy if the host creds aren't present (e.g. user only uses
-    # codex and hasn't run `claude login`) — _check_environment already
-    # validated whichever agent's requirements are met.
-    if _HOST_CLAUDE_CREDS.exists():
-        creds_dst = claude_dir / ".credentials.json"
+    creds_dst = claude_dir / ".credentials.json"
+    if claude_auth == "subscription" and _HOST_CLAUDE_CREDS.exists():
+        # Always refresh from host so an expired/refreshed host token reaches
+        # the container next launch. Host token mtime check would be brittle.
+        # Skip the copy if the host creds aren't present (e.g. user only uses
+        # codex and hasn't run `claude login`) — _check_environment already
+        # validated whichever agent's requirements are met.
         shutil.copy2(_HOST_CLAUDE_CREDS, creds_dst)
         creds_dst.chmod(0o600)
+    elif claude_auth in ("api_key", "vertex") and creds_dst.exists():
+        # A prior subscription run in this workspace may have staged a copy;
+        # drop it so the only live credential is the injected env var.
+        try:
+            creds_dst.unlink()
+        except OSError as exc:
+            log.warning(f"could not remove stale credentials copy: {exc}")
     return proposer_home
 
 
@@ -232,19 +345,29 @@ _OAUTH_TOKEN_LOG_ONCE = False
 _OPENAI_KEY_LOG_ONCE = False
 
 
-def _agent_auth_extra_env(agent: str) -> Dict[str, str]:
+def _agent_auth_extra_env(
+    agent: str,
+    *,
+    claude_auth: str = "subscription",
+    vertex_cfg: Optional[Dict[str, Any]] = None,
+) -> Dict[str, str]:
     """Build the per-propose `extra_env` for `_stream_subprocess`.
 
-    For claude_code:
-      If a long-lived OAuth token is present at ~/.claude/oauth_token, set
-      SINGULARITYENV_CLAUDE_CODE_OAUTH_TOKEN — Singularity strips the prefix
-      and forwards as CLAUDE_CODE_OAUTH_TOKEN inside the container. Token
-      never appears in argv (so `ps` can't leak it) and is read fresh on
-      each propose so manual rotation of the file is picked up immediately.
+    All secrets travel as SINGULARITYENV_* process env — Singularity strips
+    the prefix and forwards them inside the container; nothing lands in argv
+    (so `ps` can't leak it), and values are re-read on each propose so manual
+    rotation is picked up immediately.
 
-      When no token file exists, returns no env override — the proposer
-      container falls back to credentials.json (which has the 8h refresh
-      cycle limitation that motivated this mechanism).
+    For claude_code, dispatch on `claude_auth`:
+      subscription — if a long-lived OAuth token exists at
+        ~/.claude/oauth_token, inject CLAUDE_CODE_OAUTH_TOKEN; otherwise no
+        env override (container falls back to the credentials.json copy,
+        which has the 8h refresh-cycle limitation that motivated the token
+        mechanism).
+      api_key — inject ANTHROPIC_API_KEY (host env / project .env).
+      vertex — inject CLAUDE_CODE_USE_VERTEX=1 + ANTHROPIC_VERTEX_PROJECT_ID
+        + CLOUD_ML_REGION + GOOGLE_APPLICATION_CREDENTIALS pointing at the
+        RO-bound credentials json (see _build_singularity_cmd's extra bind).
 
     For codex:
       Inject OPENAI_API_KEY (long-lived, no refresh) via
@@ -253,6 +376,27 @@ def _agent_auth_extra_env(agent: str) -> Dict[str, str]:
       for long unattended runs.
     """
     global _OAUTH_TOKEN_LOG_ONCE, _OPENAI_KEY_LOG_ONCE
+
+    if agent == "claude_code" and claude_auth == "api_key":
+        api_key = _resolve_anthropic_api_key()
+        if not api_key:
+            # _check_environment already validated this; defensive.
+            raise ProposerLaunchError(
+                "_agent_auth_extra_env: claude_auth=api_key but ANTHROPIC_API_KEY "
+                "is not set (host env or project .env)"
+            )
+        return {"SINGULARITYENV_ANTHROPIC_API_KEY": api_key}
+
+    if agent == "claude_code" and claude_auth == "vertex":
+        vc = vertex_cfg or {}
+        # Credentials json path is resolved host-side and bound by
+        # _build_singularity_cmd; here we only point CC at the container path.
+        return {
+            "SINGULARITYENV_CLAUDE_CODE_USE_VERTEX": "1",
+            "SINGULARITYENV_ANTHROPIC_VERTEX_PROJECT_ID": str(vc.get("project_id", "")),
+            "SINGULARITYENV_CLOUD_ML_REGION": str(vc.get("region", "")),
+            "SINGULARITYENV_GOOGLE_APPLICATION_CREDENTIALS": _VERTEX_CREDS_IN_CONTAINER,
+        }
 
     if agent == "claude_code":
         token = _load_oauth_token()
@@ -294,11 +438,41 @@ def _oauth_extra_env() -> Dict[str, str]:
     return _agent_auth_extra_env("claude_code")
 
 
+def _prepare_agent_auth(
+    agent: str,
+    *,
+    claude_auth: str = "subscription",
+    vertex_cfg: Optional[Dict[str, Any]] = None,
+) -> "tuple[Path, List[str], Dict[str, str]]":
+    """Auth staging shared by propose() / propose_with_fix().
+
+    Returns (proposer_home, extra_binds, extra_env):
+      proposer_home — per-run scratch HOME (credentials.json copy only for
+                      claude_auth=subscription; codex auth.json staged here);
+      extra_binds   — additional RO binds (the GCP credentials json for
+                      claude_auth=vertex, resolved host-side);
+      extra_env     — secret-carrying SINGULARITYENV_* overrides.
+    """
+    effective_auth = claude_auth if agent == "claude_code" else "subscription"
+    proposer_home = _prepare_claude_home(effective_auth)
+    if agent == "codex":
+        _stage_codex_apikey_auth(proposer_home)
+    extra_binds: List[str] = []
+    if agent == "claude_code" and claude_auth == "vertex":
+        creds = _resolve_gcp_credentials(vertex_cfg)
+        extra_binds.append(f"{creds}:{_VERTEX_CREDS_IN_CONTAINER}:ro")
+    extra_env = _agent_auth_extra_env(
+        agent, claude_auth=claude_auth, vertex_cfg=vertex_cfg,
+    )
+    return proposer_home, extra_binds, extra_env
+
+
 def _build_singularity_cmd(
     *,
     propose_args: List[str],
     proposer_home: Path,
     agent: str = "claude_code",
+    extra_binds: Optional[List[str]] = None,
 ) -> List[str]:
     """Build the `singularity exec ...` argv with the selective bind list.
 
@@ -361,6 +535,9 @@ def _build_singularity_cmd(
             # additional share/state dirs at runtime when using API-key auth.
             f"{_HOST_CODEX_BIN_RESOLVED}:/usr/local/bin/codex:ro",
         ]
+    if extra_binds:
+        # e.g. the RO GCP credentials json for claude_auth=vertex.
+        binds += list(extra_binds)
 
     cmd = [
         "singularity", "exec",
@@ -543,12 +720,19 @@ async def propose(
     agent: str = "claude_code",
     agent_opts: Optional[Dict[str, Any]] = None,
     prompts_version: Optional[str] = None,
+    claude_auth: str = "subscription",
+    vertex_cfg: Optional[Dict[str, Any]] = None,
 ) -> Path:
     """Run a sandboxed proposer; return the new harness directory on success.
 
     `agent` selects the coding-agent backend: 'claude_code' (default) or
     'codex'. The in-container script (`propose_in_container.py`) dispatches
     on this and shells out to the matching CLI.
+
+    `claude_auth` selects the claude_code credential route (see
+    CLAUDE_AUTH_MODES): subscription | api_key | vertex. `vertex_cfg` is the
+    cfg.proposer.claude_code.vertex dict ({project_id, region, credentials});
+    both are ignored when agent='codex'.
 
     `prompts_version` selects the prompt template version (a stem name under
     `forge/prompts/templates/`); None / "latest" → templates/_default.
@@ -564,7 +748,7 @@ async def propose(
       RuntimeError         the proposer exits without PROPOSAL_READY, or
                            the subprocess returns a non-zero exit code.
     """
-    _check_environment(agent=agent)
+    _check_environment(agent=agent, claude_auth=claude_auth, vertex_cfg=vertex_cfg)
 
     new_dir = paths.harnesses_dir / new_id
     # mkdir on host so the bind sees it; container has it RW via /workspace.
@@ -579,9 +763,9 @@ async def propose(
         update_type=update_type,
     )
 
-    proposer_home = _prepare_claude_home()
-    if agent == "codex":
-        _stage_codex_apikey_auth(proposer_home)
+    proposer_home, extra_binds, extra_env = _prepare_agent_auth(
+        agent, claude_auth=claude_auth, vertex_cfg=vertex_cfg,
+    )
     propose_args = [
         "--new-id", new_id,
         "--workspace", "/workspace",
@@ -596,8 +780,8 @@ async def propose(
     ]
     cmd = _build_singularity_cmd(
         propose_args=propose_args, proposer_home=proposer_home, agent=agent,
+        extra_binds=extra_binds,
     )
-    extra_env = _agent_auth_extra_env(agent)
 
     rc = await _stream_subprocess(
         cmd, timeout_s=timeout_s + 60, label=f"proposer[{new_id}]",
@@ -630,6 +814,8 @@ async def propose_with_fix(
     agent: str = "claude_code",
     agent_opts: Optional[Dict[str, Any]] = None,
     prompts_version: Optional[str] = None,
+    claude_auth: str = "subscription",
+    vertex_cfg: Optional[Dict[str, Any]] = None,
 ) -> Path:
     """Ask the agent to Read + Edit the existing harness to fix a sanity-check
     failure.
@@ -637,9 +823,10 @@ async def propose_with_fix(
     The error trace is folded HOST-SIDE into the rendered task prompt by
     `proposer_fix_prompt`; no separate file is written into the harness dir.
     The staged `.prompt_task.txt` for a fix call therefore CONTAINS the trace
-    inline (truncated if >90 lines).
+    inline (truncated if >90 lines). `claude_auth`/`vertex_cfg` behave as in
+    `propose()`.
     """
-    _check_environment(agent=agent)
+    _check_environment(agent=agent, claude_auth=claude_auth, vertex_cfg=vertex_cfg)
 
     new_dir = paths.harnesses_dir / new_id
     if not (new_dir / "harness.py").exists():
@@ -657,9 +844,9 @@ async def propose_with_fix(
         error_trace=error_trace,
     )
 
-    proposer_home = _prepare_claude_home()
-    if agent == "codex":
-        _stage_codex_apikey_auth(proposer_home)
+    proposer_home, extra_binds, extra_env = _prepare_agent_auth(
+        agent, claude_auth=claude_auth, vertex_cfg=vertex_cfg,
+    )
     propose_args = [
         "--new-id", new_id,
         "--workspace", "/workspace",
@@ -674,8 +861,8 @@ async def propose_with_fix(
     ]
     cmd = _build_singularity_cmd(
         propose_args=propose_args, proposer_home=proposer_home, agent=agent,
+        extra_binds=extra_binds,
     )
-    extra_env = _agent_auth_extra_env(agent)
     rc = await _stream_subprocess(
         cmd, timeout_s=timeout_s + 60, label=f"propose_fix[{new_id}]",
         extra_env=extra_env,

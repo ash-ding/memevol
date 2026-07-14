@@ -111,6 +111,27 @@ proposer:
     disallowed_tools:
       - mcp__*
 
+    # Credential route for the claude CLI. CLI override: --claude-auth <mode>.
+    #   subscription — `claude login` OAuth; prefers the long-lived
+    #                  ~/.claude/oauth_token (from `claude setup-token`),
+    #                  falls back to a per-run copy of ~/.claude/.credentials.json.
+    #   api_key      — ANTHROPIC_API_KEY from the host env or the project .env.
+    #                  (CC's official precedence: an API key beats OAuth creds.)
+    #   vertex       — Google Vertex AI via the `vertex:` block below.
+    #                  (Cloud-provider flags have the HIGHEST precedence.)
+    auth: subscription
+
+    # Consumed only when auth: vertex. `model` above must then be a model
+    # enabled in the GCP project (e.g. claude-opus-4-6; Vertex also accepts
+    # @YYYYMMDD version pins). GCP credentials resolve in order: explicit
+    # `credentials:` path → $GOOGLE_APPLICATION_CREDENTIALS →
+    # ~/.config/gcloud/application_default_credentials.json (the file
+    # `gcloud auth application-default login` writes).
+    vertex:
+      project_id: itpc-gcp-ai-eng-claude
+      region: us-east5
+      credentials: null
+
   # ----- codex agent-specific config -----
   codex:
     # OpenAI Codex model id. gpt-5.5 is current default.

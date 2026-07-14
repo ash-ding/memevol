@@ -129,6 +129,22 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             # are unreachable anyway due to --containall, but pruning them
             # from the prompt avoids wasted turns).
             "disallowed_tools": ["mcp__*"],
+            # Credential route for the claude CLI (forge/proposer.py::
+            # CLAUDE_AUTH_MODES): "subscription" (claude login OAuth /
+            # setup-token), "api_key" (ANTHROPIC_API_KEY from host env or
+            # .env), or "vertex" (Google Vertex AI via the `vertex` block).
+            "auth": "subscription",
+            # Consumed only when auth=vertex. `model` above must then name a
+            # model enabled in that GCP project (e.g. claude-opus-4-6;
+            # @YYYYMMDD pins are supported by Vertex).
+            "vertex": {
+                "project_id": "itpc-gcp-ai-eng-claude",
+                "region": "us-east5",
+                # Explicit path to a GCP credentials json (service-account or
+                # ADC). None → auto-detect: $GOOGLE_APPLICATION_CREDENTIALS,
+                # then ~/.config/gcloud/application_default_credentials.json.
+                "credentials": None,
+            },
         },
         "codex": {
             "model": "gpt-5.5",
@@ -410,6 +426,9 @@ def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
         cfg["proposer"]["claude_code"]["disallowed_tools"] = [
             t.strip() for t in args.proposer_disallowed_tools.split(",") if t.strip()
         ]
+    # --claude-auth overrides the claude_code credential route.
+    if getattr(args, "claude_auth", None) is not None:
+        cfg["proposer"]["claude_code"]["auth"] = args.claude_auth
     if args.tau is not None:
         cfg["selection"]["tau"] = args.tau
     if args.k_per_step is not None:
@@ -447,6 +466,22 @@ def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
         # benchmark gets its family's DEFAULT_STAGES (see that constant).
         ds_list = [d.strip() for d in cli_datasets.split(",") if d.strip()]
         cfg["datasets"] = {ds: {} for ds in ds_list}
+
+    # claude_code auth-mode validation (fail at startup, not mid-run).
+    cc_cfg = (cfg.get("proposer", {}) or {}).get("claude_code", {}) or {}
+    cc_auth = cc_cfg.get("auth", "subscription")
+    if cc_auth not in ("subscription", "api_key", "vertex"):
+        raise ValueError(
+            f"proposer.claude_code.auth must be one of subscription | api_key "
+            f"| vertex, got {cc_auth!r}"
+        )
+    if cc_auth == "vertex":
+        vc = cc_cfg.get("vertex") or {}
+        if not vc.get("project_id") or not vc.get("region"):
+            raise ValueError(
+                "proposer.claude_code.auth=vertex requires proposer."
+                "claude_code.vertex.{project_id, region} to be set."
+            )
 
     # Validation + stage-schema resolution
     if not cfg.get("datasets"):
@@ -597,6 +632,18 @@ def _resolve_proposer_for_agent(
             opts["reasoning_effort"] = str(agent_cfg["reasoning_effort"])
 
     return model, opts
+
+
+def _resolve_claude_auth(cfg: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
+    """(claude_auth, vertex_cfg) from cfg.proposer.claude_code.
+
+    Host-side credential routing for the claude CLI — deliberately NOT part
+    of agent_opts, which travels into the container via --agent-opts and is
+    visible to the proposer. Values were validated by _resolve_config; both
+    are ignored by propose()/propose_with_fix() when agent='codex'.
+    """
+    cc_cfg = (cfg.get("proposer", {}) or {}).get("claude_code", {}) or {}
+    return cc_cfg.get("auth", "subscription"), dict(cc_cfg.get("vertex") or {})
 
 
 # ---------------------------------------------------------------------------
@@ -1218,6 +1265,7 @@ async def propose_eval_one(
     if not is_seed:
         agent = cfg["agent"]
         agent_model, agent_opts = _resolve_proposer_for_agent(cfg, agent)
+        claude_auth, vertex_cfg = _resolve_claude_auth(cfg)
         try:
             await propose(
                 new_id=new_id,
@@ -1230,6 +1278,8 @@ async def propose_eval_one(
                 agent=agent,
                 agent_opts=agent_opts,
                 prompts_version=cfg["prompts"]["version"],
+                claude_auth=claude_auth,
+                vertex_cfg=vertex_cfg,
             )
         except (TimeoutError, RuntimeError) as exc:
             # propose() failed — most likely subprocess exited rc!=0 (auth 401,
@@ -1290,6 +1340,7 @@ async def propose_eval_one(
             # Retry: ask the agent to fix its own harness based on the error trace.
             agent = cfg["agent"]
             agent_model, agent_opts = _resolve_proposer_for_agent(cfg, agent)
+            claude_auth, vertex_cfg = _resolve_claude_auth(cfg)
             try:
                 await propose_with_fix(
                     new_id=new_id,
@@ -1303,6 +1354,8 @@ async def propose_eval_one(
                     agent=agent,
                     agent_opts=agent_opts,
                     prompts_version=cfg["prompts"]["version"],
+                    claude_auth=claude_auth,
+                    vertex_cfg=vertex_cfg,
                 )
             except (TimeoutError, RuntimeError) as exc:
                 # propose_with_fix subprocess died — same infra failure mode as
@@ -1875,6 +1928,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--proposer-model", default=None)
     parser.add_argument("--proposer-max-turns", type=int, default=None)
     parser.add_argument("--proposer-timeout-s", type=int, default=None)
+    parser.add_argument("--claude-auth", default=None,
+                        choices=["subscription", "api_key", "vertex"],
+                        help="claude_code credential route (overrides "
+                             "proposer.claude_code.auth). subscription = "
+                             "claude login / setup-token; api_key = "
+                             "ANTHROPIC_API_KEY (env or .env); vertex = "
+                             "Google Vertex AI via proposer.claude_code.vertex.")
     parser.add_argument(
         "--proposer-disallowed-tools", default=None,
         help='Comma-separated list of tools the proposer cannot use (default ["mcp__*"]). '
@@ -1958,6 +2018,19 @@ def main() -> None:
     # log and config.yaml snapshot still claim the old stem (breaking the
     # A/B integrity the versioning system exists for).
     cfg["prompts"]["version"] = resolved_prompts_version
+
+    # Log the effective coding-agent + credential route (never any secret).
+    active_agent = cfg.get("agent", "claude_code")
+    if active_agent == "claude_code":
+        cc_auth, cc_vertex = _resolve_claude_auth(cfg)
+        vertex_note = (
+            f" (project={cc_vertex.get('project_id')}, region={cc_vertex.get('region')})"
+            if cc_auth == "vertex" else ""
+        )
+        log.info(f"proposer agent: claude_code, auth={cc_auth}{vertex_note}")
+    else:
+        log.info(f"proposer agent: {active_agent}")
+
     cfg_snapshot = _write_resolved_config(cfg)
     log.info(
         f"run config: {json.dumps(_snapshot_view(cfg), default=str)}"
