@@ -148,6 +148,57 @@ def test_dynamicmem_answer_query_default_call_signature():
     assert calls["messages"] == "UNSET"               # DynamicMem default does NOT set agent.messages
 
 
+# -------------------- eval_common (shared runner + data-alignment) --------------------
+
+def test_parse_stage_spec_raw_user_overrides():
+    from baselines.eval_common import parse_stage_spec
+    assert parse_stage_spec(None) == {}
+    assert parse_stage_spec('{"n_samples": 3, "n_qa": 5}') == {"n_samples": 3, "n_qa": 5}
+
+
+def test_family_full_spec_matches_main_method():
+    """The default (no --stage-spec) effective spec MUST equal the main
+    method's coverage=full wire spec — otherwise DynamicMem silently drops out
+    of the TCE checkpoint path (its branch keys on the n_checkpoints KEY)."""
+    from baselines.eval_common import family_full_spec, effective_stage_spec
+    from forge.orchestrator import full_wire_spec   # test-only import (baselines never import forge)
+    for ds in ("dynamicmem", "locomo", "longmemeval_s", "longmemeval_m"):
+        assert family_full_spec(ds) == full_wire_spec(ds), ds
+        assert effective_stage_spec(ds, None) == full_wire_spec(ds), ds
+    # dynamicmem full spec carries the n_checkpoints KEY → TCE path
+    assert "n_checkpoints" in family_full_spec("dynamicmem")
+    # user override merges over the family-full base (keeps the TCE keys present)
+    merged = effective_stage_spec("dynamicmem", {"n_samples": 2})
+    assert merged["n_samples"] == 2 and "n_checkpoints" in merged
+
+
+def test_task_list_identical_to_main_method():
+    """The baseline's split derivation MUST equal the main method's
+    (forge/launch.py:185-189 calls the SAME env.get_task_list)."""
+    from baselines.eval_common import resolve_task_list, effective_stage_spec
+    from datasets.locomo import env as locomo_env
+    from datasets.longmemeval import env as lme_env
+    from datasets.dynamicmem import env as dm_env
+    # whole test split (default) == get_task_list("test", None) == the heldout split
+    assert resolve_task_list("locomo", "test", effective_stage_spec("locomo", None)) == locomo_env.get_task_list("test", None)
+    assert resolve_task_list("longmemeval_s", "test", effective_stage_spec("longmemeval_s", None)) == lme_env.get_task_list("test", None)
+    assert resolve_task_list("dynamicmem", "test", effective_stage_spec("dynamicmem", None)) == dm_env.get_task_list("test", None)
+    # capped units == get_task_list("test", N)
+    assert resolve_task_list("locomo", "test", effective_stage_spec("locomo", {"n_samples": 2})) == locomo_env.get_task_list("test", 2)
+
+
+def test_make_memo_class_no_arg_instantiable():
+    from baselines.eval_common import make_memo_class
+    from common.harness_base import MemoStructure
+    class Base(MemoStructure):
+        async def general_update(self, r): return None
+        async def general_retrieve(self, r): return {"cfg": self._cfg}
+    Cls = make_memo_class(Base, model="x", k=3)
+    inst = Cls()  # workflow instantiates with NO args
+    assert inst._cfg == {"model": "x", "k": 3}
+    assert isinstance(inst, MemoStructure)
+
+
 # -------------------- runner --------------------
 
 def main():
