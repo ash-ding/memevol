@@ -29,7 +29,8 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="alma — DynamicMem memory evolution (baseline). DynamicMem-ONLY: no multi-dataset support (that is a forge-only capability).")
+    from baselines.alma.registry import DATASETS
+    parser = argparse.ArgumentParser(description="alma — memory-structure evolution (baseline); one benchmark per run via --dataset.")
 
     parser.add_argument("--meta_model", type=str, default="gpt-5")
     parser.add_argument("--execution_model", type=str, default="gpt-5-mini")
@@ -38,6 +39,8 @@ def parse_args():
     parser.add_argument("--result_dir", type=str, default="check")
 
     parser.add_argument("--status", type=str, default='search', choices=['search', 'test'])
+    parser.add_argument("--dataset", type=str, default="dynamicmem", choices=DATASETS,
+                        help="Which benchmark to evolve on (one per run).")
     parser.add_argument("--eval_n_samples", type=int, default=6)
     parser.add_argument("--memo_SHA", type=str, default=None)
     parser.add_argument("--history_ckpt_path", type=str, default=None)
@@ -69,6 +72,7 @@ async def main(args):
         meta_model=args.meta_model,
         execution_model=args.execution_model,
         status=args.status,
+        dataset=args.dataset,
         history_ckpt_path=args.history_ckpt_path,
     )
 
@@ -112,7 +116,7 @@ if __name__ == "__main__":
     logs_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_tag = f"{args.status}_{args.update_type}"
+    log_tag = f"{args.status}_{args.dataset}_{args.update_type}"
     if args.update_type == "chunked":
         log_tag += f"_{args.n_chunks}"
     log_tag += f"_{timestamp}"

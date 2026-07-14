@@ -180,6 +180,26 @@ def test_meta_agent_recorder_by_dataset():
     assert ma_dm._get_recorder_class() is DynamicMemRecorder
 
 
+def test_run_main_parses_dataset():
+    import importlib
+    rm = importlib.import_module("baselines.alma.run_main")
+    import sys as _sys
+    argv = ["run_main.py", "--dataset", "longmemeval_m", "--steps", "1"]
+    old = _sys.argv
+    _sys.argv = argv
+    try:
+        args = rm.parse_args()
+        assert args.dataset == "longmemeval_m"
+    finally:
+        _sys.argv = old
+    # default
+    _sys.argv = ["run_main.py"]
+    try:
+        assert rm.parse_args().dataset == "dynamicmem"
+    finally:
+        _sys.argv = old
+
+
 # ---------------- runner ----------------
 
 def main():
