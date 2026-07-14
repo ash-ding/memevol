@@ -200,6 +200,28 @@ def test_run_main_parses_dataset():
         _sys.argv = old
 
 
+def test_sampling_reads_dataset_evidence_key():
+    import json, tempfile, os
+    from baselines.alma.sampling import build_analysis_artifact
+    d = tempfile.mkdtemp()
+    # minimal score.json + one trace with a locomo-style evidence key
+    json.dump({"benchmark_eval_score": {"benchmark_overall_eval_score": 1.0,
+               "benchmark_overall_eval_standard_deviation": 0.0},
+               "per_user": {"conv_1": {"reward": 1.0, "n_qa": 1, "failure_info": None}},
+               "invalid_users": []},
+              open(os.path.join(d, "score.json"), "w"))
+    os.makedirs(os.path.join(d, "traces"))
+    json.dump({"user_id": "conv_1", "failure_info": None,
+               "steps": [{"query": "q", "predicted": "p", "reference": "r",
+                          "score": 1.0, "judge_reason": "jr",
+                          "retrieved_memory": {}, "relevant_turns": [{"t": 1}]}]},
+              open(os.path.join(d, "traces", "conv_1.json"), "w"))
+    from pathlib import Path
+    art = build_analysis_artifact(Path(d), evidence_key="relevant_turns")
+    ex = [e for e in art["examples"] if "error_info" not in e]
+    assert ex and ex[0]["relevant_turns"] == [{"t": 1}]
+
+
 # ---------------- runner ----------------
 
 def main():

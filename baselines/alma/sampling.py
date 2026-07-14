@@ -103,6 +103,7 @@ def build_analysis_artifact(
     output_run_dir: Path,
     n_score_bins: int = 3,
     samples_per_bin: int = 3,
+    evidence_key: str = "relevant_app_logs",
 ) -> Dict[str, Any]:
     """Assemble the compressed analysis artifact from a finished run directory.
 
@@ -173,7 +174,7 @@ def build_analysis_artifact(
             "reference": step["reference"],
             "score": step["score"],
             "judge_reason": step.get("judge_reason", ""),
-            "relevant_app_logs": step.get("relevant_app_logs", []),
+            evidence_key: step.get(evidence_key, []),
         })
     for err in invalid_sample:
         examples.append({"error_info": err, "score": 0.0})

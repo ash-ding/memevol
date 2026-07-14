@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
+from baselines.alma.dataset_info import DATASET_INFO
 from baselines.alma.eval_runner import get_output_run_dir, run_evaluation
 from baselines.alma.sampling import build_analysis_artifact
 
@@ -120,6 +121,7 @@ class Memo_Manager:
             output_run_dir,
             n_score_bins=n_score_bins,
             samples_per_bin=samples_per_bin,
+            evidence_key=DATASET_INFO[self.dataset]["evidence_key"],
         )
 
         # all_success mirrors the historical contract: any error_info entry in
@@ -161,6 +163,7 @@ class Memo_Manager:
             output_run_dir,
             n_score_bins=n_score_bins,
             samples_per_bin=samples_per_bin,
+            evidence_key=DATASET_INFO[self.dataset]["evidence_key"],
         )
 
     def update_parent(self, memo_sha: str, parent: str):
