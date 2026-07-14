@@ -9,7 +9,12 @@ producing comparable metrics: per-user reward, judge-scored accuracy, and
 the shared `DynamicMemWorkflow`, so it automatically follows the official
 TCE v2 checkpoint protocol (checkpoint-interleaved ingestion, two task
 families, official holistic 0–1 judge) — its numbers ARE comparable with
-forge. `cc` and `hipporag2` still run two-phase via the
+forge. `hipporag2` now drives its `HippoRAGMemo` through
+`baselines.eval_common.run_baseline`, which resolves the SAME production
+per-dataset workflow the main method uses (`baselines.registry.resolve`), so
+its DynamicMem numbers get the official TCE protocol too, and it runs on all
+four datasets (dynamicmem/locomo/longmemeval_s/longmemeval_m) via one
+`run.py --dataset ...` entrypoint. `cc` still runs two-phase via the
 `load_user_data` compat shim (last checkpoint only, generic 0–10 judge) —
 temporally self-consistent but **not** the official protocol and **not**
 directly comparable with forge/alma DynamicMem numbers; full adaptation is
@@ -23,7 +28,7 @@ each baseline's own `logs/` and `results/` directories (gitignored).
 |---|---|---|---|
 | **[alma](alma/)** | LLM-meta-agent search loop | Yes — propose / select / evolve over harness code | Established baseline; the framework's "v1" memory-architecture search |
 | **[cc](cc/)** | Claude Code as direct QA agent | None (zero-shot) | What-if: just give CC the raw user data + tools and let it answer |
-| **[hipporag2](hipporag2/)** | Graph-based RAG pipeline (OpenIE → KG → PPR retrieval) | None (fixed pipeline) | Hand-designed memory architecture comparison point |
+| **[hipporag2](hipporag2/)** | Graph-based RAG pipeline as retrieval memory (OpenIE → KG → PPR retrieval → passages; shared QA agent answers) | None (fixed pipeline) | Hand-designed memory architecture comparison point, multi-dataset |
 
 ---
 
@@ -85,34 +90,45 @@ Artifacts: `baselines/cc/{logs/, results/}`.
 
 ---
 
-## hipporag2 — graph-based RAG pipeline
+## hipporag2 — graph-based RAG pipeline as a retrieval MemoStructure
 
-Runs [HippoRAG2](https://github.com/OSU-NLP-Group/HippoRAG)'s pipeline
-on each user as a fixed memory architecture (no search):
+`HippoRAGMemo` (`baselines/hipporag2/memo.py`) wraps
+[HippoRAG2](https://github.com/OSU-NLP-Group/HippoRAG)'s pipeline as a
+`MemoStructure` — a fixed (non-evolved) memory architecture run through the
+same `baselines.eval_common.run_baseline` shared runner as the rest of the
+baselines, on any of the four datasets:
 
-- **Phase 1 (Index)**: app_logs → OpenIE (NER + triples) → knowledge graph
-  + entity embeddings.
-- **Phase 2 (QA)**: query → fact retrieval → reranking → personalized
-  PageRank → top-k passages → LLM answer.
+- **Phase 1 (`general_update`)**: converts the ingested unit's data into text
+  passages (dynamicmem: app_logs; locomo: conversation turns; longmemeval:
+  session messages — dispatch on `recorder.init` keys) and indexes them into a
+  per-user HippoRAG graph (OpenIE → NER + triples → knowledge graph + entity
+  embeddings). Indexing is additive across calls, so DynamicMem's per-
+  checkpoint segments accumulate correctly.
+- **Phase 2 (`general_retrieve`)**: fact retrieval → reranking → personalized
+  PageRank → top-k passages, returned as `{"passages": [...]}`. The **shared
+  QA agent** (not HippoRAG's own `rag_qa` reader) answers from those passages,
+  and the per-dataset workflow judges/scores identically to the main method —
+  a fair "HippoRAG-as-memory" comparison point rather than an end-to-end
+  HippoRAG pipeline comparison.
 
 ```bash
 # OpenAI API embedding (no GPU needed)
-baselines/venv/bin/python baselines/hipporag2/eval_hipporag2.py \
-    --embedding text-embedding-3-small --dry_run
+baselines/venv/bin/python baselines/hipporag2/run.py \
+    --dataset locomo --embedding text-embedding-3-small
 
-baselines/venv/bin/python baselines/hipporag2/eval_hipporag2.py \
-    --embedding text-embedding-3-small
+baselines/venv/bin/python baselines/hipporag2/run.py \
+    --dataset dynamicmem --stage-spec '{"n_samples": 2}'
 
 # Local GPU embedding (NVIDIA)
-baselines/venv/bin/python baselines/hipporag2/eval_hipporag2.py \
-    --embedding nvidia/NV-Embed-v2 \
+baselines/venv/bin/python baselines/hipporag2/run.py \
+    --dataset longmemeval_s --embedding nvidia/NV-Embed-v2 \
     --embedding_batch_size 2 --embedding_dtype float16
 ```
 
 Useful as a hand-designed comparison: how does a published RAG pipeline
 perform on these benchmarks vs forge-evolved harnesses?
 
-Artifacts: `baselines/hipporag2/{logs/, outputs/, results/}`.
+Artifacts: `baselines/hipporag2/{outputs/, results/<dataset>/<split>/}`.
 
 ---
 
