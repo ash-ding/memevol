@@ -112,6 +112,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     #            elimination; wire stage "full", artifacts under <ds>/full/).
     # The sanity gate and mode=dev are unaffected. CLI: --coverage.
     "coverage": "sample",
+    # Search-mode data isolation: overlay-bind search-split-only data into
+    # BOTH containers so the held-out test split (questions + gold answers)
+    # is technically invisible to the proposer agent and to harness code.
+    # Applies to split=search (mode search/dev incl. sanity); mode=test and
+    # forge.heldout always see full data. CLI: --no-data-isolation.
+    "data_isolation": True,
     # Cross-stage memory cache: persist each user's Phase-1 memory per
     # (harness, dataset) and reuse it at deeper gauntlet stages (nested
     # sampling makes it bit-for-bit reusable). Stage1..3 only; sanity/dev
@@ -475,6 +481,8 @@ def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
         cfg["propose"]["k_per_step"] = args.k_per_step
     if args.no_memory_cache:
         cfg["memory_cache"] = False
+    if getattr(args, "no_data_isolation", False):
+        cfg["data_isolation"] = False
     if args.no_sanity:
         cfg["sanity"]["enabled"] = False
     if args.sanity_max_retries is not None:
@@ -697,6 +705,25 @@ def _resolve_proposer_for_agent(
             opts["reasoning_effort"] = str(agent_cfg["reasoning_effort"])
 
     return model, opts
+
+
+_ISOLATION_BINDS_CACHE: Optional[List[str]] = None
+
+
+def _isolation_binds(cfg: Dict[str, Any], split: str) -> Optional[List[str]]:
+    """Search-split overlay binds for split=search runs (None otherwise or
+    when disabled). Staged once per orchestrator process into
+    workspace/<run>/data_staging/ and cached."""
+    global _ISOLATION_BINDS_CACHE
+    if split != "search" or not cfg.get("data_isolation", True):
+        return None
+    if _ISOLATION_BINDS_CACHE is None:
+        from forge.data_isolation import stage_search_data
+        # Shared cross-run staging cache (fingerprinted against the source
+        # data files) — the LongMemEval m variant is ~2.6 GB, so per-run
+        # re-filtering would cost minutes + gigabytes each run.
+        _ISOLATION_BINDS_CACHE = stage_search_data()
+    return _ISOLATION_BINDS_CACHE
 
 
 def _resolve_claude_auth(cfg: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
@@ -1089,6 +1116,7 @@ async def sanity_check_harness(
     max_sample_concurrent: int,
     gpu: bool = False,
     llm_cfg: Optional[Dict[str, Any]] = None,
+    data_isolation_binds: Optional[List[str]] = None,
 ) -> Tuple[bool, str]:
     """Run a sanity_check-sized evaluation on every dataset (wire: --stage sanity).
 
@@ -1117,6 +1145,7 @@ async def sanity_check_harness(
                 gpu=gpu,
                 anthropic_transport=_llm_cfg.get("anthropic_transport", "api"),
                 vertex_cfg=_llm_cfg.get("vertex"),
+                data_isolation_binds=data_isolation_binds,
             )
         except Exception as exc:
             log.error(f"sanity crashed for {harness_id} [{ds}]: {exc}")
@@ -1148,6 +1177,7 @@ async def evaluate_harness(
     gpu: bool = False,
     llm_cfg: Optional[Dict[str, Any]] = None,
     coverage: str = "sample",
+    data_isolation_binds: Optional[List[str]] = None,
 ) -> Dict[str, Dict[str, Any]]:
     """Run the evaluation on every dataset (serial).
 
@@ -1203,6 +1233,7 @@ async def evaluate_harness(
                     gpu=gpu,
                     anthropic_transport=(llm_cfg or {}).get("anthropic_transport", "api"),
                     vertex_cfg=(llm_cfg or {}).get("vertex"),
+                    data_isolation_binds=data_isolation_binds,
                 )
             except Exception as exc:
                 log.error(f"evaluation crashed for {harness_id} [{ds}/{stage_name}]: {exc}")
@@ -1362,6 +1393,9 @@ async def propose_eval_one(
                 prompts_version=cfg["prompts"]["version"],
                 claude_auth=claude_auth,
                 vertex_cfg=vertex_cfg,
+                extra_binds=_isolation_binds(
+                    cfg, "search" if cfg["mode"] in ("search", "dev") else cfg["mode"]
+                ),
             )
         except (TimeoutError, RuntimeError) as exc:
             # propose() failed — most likely subprocess exited rc!=0 (auth 401,
@@ -1409,6 +1443,7 @@ async def propose_eval_one(
                 max_sample_concurrent=cfg["max_sample_concurrent"],
                 gpu=cfg["gpu"]["enabled"],
                 llm_cfg=cfg.get("llm"),
+                data_isolation_binds=_isolation_binds(cfg, cfg["mode"]),
             )
             if passed:
                 sanity_status = "passed" if attempt == 0 else f"passed_on_retry_{attempt}"
@@ -1439,6 +1474,9 @@ async def propose_eval_one(
                     prompts_version=cfg["prompts"]["version"],
                     claude_auth=claude_auth,
                     vertex_cfg=vertex_cfg,
+                    extra_binds=_isolation_binds(
+                        cfg, "search" if cfg["mode"] in ("search", "dev") else cfg["mode"]
+                    ),
                 )
             except (TimeoutError, RuntimeError) as exc:
                 # propose_with_fix subprocess died — same infra failure mode as
@@ -1484,6 +1522,9 @@ async def propose_eval_one(
         gpu=cfg["gpu"]["enabled"],
         llm_cfg=cfg.get("llm"),
         coverage=cfg.get("coverage", "sample"),
+        data_isolation_binds=_isolation_binds(
+            cfg, "search" if cfg["mode"] == "dev" else cfg["mode"]
+        ),
     )
     return final_id, per_ds, sanity_status, _read_parent_ids(harness_dir)
 
@@ -1842,6 +1883,9 @@ async def _adopt_orphan(
         gpu=cfg["gpu"]["enabled"],
         llm_cfg=cfg.get("llm"),
         coverage=cfg.get("coverage", "sample"),
+        data_isolation_binds=_isolation_binds(
+            cfg, "search" if cfg["mode"] == "dev" else cfg["mode"]
+        ),
     )
     entry = _build_adopted_entry(harness_dir, per_ds)
     frontier.add(entry)
@@ -2015,6 +2059,10 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--proposer-model", default=None)
     parser.add_argument("--proposer-max-turns", type=int, default=None)
     parser.add_argument("--proposer-timeout-s", type=int, default=None)
+    parser.add_argument("--no-data-isolation", action="store_true",
+                        help="Debug escape hatch: bind FULL datasets (incl. "
+                             "the test split) into search-mode containers "
+                             "instead of the search-split-only overlay.")
     parser.add_argument("--coverage", default=None, choices=["sample", "full"],
                         help="Evaluation coverage (overrides cfg.coverage): "
                              "sample = staged gauntlet (default); full = one "
@@ -2129,6 +2177,13 @@ def main() -> None:
     else:
         log.info(f"proposer agent: {active_agent}")
 
+    log.info(
+        "data isolation: "
+        + ("ON (search-split-only container binds)"
+           if cfg.get("data_isolation", True) and cfg["mode"] != "test"
+           else "off" if not cfg.get("data_isolation", True)
+           else "n/a (mode=test sees full data)")
+    )
     cfg_snapshot = _write_resolved_config(cfg)
     log.info(
         f"run config: {json.dumps(_snapshot_view(cfg), default=str)}"

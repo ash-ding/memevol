@@ -90,6 +90,7 @@ async def run_evaluation(
     gpu: bool = False,
     anthropic_transport: str = "api",
     vertex_cfg: Optional[Dict[str, Any]] = None,
+    data_isolation_binds: Optional[list] = None,
 ) -> Path:
     """Evaluate a harness inside Singularity.
 
@@ -147,6 +148,11 @@ async def run_evaluation(
         # Cross-stage memory snapshots (RW; shared across this harness's
         # stage execs for one dataset).
         cmd += ["--bind", f"{memcache_dir}:/memcache:rw"]
+    # Search-mode data isolation: overlay binds that shadow the test split
+    # inside /app/datasets (see forge/data_isolation.py). Passed only for
+    # split=search runs with cfg.data_isolation on.
+    for b in (data_isolation_binds or []):
+        cmd += ["--bind", b]
 
     # Anthropic transport for claude-* models inside the container. "api" is
     # common.llm's default — inject nothing so the env stays minimal.

@@ -177,6 +177,30 @@ def _compute_split() -> Tuple[List[str], List[str]]:
     if _SPLIT_CACHE is not None:
         return _SPLIT_CACHE
 
+    # Data-isolation manifest (forge/data_isolation.py binds it into
+    # search-mode containers): use its lists verbatim instead of recomputing —
+    # the stratified recompute over a filtered 300-question file would
+    # otherwise produce a bogus nested 180/120 split. Primary location is the
+    # container-only /staging path (NOT inside the data dir: binding a file to
+    # a path that doesn't pre-exist in a host-bound dir makes Singularity
+    # leave an empty placeholder file ON THE HOST — learned the hard way);
+    # the _DATA_DIR fallback serves tests. Absent / empty / corrupt manifest →
+    # recompute as usual.
+    for manifest_path in (Path("/staging/split_manifest.json"),
+                          _DATA_DIR / "split_manifest.json"):
+        if not manifest_path.is_file():
+            continue
+        try:
+            with open(manifest_path, encoding="utf-8") as f:
+                manifest = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue  # unreadable/empty placeholder — fall through to recompute
+        _SPLIT_CACHE = (
+            sorted(manifest.get("search", [])),
+            sorted(manifest.get("test", [])),
+        )
+        return _SPLIT_CACHE
+
     samples = _load_variant("s")
     by_type: Dict[str, List[str]] = {}
     for s in samples:

@@ -722,6 +722,7 @@ async def propose(
     prompts_version: Optional[str] = None,
     claude_auth: str = "subscription",
     vertex_cfg: Optional[Dict[str, Any]] = None,
+    extra_binds: Optional[List[str]] = None,
 ) -> Path:
     """Run a sandboxed proposer; return the new harness directory on success.
 
@@ -763,7 +764,7 @@ async def propose(
         update_type=update_type,
     )
 
-    proposer_home, extra_binds, extra_env = _prepare_agent_auth(
+    proposer_home, auth_binds, extra_env = _prepare_agent_auth(
         agent, claude_auth=claude_auth, vertex_cfg=vertex_cfg,
     )
     propose_args = [
@@ -780,7 +781,7 @@ async def propose(
     ]
     cmd = _build_singularity_cmd(
         propose_args=propose_args, proposer_home=proposer_home, agent=agent,
-        extra_binds=extra_binds,
+        extra_binds=auth_binds + list(extra_binds or []),
     )
 
     rc = await _stream_subprocess(
@@ -816,6 +817,7 @@ async def propose_with_fix(
     prompts_version: Optional[str] = None,
     claude_auth: str = "subscription",
     vertex_cfg: Optional[Dict[str, Any]] = None,
+    extra_binds: Optional[List[str]] = None,
 ) -> Path:
     """Ask the agent to Read + Edit the existing harness to fix a sanity-check
     failure.
@@ -844,7 +846,7 @@ async def propose_with_fix(
         error_trace=error_trace,
     )
 
-    proposer_home, extra_binds, extra_env = _prepare_agent_auth(
+    proposer_home, auth_binds, extra_env = _prepare_agent_auth(
         agent, claude_auth=claude_auth, vertex_cfg=vertex_cfg,
     )
     propose_args = [
@@ -861,7 +863,7 @@ async def propose_with_fix(
     ]
     cmd = _build_singularity_cmd(
         propose_args=propose_args, proposer_home=proposer_home, agent=agent,
-        extra_binds=extra_binds,
+        extra_binds=auth_binds + list(extra_binds or []),
     )
     rc = await _stream_subprocess(
         cmd, timeout_s=timeout_s + 60, label=f"propose_fix[{new_id}]",
