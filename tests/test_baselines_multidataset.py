@@ -294,6 +294,90 @@ def test_cc_memo_retrieve_empty_and_run_cc_answers():
     assert ans == "STUB:FORMATTED PROMPT"
 
 
+# -------------------- integration: run_baseline end-to-end (locomo) --------------------
+
+def test_run_baseline_locomo_end_to_end():
+    """Deterministic full drive of baselines.eval_common.run_baseline on ONE
+    real locomo test-split unit — not a scoped-down slice. This exercises:
+    registry.resolve -> resolve_task_list (real locomo10.json split) ->
+    LoCoMoWorkflow construction -> run_all_users -> run_single_user (REAL
+    Phase 1 ingestion against the actual conv-47 sessions, REAL
+    build_qa_prompt/build_qa_metadata/log_qa_step dispatch) ->
+    save_full_traces -> alma's _build_score_json -> score.json /
+    token_usage.json / traces/*.json written to disk.
+
+    Only the two legs that would hit a real network are stubbed, using the
+    SAME monkeypatch pattern as tests/test_phase2_failures.py:
+      - common.llm.Agent.ask (the shared QA agent) -> a canned answer
+      - LoCoMoWorkflow.judge (the judge)           -> a forced score=1
+
+    A stub MemoStructure supplies general_retrieve's canned passages;
+    general_update is a no-op (Phase 1 ingestion still runs for real, it
+    just has nothing to persist).
+    """
+    import asyncio
+    import json
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    import common.llm as llm_mod
+    from baselines.eval_common import effective_stage_spec, resolve_task_list, run_baseline
+    from common.harness_base import MemoStructure
+    from datasets.locomo.workflow import LoCoMoWorkflow
+
+    class _StubMemo(MemoStructure):
+        async def general_update(self, r):
+            return None
+
+        async def general_retrieve(self, r):
+            return {"passages": ["Amy told Bob she adopted a new puppy."]}
+
+    async def _fake_ask(self, user_input, **kw):
+        return "a canned answer"
+
+    async def _fake_judge(self, query, predicted, reference, qa_metadata=None):
+        return 1, "fake-judge: forced pass"
+
+    # Sanity-check the exact unit this test is deterministic over — a
+    # regression in the split logic would silently change WHICH sample gets
+    # exercised, so pin it explicitly rather than only trusting resolve_task_list.
+    expected = resolve_task_list("locomo", "test", effective_stage_spec("locomo", {"n_samples": 1}))
+    assert expected == ["conv-47"], expected
+
+    orig_ask, orig_judge = llm_mod.Agent.ask, LoCoMoWorkflow.judge
+    llm_mod.Agent.ask, LoCoMoWorkflow.judge = _fake_ask, _fake_judge
+    out_dir = Path(tempfile.mkdtemp(prefix="test_run_baseline_locomo_"))
+    try:
+        score = asyncio.run(run_baseline(
+            dataset="locomo", split="test",
+            user_stage_spec={"n_samples": 1, "n_qa": 1},
+            memo_class=_StubMemo,
+            qa_model="gpt-5-mini", judge_model="gpt-5-mini",
+            out_dir=out_dir, max_sample_concurrent=1,
+        ))
+    finally:
+        llm_mod.Agent.ask, LoCoMoWorkflow.judge = orig_ask, orig_judge
+
+    try:
+        assert (out_dir / "score.json").exists()
+        assert (out_dir / "token_usage.json").exists()
+        trace_files = sorted((out_dir / "traces").glob("*.json"))
+        assert len(trace_files) == 1, trace_files
+        trace = json.loads(trace_files[0].read_text())
+        assert trace["user_id"] == "conv-47"
+        assert trace["n_qa"] == 1
+        assert trace["failure_info"] is None
+        assert trace["steps"][0]["predicted"] == "a canned answer"
+        assert trace["steps"][0]["score"] == 1
+
+        assert score["benchmark_eval_score"]["benchmark_overall_eval_score"] == 1.0
+        assert score["per_user"]["conv-47"]["n_qa"] == 1
+        assert score["invalid_users"] == []
+    finally:
+        shutil.rmtree(out_dir, ignore_errors=True)
+
+
 # -------------------- runner --------------------
 
 def main():
