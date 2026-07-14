@@ -24,7 +24,7 @@ Two ways to launch:
         --smoke-test
 
 CLI flags always override the config file when both are given. See
-`configs/smoke.yaml` and `configs/search.yaml` for the full config schema.
+`configs/search_example.yaml` (exhaustive) and `configs/search.yaml` for the full config schema.
 
 Outputs (per-run, under workspace/<run_id>/):
     harnesses/<int>_<hash>/<dataset>/         full-eval score + traces

@@ -142,11 +142,10 @@ host-specific. Override there if needed.)
 ## Quick start
 
 ```bash
-# 1-min smoke (smoke_test: true): seed harness on dynamicmem at sanity size (1 user × 1 checkpoint × 2 tasks)
-venv/bin/python -m forge.orchestrator --config configs/smoke.yaml
-
-# Smoke + 1 propose iteration (exercises the full propose → eval pipeline)
-venv/bin/python -m forge.orchestrator --config configs/smoke.yaml --steps 1
+# Quick smoke: --smoke-test turns any config into a sanity-size single pass
+# (no gauntlet, no sanity gate). With --steps 1 it exercises the whole
+# propose → eval → score pipeline cheaply (~1-2 min, a handful of LLM calls).
+venv/bin/python -m forge.orchestrator --config configs/search_mini.yaml --smoke-test --steps 1
 
 # Small multi-benchmark search (10 propose iterations × 2 candidates)
 venv/bin/python -m forge.orchestrator --config configs/search_mini.yaml
