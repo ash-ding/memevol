@@ -27,10 +27,13 @@ class MetaAgent:
         execution_model: str = 'gpt-5-mini',
         status: str = 'search',
         history_ckpt_path: Optional[str] = None,
+        dataset: str = "dynamicmem",
     ):
+        self.dataset = dataset
         self.memo_manager = Memo_Manager(
             status=status,
             history_ckpt_path=history_ckpt_path,
+            dataset=dataset,
         )
         self.history_ckpt_path = history_ckpt_path
         self.examine_trial = 3
@@ -38,8 +41,8 @@ class MetaAgent:
         self.execution_model = execution_model
 
     def _get_recorder_class(self):
-        from datasets.dynamicmem.env import DynamicMemRecorder
-        return DynamicMemRecorder
+        from baselines.alma.registry import resolve
+        return resolve(self.dataset)[2]
 
     def read_memo_info(
         self,
@@ -79,7 +82,7 @@ class MetaAgent:
             memo_SHA, mode='eval',
             n_score_bins=n_score_bins, samples_per_bin=samples_per_bin,
         )
-        sys_msg, user_msg, output_schema = build_analysis_prompt(memo_info)
+        sys_msg, user_msg, output_schema = build_analysis_prompt(memo_info, dataset=self.dataset)
         analysis_agent = Agent(
             system_prompt=sys_msg,
             output_schema=output_schema,
@@ -100,6 +103,7 @@ class MetaAgent:
             memo_info=memo_info,
             analysis_result=analysis_result,
             recorder=recorder,
+            dataset=self.dataset,
         )
         gen_code_agent = Agent(system_prompt=sys_msg, model=self.meta_model, timeout=600)
         code_str = await gen_code_agent.ask(user_msg, reasoning_effort='medium')
@@ -157,6 +161,7 @@ class MetaAgent:
                     code_str=code_str,
                     recorder=recorder,
                     error_msg=examine_log,
+                    dataset=self.dataset,
                 )
                 reflect_fix_agent = Agent(system_prompt=sys_msg, model=self.meta_model, timeout=600)
                 # Surface the reflection LLM call — without this, the main log

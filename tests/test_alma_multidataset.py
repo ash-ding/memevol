@@ -169,6 +169,17 @@ def test_memo_manager_archive_root_by_dataset():
     assert mm_dm.ARCHIVE_ROOT.name == "dynamicmem"
 
 
+def test_meta_agent_recorder_by_dataset():
+    from baselines.alma.meta_agent import MetaAgent
+    from datasets.locomo.env import LoCoMoRecorder
+    from datasets.dynamicmem.env import DynamicMemRecorder
+    ma = MetaAgent(dataset="locomo")
+    assert ma._get_recorder_class() is LoCoMoRecorder
+    assert ma.dataset == "locomo"
+    ma_dm = MetaAgent()  # default
+    assert ma_dm._get_recorder_class() is DynamicMemRecorder
+
+
 # ---------------- runner ----------------
 
 def main():
