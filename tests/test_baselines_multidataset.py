@@ -68,6 +68,88 @@ def test_answer_query_hook_default_and_override():
     assert out == "HELLO"
 
 
+def test_base_workflow_answer_query_default_call_signature():
+    """BaseWorkflow._answer_query default MUST set the system message and call
+    agent.ask(user_msg, with_history=False, reasoning_effort=...)."""
+    import asyncio
+    from common.workflow import BaseWorkflow
+    from common.harness_base import MemoStructure
+
+    class _Memo(MemoStructure):
+        async def general_update(self, r): return None
+        async def general_retrieve(self, r): return {}
+
+    calls = {}
+    class _StubAgent:
+        def __init__(self): self.messages = None
+        async def ask(self, user_msg, **kwargs):
+            calls["user_msg"] = user_msg
+            calls["kwargs"] = kwargs
+            calls["messages"] = self.messages
+            return "ANSWER"
+
+    # minimal BaseWorkflow: implement the 7 abstract hooks as no-ops
+    class _W(BaseWorkflow):
+        async def load_user_data(self, *a, **k): return None, []
+        async def phase1_log_init(self, *a, **k): return None
+        def build_query_recorder_init(self, *a, **k): return {}
+        def build_qa_prompt(self, *a, **k): return [{"role": "system", "content": ""}, {"role": "user", "content": ""}]
+        def extract_relevant_context(self, *a, **k): return None
+        def build_qa_metadata(self, *a, **k): return {}
+        async def log_qa_step(self, *a, **k): return None
+
+    w = _W(memo_class=_Memo, model="gpt-5-mini", update_type="all_at_once")
+    agent = _StubAgent()
+    loop = asyncio.new_event_loop()
+    try:
+        out = loop.run_until_complete(
+            w._answer_query(agent, "SYS", "USR", {}))
+    finally:
+        loop.close()
+    assert out == "ANSWER"
+    assert calls["messages"] == [{"role": "system", "content": "SYS"}]
+    assert calls["user_msg"] == "USR"
+    assert calls["kwargs"].get("with_history") is False
+    assert "reasoning_effort" in calls["kwargs"]
+
+
+def test_dynamicmem_answer_query_default_call_signature():
+    """DynamicMemWorkflow._answer_query default MUST call
+    agent.ask(user_msg, reasoning_effort=...) with NO system set and NO with_history."""
+    import asyncio
+    from datasets.dynamicmem.workflow import DynamicMemWorkflow
+    from common.harness_base import MemoStructure
+
+    class _Memo(MemoStructure):
+        async def general_update(self, r): return None
+        async def general_retrieve(self, r): return {}
+
+    calls = {}
+    class _StubAgent:
+        def __init__(self): self.messages = "UNSET"
+        async def ask(self, user_msg, **kwargs):
+            calls["user_msg"] = user_msg
+            calls["kwargs"] = kwargs
+            calls["messages"] = self.messages
+            return "ANSWER"
+
+    w = DynamicMemWorkflow(memo_class=_Memo, model="gpt-5-mini", update_type="all_at_once")
+    agent = _StubAgent()
+    loop = asyncio.new_event_loop()
+    try:
+        out = loop.run_until_complete(
+            w._answer_query(agent, "", "PROMPT", {}))
+    finally:
+        loop.close()
+    assert out == "ANSWER"
+    assert calls["user_msg"] == "PROMPT"
+    assert "reasoning_effort" in calls["kwargs"]
+    assert "with_history" not in calls["kwargs"]      # DynamicMem default does NOT pass with_history
+    assert calls["messages"] == "UNSET"               # DynamicMem default does NOT set agent.messages
+
+
+# -------------------- runner --------------------
+
 def main():
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = []
