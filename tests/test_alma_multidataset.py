@@ -49,6 +49,38 @@ def test_registry_unknown_raises():
         raise AssertionError("expected ValueError for unknown dataset")
 
 
+_REQUIRED_INFO_KEYS = {
+    "task_description", "gen_intro", "recorder_env_import", "recorder_class_name",
+    "gen_protocol", "code_usage", "design_goals", "reflection_protocol",
+    "reflection_code_usage", "analysis_protocol", "analysis_shape_a", "evidence_key",
+}
+
+
+def test_dataset_info_has_all_datasets_and_keys():
+    from baselines.alma.dataset_info import DATASET_INFO
+    from baselines.alma.registry import DATASETS
+    assert set(DATASET_INFO) == set(DATASETS)
+    for ds, info in DATASET_INFO.items():
+        missing = _REQUIRED_INFO_KEYS - set(info)
+        assert not missing, f"{ds} missing keys: {missing}"
+        for k in _REQUIRED_INFO_KEYS:
+            assert isinstance(info[k], str) and info[k], f"{ds}.{k} empty"
+
+
+def test_dataset_info_evidence_keys_and_recorders():
+    from baselines.alma.dataset_info import DATASET_INFO
+    assert DATASET_INFO["dynamicmem"]["evidence_key"] == "relevant_app_logs"
+    assert DATASET_INFO["locomo"]["evidence_key"] == "relevant_turns"
+    assert DATASET_INFO["longmemeval_s"]["evidence_key"] == "relevant_sessions"
+    assert DATASET_INFO["longmemeval_m"]["evidence_key"] == "relevant_sessions"
+    assert DATASET_INFO["locomo"]["recorder_class_name"] == "LoCoMoRecorder"
+    # each dataset's protocol names its own recorder.init shape
+    assert "app_logs" in DATASET_INFO["dynamicmem"]["gen_protocol"]
+    assert "conversation" in DATASET_INFO["locomo"]["gen_protocol"]
+    assert "sessions" in DATASET_INFO["longmemeval_s"]["gen_protocol"]
+    assert "question_date" in DATASET_INFO["longmemeval_s"]["gen_protocol"]
+
+
 # ---------------- runner ----------------
 
 def main():
