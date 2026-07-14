@@ -13,7 +13,7 @@
 # search loop's `sample`.
 #
 # Notes on semantics fixed by the heldout flow (not configurable here):
-#   - the split is ALWAYS test (`mode:` is ignored)
+#   - the split is ALWAYS test (heldout has no mode/smoke_test concept)
 #   - search-loop-only fields (steps, propose.*, proposer.*, sanity.*,
 #     seed.*, selection.*, prompts.*) are ignored
 # =============================================================================
@@ -38,8 +38,8 @@ harnesses:
 #            stage1/2, no threshold elimination; artifacts under <ds>/full/.
 #            Full test-split sizes for cost planning: DynamicMem 4 users ×
 #            ~400 items, LoCoMo 655 QA (cat 1-4), LongMemEval 200 questions.
-#   sample — the staged gauntlet exactly as `mode: test` runs it in the
-#            search loop (stage sizes/thresholds from the `datasets` block).
+#   sample — the staged gauntlet on the test split (stage sizes/thresholds
+#            from the `datasets` block).
 # -----------------------------------------------------------------------------
 coverage: full
 

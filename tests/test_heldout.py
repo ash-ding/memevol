@@ -102,7 +102,7 @@ def test_run_wires_coverage_and_writes_results():
     async def fake_evaluate_harness(hid, image_path, **kw):
         captured["hid"] = hid
         captured["coverage"] = kw.get("coverage")
-        captured["mode"] = kw.get("mode")
+        captured["split"] = kw.get("split")
         captured["datasets"] = list(kw.get("datasets_config", {}))
         return {"locomo": {"raw_score": 0.5, "score_max": 1, "stage": 4.0,
                            "tokens": 123, "robustness": 0.1, "eliminated": False}}
@@ -123,7 +123,7 @@ def test_run_wires_coverage_and_writes_results():
             H.ensure_image, H.evaluate_harness = orig_ei, orig_ev
 
         assert captured["coverage"] == "full"
-        assert captured["mode"] == "test"
+        assert captured["split"] == "test"
         assert captured["datasets"] == ["locomo"]
         results = json.loads((ws / "heldout_results.json").read_text())
         r = results["3_abcd1234"]
@@ -219,7 +219,7 @@ def test_evaluate_harness_full_single_pass():
             per_ds = asyncio.run(O.evaluate_harness(
                 hid, Path("/fake.sif"),
                 datasets_config={"locomo": {"stages": {}}},
-                mode="test", model="gpt-5-mini", judge_model="gpt-5-mini",
+                split="test", model="gpt-5-mini", judge_model="gpt-5-mini",
                 update_type="all_at_once", max_sample_concurrent=1,
                 memory_cache=False, coverage="full",
             ))
@@ -260,7 +260,7 @@ def test_evaluate_harness_sample_unchanged():
             per_ds = asyncio.run(O.evaluate_harness(
                 hid, Path("/fake.sif"),
                 datasets_config=ds_cfg,
-                mode="test", model="gpt-5-mini", judge_model="gpt-5-mini",
+                split="test", model="gpt-5-mini", judge_model="gpt-5-mini",
                 update_type="all_at_once", max_sample_concurrent=1,
                 memory_cache=False,
             ))
@@ -269,6 +269,35 @@ def test_evaluate_harness_sample_unchanged():
         # 0.42 clears the default locomo thresholds (0.30/0.35) → all 3 stages
         assert [c["stage"] for c in calls] == ["stage1", "stage2", "stage3"]
         assert per_ds["locomo"]["stage"] == 3.0
+
+
+def test_evaluate_harness_smoke_single_sanity_pass():
+    """smoke=True → one sanity-sized run, artifacts at the dataset root,
+    stage recorded as 0.0 (the old mode=dev semantics)."""
+    calls = []
+    with tempfile.TemporaryDirectory() as td, _test_workspace():
+        src = _mk_src_harness(td)
+        hid = H._stage_harness(src)
+        ds_cfg = {"locomo": {}}
+        O._resolve_dataset_stages("locomo", ds_cfg["locomo"])
+        orig = O.run_evaluation
+        O.run_evaluation = _fake_run_evaluation_factory(calls)
+        try:
+            per_ds = asyncio.run(O.evaluate_harness(
+                hid, Path("/fake.sif"),
+                datasets_config=ds_cfg,
+                split="search", smoke=True,
+                model="gpt-5-mini", judge_model="gpt-5-mini",
+                update_type="all_at_once", max_sample_concurrent=1,
+                memory_cache=False,
+            ))
+        finally:
+            O.run_evaluation = orig
+        assert [c["stage"] for c in calls] == ["sanity"]
+        assert calls[0]["split"] == "search"
+        assert per_ds["locomo"]["stage"] == 0.0
+        # artifacts at dataset root (no per-stage subdir)
+        assert (paths.harnesses_dir / hid / "locomo" / "score.json").exists()
 
 
 # ---------------- runner ----------------

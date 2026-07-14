@@ -142,7 +142,7 @@ host-specific. Override there if needed.)
 ## Quick start
 
 ```bash
-# 1-min smoke (mode: dev): seed harness on dynamicmem at sanity size (1 user × 1 checkpoint × 2 tasks)
+# 1-min smoke (smoke_test: true): seed harness on dynamicmem at sanity size (1 user × 1 checkpoint × 2 tasks)
 venv/bin/python -m forge.orchestrator --config configs/smoke.yaml
 
 # Smoke + 1 propose iteration (exercises the full propose → eval pipeline)
@@ -165,18 +165,20 @@ documented schema (every field, default, and effect).
 
 ## Run modes
 
-`mode` is the single user-facing knob:
+The orchestrator always runs the **search loop** on the search (training)
+split — the old `mode:` switch was removed 2026-07-14. Two entry points:
 
-| `mode` | Data split | Eval size | Sanity layer |
+| Entry | Data split | Eval size | Sanity layer |
 |---|---|---|---|
-| `search` (default) | search (training) split | full staged gauntlet (`stages.stage1..3` with thresholds) | respected (`sanity.enabled`) |
-| `test` | held-out test split | full staged gauntlet | respected |
-| `dev` | search split | one `stages.sanity_check`-sized run, no gauntlet | always skipped |
+| `forge.orchestrator` (default) | search split | full staged gauntlet (`stages.stage1..3` with thresholds) | respected (`sanity.enabled`) |
+| `forge.orchestrator --smoke-test` | search split | one `stages.sanity_check`-sized run, no gauntlet | always skipped |
+| `python -m forge.heldout` | held-out **test** split | `coverage: full` (whole split) by default, or the sampled gauntlet | n/a (harnesses already passed sanity in their own run) |
 
-`dev` is the "did my harness even import / run" smoke. `search` is
-training/exploration. `test` is final held-out evaluation. Per-benchmark
-stage sizes/thresholds live in each `datasets.<ds>.stages` config block
-(see `configs/search_example.yaml`).
+`--smoke-test` is the "did my harness even import / run" check. Held-out
+evaluation is deliberately a separate entry (frozen harnesses only — running
+the search loop on test data would optimize against the held-out split).
+Per-benchmark stage sizes/thresholds live in each `datasets.<ds>.stages`
+config block (see `configs/search_example.yaml`).
 
 ## Architecture
 

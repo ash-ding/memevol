@@ -20,10 +20,11 @@ RO dir bind):
                re-stratified into a bogus 180/120 split); the unregistered
                oracle file (contains gold answers) is shadowed by a stub.
 
-Isolation applies to split=search only (mode=search and mode=dev, including
-the sanity tier). mode=test / forge.heldout keep the full bind: the leakage
-direction is search→test (heldout harnesses are frozen), and the positional
-split derivations don't survive test-only files.
+Isolation applies to every orchestrator run (the orchestrator only ever
+drives the search split, including the sanity tier and smoke-test runs).
+forge.heldout (test split) keeps the full bind: the leakage direction is
+search→test (heldout harnesses are frozen), and the positional split
+derivations don't survive test-only files.
 
 KNOWN LIMIT (see PROGRESS): the eval container still exposes the CURRENT
 split's gold answers to harness code — fixing that cheating channel needs a

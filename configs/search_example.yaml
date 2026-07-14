@@ -30,21 +30,17 @@ run_name: my_first_search
 # "evaluate the seed (if any) and exit" — useful for dry runs.
 steps: 5
 
-# search | test | dev — the ONE user-facing run-mode switch.
-#   search — training/exploration phase. Reads the SEARCH (training) split
-#            (e.g. DynamicMem users 001-006, LoCoMo conv-26..conv-44,
-#            LongMemEval 300 stratified question_ids). Runs the full staged
-#            gauntlet (stage1→2→3 with thresholds). Sanity layer respects
-#            `sanity.enabled` (default on).
-#   test   — held-out evaluation phase. Reads the TEST split. Full staged
-#            gauntlet. Sanity respects `sanity.enabled`.
-#   dev    — quick dev verification ("smoke / iterate"). Reads the SEARCH
-#            split (never touches held-out test). Runs the whole pipeline
-#            ONCE per benchmark at `stages.sanity_check` sizes — no gauntlet,
-#            no thresholds, and the sanity gate is ALWAYS skipped (dev IS the
-#            sanity-size quick check).
-#            (Renamed from `status:`/`devtest` on 2026-07-07.)
-mode: search
+# The orchestrator always runs the SEARCH loop on the search (training)
+# split (e.g. DynamicMem users 001-006, LoCoMo conv-26..conv-44, LongMemEval
+# 300 stratified question_ids) — the old `mode:` switch was removed
+# 2026-07-14. Held-out evaluation is a separate entry point:
+#   venv/bin/python -m forge.heldout --config configs/test_example.yaml
+#
+# smoke_test: true runs the whole pipeline ONCE per benchmark at
+# `stages.sanity_check` sizes (search split; no gauntlet, no thresholds, and
+# the sanity gate is skipped — the run IS the sanity-size check). A cheap
+# end-to-end pipeline verification. CLI: --smoke-test.
+smoke_test: false
 
 # OpenAI model used by the QA agent inside each harness eval (NOT the
 # proposer — see `proposer.model`). Anything supported by OpenAI's

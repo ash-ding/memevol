@@ -1,6 +1,6 @@
 """Forge outer loop.
 
-Per-harness flow (`mode=search` or `test`):
+Per-harness flow (search loop):
 
     propose → ensure_image
            → sanity_check_harness (small real-data run per dataset, if
@@ -11,7 +11,7 @@ Per-harness flow (`mode=search` or `test`):
                              └─ all retries exhausted → skip eval,
                                  enter frontier with sanity_failed + score=0
 
-For `mode=dev`: skip sanity entirely and run the evaluator once per
+For `smoke_test: true`: skip sanity entirely and run the evaluator once per
 benchmark at `stages.sanity_check` sizes (dev IS the sanity-size verification).
 
 Two ways to launch:
@@ -21,7 +21,7 @@ Two ways to launch:
 
     # (b) CLI-first (quick iteration; uniform params across all datasets)
     python -m forge.orchestrator --steps 3 --datasets dynamicmem,locomo \
-        --mode dev
+        --smoke-test
 
 CLI flags always override the config file when both are given. See
 `configs/smoke.yaml` and `configs/search.yaml` for the full config schema.
@@ -101,22 +101,29 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # search — training/exploration on the search (training) split, full staged gauntlet
     # test   — held-out evaluation on the test split, full staged gauntlet
     # dev    — run the whole pipeline at stages.sanity_check sizes only (search split, no gauntlet, no sanity gate)
-    "mode": "search",
+    # Smoke test: run the WHOLE pipeline once per benchmark at
+    # stages.sanity_check sizes (search split; no gauntlet, no thresholds,
+    # no sanity gate — the run IS the sanity-size check). Costs cents;
+    # use to verify the pipeline end-to-end. CLI: --smoke-test.
+    # Default False = the normal search loop. Held-out evaluation is NOT a
+    # mode of this orchestrator — use `python -m forge.heldout`.
+    "smoke_test": False,
     "model": "gpt-5-mini",
     "judge_model": "gpt-5-mini",
     "update_type": "all_at_once",
     "max_sample_concurrent": 3,
-    # Evaluation coverage (applies to mode=search AND mode=test):
+    # Evaluation coverage (search loop AND forge.heldout):
     #   sample — the staged gauntlet (stage1→2→3 nested sampling + thresholds)
     #   full   — ONE whole-split evaluation per benchmark (no stage1/2, no
     #            elimination; wire stage "full", artifacts under <ds>/full/).
-    # The sanity gate and mode=dev are unaffected. CLI: --coverage.
+    # The sanity gate and smoke_test runs are unaffected. CLI: --coverage.
     "coverage": "sample",
     # Search-mode data isolation: overlay-bind search-split-only data into
     # BOTH containers so the held-out test split (questions + gold answers)
     # is technically invisible to the proposer agent and to harness code.
-    # Applies to split=search (mode search/dev incl. sanity); mode=test and
-    # forge.heldout always see full data. CLI: --no-data-isolation.
+    # The orchestrator always runs split=search, so this applies to every
+    # run (incl. sanity); forge.heldout (test split) sees full data.
+    # CLI: --no-data-isolation.
     "data_isolation": True,
     # Cross-stage memory cache: persist each user's Phase-1 memory per
     # (harness, dataset) and reuse it at deeper gauntlet stages (nested
@@ -195,7 +202,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "k_per_step": 2,
     },
     "sanity": {
-        "enabled": True,      # run the pre-eval sanity gate (mode=search/test; mode=dev always skips)
+        "enabled": True,      # run the pre-eval sanity gate (smoke_test runs always skip)
         "max_retries": 2,     # on sanity failure, call propose_with_fix up to this many times
     },
     "seed": {
@@ -426,9 +433,25 @@ def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
 
     if "status" in cfg:
         raise ValueError(
-            "top-level `status:` was renamed to `mode:` "
-            "(search / test / dev; the old `devtest` value is now `dev`). "
+            "top-level `status:` is long gone (it briefly became `mode:`, "
+            "which was itself removed 2026-07-14). The orchestrator always "
+            "runs the search loop now; `status: devtest` → `smoke_test: true`; "
+            "held-out evaluation → `python -m forge.heldout`. "
             "Update the YAML and re-run."
+        )
+    if "mode" in cfg:
+        _mode_val = cfg.get("mode")
+        _hint = {
+            "search": "delete the `mode:` line — the search loop is now the "
+                      "orchestrator's only behavior",
+            "dev": "replace it with `smoke_test: true`",
+            "test": "use the dedicated held-out entry instead: "
+                    "`python -m forge.heldout --config configs/test_example.yaml` "
+                    "(running the SEARCH LOOP on the test split optimizes "
+                    "against held-out data and was removed)",
+        }.get(_mode_val, "delete the `mode:` line")
+        raise ValueError(
+            f"top-level `mode:` was removed (2026-07-14). Got `mode: {_mode_val}` — {_hint}."
         )
     if "memory_dumps" in cfg:
         raise ValueError(
@@ -437,15 +460,9 @@ def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
             "memory, unpickle harnesses/<id>/<ds>/memory_cache/*.pkl instead. "
             "Delete the field from the YAML and re-run."
         )
-    if cfg.get("mode", "search") not in ("search", "test", "dev"):
-        raise ValueError(
-            f"mode must be one of search / test / dev, got {cfg.get('mode')!r} "
-            "(the old `devtest` value is now `dev`)"
-        )
-
     # Top-level CLI overrides (each applied only if explicitly provided)
     for key in (
-        "steps", "mode", "model", "judge_model",
+        "steps", "model", "judge_model",
         "update_type", "max_sample_concurrent",
     ):
         val = getattr(args, key, None)
@@ -483,6 +500,8 @@ def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
         cfg["memory_cache"] = False
     if getattr(args, "no_data_isolation", False):
         cfg["data_isolation"] = False
+    if getattr(args, "smoke_test", False):
+        cfg["smoke_test"] = True
     if args.no_sanity:
         cfg["sanity"]["enabled"] = False
     if args.sanity_max_retries is not None:
@@ -710,12 +729,12 @@ def _resolve_proposer_for_agent(
 _ISOLATION_BINDS_CACHE: Optional[List[str]] = None
 
 
-def _isolation_binds(cfg: Dict[str, Any], split: str) -> Optional[List[str]]:
-    """Search-split overlay binds for split=search runs (None otherwise or
-    when disabled). Staged once per orchestrator process into
-    workspace/<run>/data_staging/ and cached."""
+def _isolation_binds(cfg: Dict[str, Any]) -> Optional[List[str]]:
+    """Search-split overlay binds (None when disabled). The orchestrator only
+    ever runs the search split (held-out evaluation lives in forge.heldout),
+    so isolation is purely flag-gated. Staged once per process; cached."""
     global _ISOLATION_BINDS_CACHE
-    if split != "search" or not cfg.get("data_isolation", True):
+    if not cfg.get("data_isolation", True):
         return None
     if _ISOLATION_BINDS_CACHE is None:
         from forge.data_isolation import stage_search_data
@@ -1109,7 +1128,6 @@ async def sanity_check_harness(
     image_path: Path,
     *,
     datasets_config: Dict[str, Dict[str, Any]],
-    split: str,   # search | test — which benchmark split (mode=dev never reaches here)
     model: str,
     judge_model: str,
     update_type: str,
@@ -1135,7 +1153,9 @@ async def sanity_check_harness(
                 image_path=image_path,
                 out_dir=run_dir,
                 dataset=ds,
-                split=split,
+                # Sanity exists only inside the search loop — always the
+                # search split (held-out flows never run sanity).
+                split="search",
                 stage="sanity",
                 stage_spec=stage_wire_spec(ds, params["stages"]["sanity_check"]),
                 model=model,
@@ -1168,7 +1188,8 @@ async def evaluate_harness(
     image_path: Path,
     *,
     datasets_config: Dict[str, Dict[str, Any]],
-    mode: str,                    # search | test | dev
+    split: str = "search",        # search | test — which benchmark split
+    smoke: bool = False,          # True = one sanity_check-sized pass, no gauntlet
     model: str,
     judge_model: str,
     update_type: str,
@@ -1193,7 +1214,7 @@ async def evaluate_harness(
     token_usage.json are copied to the dataset root for browsing/back-compat,
     and a `stages.json` summary is written alongside.
 
-    `mode=dev` bypasses the gauntlet entirely: one sanity_check-sized
+    `smoke=True` bypasses the gauntlet entirely: one sanity_check-sized
     run per benchmark on the search split, published at the dataset root.
 
     Returns per-dataset metrics dicts (raw_score, score_max, per_user_stddev,
@@ -1253,17 +1274,17 @@ async def evaluate_harness(
                     )
             return crashed
 
-        if mode == "dev":
+        if smoke:
             # Sanity-size single run, no gating, artifacts at the dataset root.
             spec = stage_wire_spec(ds, params["stages"]["sanity_check"])
             await _run_stage("sanity", spec, dst_root, "search")
             m = _read_dataset_metrics(harness_dir, ds)
-            m["stage"] = 0.0  # 0 = sanity-size dev run (not a gauntlet tier)
+            m["stage"] = 0.0  # 0 = sanity-size smoke run (not a gauntlet tier)
             m["eliminated"] = False
             scores[ds] = m
             continue
 
-        # ---- staged gauntlet OR single full pass (mode IS the split) ----
+        # ---- staged gauntlet OR single full pass on `split` ----
         if coverage == "full":
             plan = [("full", full_wire_spec(ds), None)]
         else:
@@ -1273,7 +1294,7 @@ async def evaluate_harness(
         reached = ""
         eliminated = False
         for stage_name, spec, threshold in plan:
-            crashed = await _run_stage(stage_name, spec, dst_root / stage_name, mode)
+            crashed = await _run_stage(stage_name, spec, dst_root / stage_name, split)
             m = _read_dataset_metrics(harness_dir, ds, subdir=stage_name)
             score_max = int(m.get("score_max", 10)) or 1
             normalized = float(m.get("raw_score", 0.0)) / score_max
@@ -1357,12 +1378,11 @@ async def propose_eval_one(
     """
     datasets_config = cfg["datasets"]
     dataset_names = list(datasets_config.keys())
-    mode = cfg["mode"]   # search | test | dev
 
-    # Sanity is skipped entirely when mode=dev (dev IS a sanity-size quick
+    # Sanity is skipped entirely for smoke-test runs (the run IS a sanity-size quick
     # check by definition; running another sanity layer is redundant).
     # For search/test, sanity respects cfg["sanity"]["enabled"].
-    sanity_enabled = (mode != "dev") and cfg["sanity"]["enabled"]
+    sanity_enabled = (not cfg["smoke_test"]) and cfg["sanity"]["enabled"]
 
     harness_dir = paths.harnesses_dir / new_id
     final_id = new_id  # may get renamed to f"{new_id}_{hash8}" below
@@ -1393,9 +1413,7 @@ async def propose_eval_one(
                 prompts_version=cfg["prompts"]["version"],
                 claude_auth=claude_auth,
                 vertex_cfg=vertex_cfg,
-                extra_binds=_isolation_binds(
-                    cfg, "search" if cfg["mode"] in ("search", "dev") else cfg["mode"]
-                ),
+                extra_binds=_isolation_binds(cfg),
             )
         except (TimeoutError, RuntimeError) as exc:
             # propose() failed — most likely subprocess exited rc!=0 (auth 401,
@@ -1437,13 +1455,12 @@ async def propose_eval_one(
             passed, error_trace = await sanity_check_harness(
                 new_id, image_path,
                 datasets_config=datasets_config,
-                split=cfg["mode"],   # sanity only runs at mode search/test
                 model=cfg["model"], judge_model=cfg["judge_model"],
                 update_type=cfg["update_type"],
                 max_sample_concurrent=cfg["max_sample_concurrent"],
                 gpu=cfg["gpu"]["enabled"],
                 llm_cfg=cfg.get("llm"),
-                data_isolation_binds=_isolation_binds(cfg, cfg["mode"]),
+                data_isolation_binds=_isolation_binds(cfg),
             )
             if passed:
                 sanity_status = "passed" if attempt == 0 else f"passed_on_retry_{attempt}"
@@ -1474,9 +1491,7 @@ async def propose_eval_one(
                     prompts_version=cfg["prompts"]["version"],
                     claude_auth=claude_auth,
                     vertex_cfg=vertex_cfg,
-                    extra_binds=_isolation_binds(
-                        cfg, "search" if cfg["mode"] in ("search", "dev") else cfg["mode"]
-                    ),
+                    extra_binds=_isolation_binds(cfg),
                 )
             except (TimeoutError, RuntimeError) as exc:
                 # propose_with_fix subprocess died — same infra failure mode as
@@ -1514,7 +1529,8 @@ async def propose_eval_one(
     per_ds = await evaluate_harness(
         final_id, image_path,
         datasets_config=datasets_config,
-        mode=mode,
+        split="search",
+        smoke=cfg["smoke_test"],
         model=cfg["model"], judge_model=cfg["judge_model"],
         update_type=cfg["update_type"],
         max_sample_concurrent=cfg["max_sample_concurrent"],
@@ -1522,9 +1538,7 @@ async def propose_eval_one(
         gpu=cfg["gpu"]["enabled"],
         llm_cfg=cfg.get("llm"),
         coverage=cfg.get("coverage", "sample"),
-        data_isolation_binds=_isolation_binds(
-            cfg, "search" if cfg["mode"] == "dev" else cfg["mode"]
-        ),
+        data_isolation_binds=_isolation_binds(cfg),
     )
     return final_id, per_ds, sanity_status, _read_parent_ids(harness_dir)
 
@@ -1875,7 +1889,8 @@ async def _adopt_orphan(
     per_ds = await evaluate_harness(
         name, image_path,
         datasets_config=cfg["datasets"],
-        mode=cfg["mode"],
+        split="search",
+        smoke=cfg["smoke_test"],
         model=cfg["model"], judge_model=cfg["judge_model"],
         update_type=cfg["update_type"],
         max_sample_concurrent=cfg["max_sample_concurrent"],
@@ -1883,9 +1898,7 @@ async def _adopt_orphan(
         gpu=cfg["gpu"]["enabled"],
         llm_cfg=cfg.get("llm"),
         coverage=cfg.get("coverage", "sample"),
-        data_isolation_binds=_isolation_binds(
-            cfg, "search" if cfg["mode"] == "dev" else cfg["mode"]
-        ),
+        data_isolation_binds=_isolation_binds(cfg),
     )
     entry = _build_adopted_entry(harness_dir, per_ds)
     frontier.add(entry)
@@ -2041,13 +2054,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
              "`stages` sizes/thresholds (customize via YAML for non-defaults).",
     )
     parser.add_argument(
-        "--mode",
-        default=None,
-        choices=["search", "test", "dev"],
-        help="search = training/exploration on the search (training) split; "
-             "test = held-out evaluation on the test split; "
-             "dev = run the whole pipeline at stages.sanity_check sizes "
-             "(search split, no gauntlet, no sanity gate).",
+        "--smoke-test",
+        action="store_true",
+        help="Run the whole pipeline once per benchmark at "
+             "stages.sanity_check sizes (search split; no gauntlet, no "
+             "sanity gate) — a cheap end-to-end pipeline check. Without "
+             "this flag the orchestrator runs the normal search loop. "
+             "Held-out evaluation: use `python -m forge.heldout`.",
     )
 
     parser.add_argument("--model", default=None)
@@ -2180,9 +2193,7 @@ def main() -> None:
     log.info(
         "data isolation: "
         + ("ON (search-split-only container binds)"
-           if cfg.get("data_isolation", True) and cfg["mode"] != "test"
-           else "off" if not cfg.get("data_isolation", True)
-           else "n/a (mode=test sees full data)")
+           if cfg.get("data_isolation", True) else "OFF (--no-data-isolation)")
     )
     cfg_snapshot = _write_resolved_config(cfg)
     log.info(

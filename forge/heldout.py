@@ -14,9 +14,9 @@ Flow per harness:
   1. Copy the harness dir into this run's workspace (source stays untouched;
      per-run isolation, same principle as the search loop).
   2. ensure_image (per-harness delta resolved from its requirements.txt).
-  3. evaluate_harness(mode="test", coverage=...) — coverage="full" (the
+  3. evaluate_harness(split="test", coverage=...) — coverage="full" (the
      default here) runs ONE whole-test-split pass per benchmark; "sample"
-     runs the staged gauntlet exactly as mode=test does in the search loop.
+     runs the staged gauntlet at the configured stage sizes.
 
 Outputs under workspace/<run_name>/:
   heldout_results.json   {harness_id: {objectives (accuracy, accuracy_<ds>,
@@ -105,7 +105,7 @@ async def _run(cfg: Dict[str, Any], harness_paths: List[str]) -> None:
         per_ds = await evaluate_harness(
             hid, image_path,
             datasets_config=cfg["datasets"],
-            mode="test",
+            split="test",
             model=cfg["model"], judge_model=cfg["judge_model"],
             update_type=cfg["update_type"],
             max_sample_concurrent=cfg["max_sample_concurrent"],
@@ -183,7 +183,7 @@ def main() -> None:
     paths.workspace.mkdir(parents=True, exist_ok=True)
     _attach_run_log()
     _write_resolved_config(cfg)
-    log.info(f"heldout run: {paths.workspace} (mode=test, coverage={cfg['coverage']})")
+    log.info(f"heldout run: {paths.workspace} (test split, coverage={cfg['coverage']})")
 
     asyncio.run(_run(cfg, harnesses))
 

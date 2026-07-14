@@ -173,12 +173,11 @@ def test_isolation_binds_gating():
     DI.stage_search_data = lambda *a, **k: calls.append(1) or ["fake:/x:ro"]
     try:
         with _test_workspace():
-            assert O._isolation_binds({"data_isolation": True}, "test") is None
-            assert O._isolation_binds({"data_isolation": False}, "search") is None
-            binds = O._isolation_binds({"data_isolation": True}, "search")
+            assert O._isolation_binds({"data_isolation": False}) is None
+            binds = O._isolation_binds({"data_isolation": True})
             assert binds == ["fake:/x:ro"]
             # process-level cache — second call doesn't restage
-            assert O._isolation_binds({"data_isolation": True}, "search") is binds
+            assert O._isolation_binds({"data_isolation": True}) is binds
             assert len(calls) == 1
     finally:
         DI.stage_search_data = orig

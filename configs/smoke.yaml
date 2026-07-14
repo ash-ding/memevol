@@ -2,7 +2,7 @@
 # Usage:
 #   venv/bin/python -m forge.orchestrator --config configs/smoke.yaml
 steps: 0                  # just evaluate the seed harness; no propose step
-mode: dev                 # search split + sanity_check sizes + no gauntlet/sanity gate
+smoke_test: true          # search split + sanity_check sizes + no gauntlet/sanity gate
 
 # Smoke needs SOMETHING to evaluate (steps=0 + no seed = no work),
 # so opt into the seed harness here. The default for normal runs is off.

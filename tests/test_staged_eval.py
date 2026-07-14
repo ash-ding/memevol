@@ -300,12 +300,17 @@ def test_wire_spec_normalization():
     assert lme == {"n_samples": 50}
 
 
-def test_config_mode_dev_accepted():
-    cfg = _resolve("mode: dev\ndatasets:\n  dynamicmem: {}\n")
-    assert cfg["mode"] == "dev"
-    # default is search
-    cfg2 = _resolve("datasets:\n  dynamicmem: {}\n")
-    assert cfg2["mode"] == "search"
+def test_config_mode_removed():
+    # `mode:` was removed 2026-07-14 — any value must hit the migration guard.
+    try:
+        _resolve("mode: dev\ndatasets:\n  dynamicmem: {}\n")
+    except ValueError as exc:
+        assert "mode" in str(exc)
+    else:
+        raise AssertionError("mode: dev accepted")
+    # default behavior needs no mode key at all
+    cfg = _resolve("datasets:\n  dynamicmem: {}\n")
+    assert "mode" not in cfg and cfg["smoke_test"] is False
 
 
 def test_config_old_status_key_error():
@@ -413,6 +418,50 @@ def test_selection_accepts_full_stage():
         "accuracy": 0.5, "accuracy_locomo": 0.5, "stage_locomo": 2.0,
     })
     assert not _fully_staged(e2)
+
+
+# ---------------- mode removal: migration guards + smoke_test ----------------
+
+def test_mode_migration_guards():
+    import yaml
+    from forge.orchestrator import build_arg_parser, _resolve_config
+    hints = {"search": "delete", "dev": "smoke_test", "test": "forge.heldout"}
+    with tempfile.TemporaryDirectory() as td:
+        for val, hint in hints.items():
+            p = os.path.join(td, f"{val}.yaml")
+            with open(p, "w") as f:
+                yaml.safe_dump({"datasets": {"locomo": {}}, "mode": val}, f)
+            try:
+                _resolve_config(build_arg_parser().parse_args(["--config", p]))
+            except ValueError as exc:
+                assert "mode" in str(exc) and hint in str(exc), (val, str(exc))
+            else:
+                raise AssertionError(f"mode: {val} accepted")
+
+
+def test_smoke_test_flag():
+    import yaml
+    from forge.orchestrator import build_arg_parser, _resolve_config
+    with tempfile.TemporaryDirectory() as td:
+        p = os.path.join(td, "c.yaml")
+        with open(p, "w") as f:
+            yaml.safe_dump({"datasets": {"locomo": {}}}, f)
+        cfg = _resolve_config(build_arg_parser().parse_args(["--config", p]))
+        assert cfg["smoke_test"] is False
+        cfg = _resolve_config(build_arg_parser().parse_args(
+            ["--config", p, "--smoke-test"]))
+        assert cfg["smoke_test"] is True
+
+
+def test_smoke_yaml_parses_with_smoke_test():
+    from forge.orchestrator import build_arg_parser, _resolve_config
+    cfg_path = os.path.join(REPO, "configs", "smoke.yaml")
+    cfg = _resolve_config(build_arg_parser().parse_args(["--config", cfg_path]))
+    assert cfg["smoke_test"] is True
+    for name in ("search.yaml", "search_mini.yaml", "search_example.yaml"):
+        cfg = _resolve_config(build_arg_parser().parse_args(
+            ["--config", os.path.join(REPO, "configs", name)]))
+        assert cfg["smoke_test"] is False and "mode" not in cfg
 
 
 # ---------------- runner ----------------
