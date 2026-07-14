@@ -1,0 +1,86 @@
+# =============================================================================
+# configs/test_example.yaml — held-out test config reference (forge.heldout).
+#
+# Evaluates SPECIFIC harnesses on the held-out TEST split, without the search
+# loop's proposer / sanity gate / frontier. Launch:
+#
+#     venv/bin/python -m forge.heldout --config configs/test_example.yaml
+#
+# CLI flags override matching YAML fields; `--harness <dir>` (repeatable)
+# REPLACES the `harnesses:` list below entirely. Fields you omit fall back to
+# `forge/orchestrator.py::DEFAULT_CONFIG` — except `coverage`, which defaults
+# to `full` in the heldout flow (final-numbers semantics) rather than the
+# search loop's `sample`.
+#
+# Notes on semantics fixed by the heldout flow (not configurable here):
+#   - the split is ALWAYS test (`mode:` is ignored)
+#   - search-loop-only fields (steps, propose.*, proposer.*, sanity.*,
+#     seed.*, selection.*, prompts.*) are ignored
+# =============================================================================
+
+# Per-run workspace dir → workspace/heldout_<run_name>/ (the heldout_ prefix
+# is added automatically unless the name already starts with "heldout").
+run_name: my_heldout
+
+# -----------------------------------------------------------------------------
+# WHAT to evaluate — harness directories (each must contain harness.py).
+# Relative paths resolve against the CWD you launch from (use the project
+# root). Sources are COPIED into this run's workspace and never modified;
+# directory basenames must be distinct (they become the harness ids).
+# -----------------------------------------------------------------------------
+harnesses:
+  - workspace/my_search_run/harnesses/3_9f00aa11
+  - seeds/no_memory        # e.g. include the trivial baseline for reference
+
+# -----------------------------------------------------------------------------
+# HOW MUCH to evaluate.
+#   full   — ONE whole-test-split pass per benchmark (heldout default): no
+#            stage1/2, no threshold elimination; artifacts under <ds>/full/.
+#            Full test-split sizes for cost planning: DynamicMem 4 users ×
+#            ~400 items, LoCoMo 655 QA (cat 1-4), LongMemEval 200 questions.
+#   sample — the staged gauntlet exactly as `mode: test` runs it in the
+#            search loop (stage sizes/thresholds from the `datasets` block).
+# -----------------------------------------------------------------------------
+coverage: full
+
+# -----------------------------------------------------------------------------
+# Benchmarks to evaluate on. Same schema as the search configs; the `stages`
+# blocks are consumed only when coverage=sample (omitted → family defaults,
+# see forge/orchestrator.py::DEFAULT_STAGES).
+# -----------------------------------------------------------------------------
+datasets:
+  dynamicmem:
+    judge_model: gpt-5.4-2026-03-05   # official TCE judge (downgrade to save cost)
+  locomo: {}
+  longmemeval_s: {}
+
+# QA / retrieve agent model inside the harness eval. Provider-routed by name
+# (gpt-*/o* → OpenAI; claude-* → Anthropic via the llm block below); optional
+# "/effort" suffix pins reasoning effort.
+model: gpt-5-mini/low
+
+# Global judge fallback (per-dataset judge_model above wins).
+judge_model: gpt-5-mini
+
+# Anthropic transport for claude-* models (ignored for OpenAI models).
+llm:
+  anthropic_transport: api    # api | vertex
+  vertex:
+    project_id: itpc-gcp-ai-eng-claude
+    region: us-east5
+    credentials: null
+
+# Phase-1 chunking for general_update (all_at_once | chunked | sequential).
+# Use the SAME value as the search run that produced the harness — it is part
+# of the memory-cache identity and of what the harness was selected under.
+update_type: all_at_once
+
+# Parallel users/conversations per Singularity exec.
+max_sample_concurrent: 3
+
+# Reuse Phase-1 memory snapshots across stages (and across sample→full runs
+# within this workspace). Recommended on.
+memory_cache: true
+
+gpu:
+  enabled: false

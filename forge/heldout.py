@@ -1,9 +1,14 @@
 """Dedicated held-out test entry point — evaluate specific harness(es) on the
 test split, WITHOUT the search loop's proposer / sanity gate / frontier.
 
-    venv/bin/python -m forge.heldout --config configs/search.yaml \\
-        --harness workspace/<run>/harnesses/3_9f00aa11 [--harness ...] \\
-        [--coverage full|sample] [--run-name my_heldout] [--datasets locomo,...]
+    # Config-first (see configs/test_example.yaml for the annotated schema —
+    # `harnesses:` lists the target dirs right in the YAML):
+    venv/bin/python -m forge.heldout --config configs/test_example.yaml
+
+    # CLI overrides: --harness (repeatable) REPLACES the YAML `harnesses:`
+    # list; every orchestrator flag (--datasets, --coverage, ...) works too.
+    venv/bin/python -m forge.heldout --config configs/test_example.yaml \\
+        --harness workspace/<run>/harnesses/3_9f00aa11 [--coverage sample]
 
 Flow per harness:
   1. Copy the harness dir into this run's workspace (source stays untouched;
@@ -56,10 +61,9 @@ def _heldout_arg_parser() -> argparse.ArgumentParser:
     plus the heldout-specific --harness flag and a full-coverage default."""
     parser = build_arg_parser()
     parser.add_argument(
-        "--harness", action="append", required=True, dest="harnesses",
-        metavar="DIR",
-        help="Path to a harness directory (must contain harness.py). "
-             "Repeat for several harnesses.",
+        "--harness", action="append", dest="harnesses", metavar="DIR",
+        help="Path to a harness directory (must contain harness.py). Repeat "
+             "for several. Overrides (replaces) the config's `harnesses:` list.",
     )
     return parser
 
@@ -135,20 +139,42 @@ async def _run(cfg: Dict[str, Any], harness_paths: List[str]) -> None:
         )
 
 
+def _yaml_raw(args) -> Dict[str, Any]:
+    """The --config YAML as written (pre-merge) — for heldout-specific keys
+    (`harnesses:`) and for distinguishing explicit YAML values from
+    DEFAULT_CONFIG fallbacks (`coverage`)."""
+    if not getattr(args, "config", None):
+        return {}
+    with open(args.config) as f:
+        return yaml.safe_load(f) or {}
+
+
+def _resolve_harnesses(args, raw_yaml: Dict[str, Any]) -> List[str]:
+    """CLI --harness (repeatable) REPLACES the YAML `harnesses:` list."""
+    if getattr(args, "harnesses", None):
+        return list(args.harnesses)
+    yaml_harnesses = raw_yaml.get("harnesses") or []
+    if not isinstance(yaml_harnesses, list) or not yaml_harnesses:
+        raise SystemExit(
+            "no harnesses to evaluate — pass --harness <dir> (repeatable) or "
+            "set a `harnesses:` list in the config "
+            "(see configs/test_example.yaml)"
+        )
+    return [str(h) for h in yaml_harnesses]
+
+
 def main() -> None:
     args = _heldout_arg_parser().parse_args()
     _setup_logging(getattr(args, "verbose", False))
 
     cfg = _resolve_config(args)
+    raw_yaml = _yaml_raw(args)
+    harnesses = _resolve_harnesses(args, raw_yaml)
     # Held-out evaluation is a final-numbers flow — default to FULL coverage.
     # Precedence: --coverage CLI > explicit `coverage:` in the YAML > "full"
     # (DEFAULT_CONFIG's "sample" is a search-loop default, not a heldout one).
     if getattr(args, "coverage", None) is None:
-        yaml_coverage = None
-        if getattr(args, "config", None):
-            with open(args.config) as f:
-                yaml_coverage = (yaml.safe_load(f) or {}).get("coverage")
-        cfg["coverage"] = yaml_coverage or "full"
+        cfg["coverage"] = raw_yaml.get("coverage") or "full"
 
     run_name = cfg.get("run_name") or _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     if not str(run_name).startswith("heldout"):
@@ -159,7 +185,7 @@ def main() -> None:
     _write_resolved_config(cfg)
     log.info(f"heldout run: {paths.workspace} (mode=test, coverage={cfg['coverage']})")
 
-    asyncio.run(_run(cfg, args.harnesses))
+    asyncio.run(_run(cfg, harnesses))
 
 
 if __name__ == "__main__":

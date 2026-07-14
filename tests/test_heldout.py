@@ -132,6 +132,60 @@ def test_run_wires_coverage_and_writes_results():
         assert r["per_ds"]["locomo"]["tokens"] == 123
 
 
+# ---------------- config-driven harness resolution ----------------
+
+def test_harnesses_from_yaml():
+    import argparse, yaml
+    with tempfile.TemporaryDirectory() as td:
+        cfg_path = Path(td) / "t.yaml"
+        cfg_path.write_text(yaml.safe_dump(
+            {"harnesses": ["a/b/1_x", "seeds/no_memory"]}))
+        args = argparse.Namespace(config=str(cfg_path), harnesses=None)
+        got = H._resolve_harnesses(args, H._yaml_raw(args))
+        assert got == ["a/b/1_x", "seeds/no_memory"]
+
+
+def test_cli_harness_replaces_yaml():
+    import argparse
+    args = argparse.Namespace(config=None, harnesses=["cli/one"])
+    got = H._resolve_harnesses(args, {"harnesses": ["yaml/other"]})
+    assert got == ["cli/one"]
+
+
+def test_no_harnesses_anywhere_errors():
+    import argparse
+    args = argparse.Namespace(config=None, harnesses=None)
+    try:
+        H._resolve_harnesses(args, {})
+    except SystemExit as exc:
+        assert "harnesses" in str(exc)
+    else:
+        raise AssertionError("expected SystemExit")
+
+
+def test_test_example_yaml_parses():
+    """configs/test_example.yaml must survive _resolve_config + carry the
+    heldout keys (placeholder harness paths are NOT existence-checked here)."""
+    import yaml
+    from forge.orchestrator import build_arg_parser, _resolve_config
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cfg_path = os.path.join(repo, "configs", "test_example.yaml")
+    raw = yaml.safe_load(open(cfg_path))
+    assert isinstance(raw.get("harnesses"), list) and raw["harnesses"]
+    assert raw.get("coverage") == "full"
+    cfg = _resolve_config(build_arg_parser().parse_args(["--config", cfg_path]))
+    assert cfg["coverage"] == "full"
+    assert set(cfg["datasets"]) == {"dynamicmem", "locomo", "longmemeval_s"}
+
+
+def test_search_example_yaml_parses():
+    from forge.orchestrator import build_arg_parser, _resolve_config
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    cfg_path = os.path.join(repo, "configs", "search_example.yaml")
+    cfg = _resolve_config(build_arg_parser().parse_args(["--config", cfg_path]))
+    assert cfg["coverage"] == "sample"
+
+
 # ---------------- evaluate_harness coverage=full integration ----------------
 
 def _fake_run_evaluation_factory(calls):

@@ -160,7 +160,7 @@ venv/bin/python -m forge.orchestrator \
   --steps 3 --datasets dynamicmem,locomo --gpu
 ```
 
-See **[`configs/example.yaml`](configs/example.yaml)** for the full
+See **[`configs/search_example.yaml`](configs/search_example.yaml)** for the full
 documented schema (every field, default, and effect).
 
 ## Run modes
@@ -176,7 +176,7 @@ documented schema (every field, default, and effect).
 `dev` is the "did my harness even import / run" smoke. `search` is
 training/exploration. `test` is final held-out evaluation. Per-benchmark
 stage sizes/thresholds live in each `datasets.<ds>.stages` config block
-(see `configs/example.yaml`).
+(see `configs/search_example.yaml`).
 
 ## Architecture
 
