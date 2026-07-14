@@ -2,7 +2,7 @@
 Alma eval runner — spawns baselines/alma/launch.py in a subprocess.
 
 Produces a per-run output directory at:
-    baselines/alma/results/dynamicmem/<SHA>_<status>_<mode>/
+    baselines/alma/results/<dataset>/<SHA>_<status>_<mode>/
 
 Wall-clock subprocess timeout is enforced per mode (check=2h, eval=8h) with a
 hard kill + RuntimeError when exceeded.
@@ -46,9 +46,9 @@ SUBPROCESS_TIMEOUT = {
 }
 
 
-def get_output_run_dir(memory_SHA: str, status: str, mode: str) -> Path:
+def get_output_run_dir(memory_SHA: str, status: str, mode: str, dataset: str = "dynamicmem") -> Path:
     """Canonical per-run output directory."""
-    return ALMA_ROOT / "results" / "dynamicmem" / f"{memory_SHA}_{status}_{mode}"
+    return ALMA_ROOT / "results" / dataset / f"{memory_SHA}_{status}_{mode}"
 
 
 async def run_evaluation(
@@ -67,6 +67,7 @@ async def run_evaluation(
     check_n_qa: int = 3,
     source_path: Optional[Path] = None,
     output_run_dir: Optional[Path] = None,
+    dataset: str = "dynamicmem",
 ) -> Path:
     """Copy memo code to alma/memo_test/ and run launch.py in a subprocess.
 
@@ -89,7 +90,7 @@ async def run_evaluation(
             raise FileNotFoundError(f"source_path does not exist: {memo_path}")
     else:
         memo_archive = ALMA_ROOT / "memo_archive"
-        memo_path = memo_archive / "dynamicmem" / f"memo_structure_{memory_SHA}.py"
+        memo_path = memo_archive / dataset / f"memo_structure_{memory_SHA}.py"
         if not memo_path.exists():
             memo_path = memo_archive / "baseline" / f"memo_structure_{memory_SHA}.py"
         if not memo_path.exists():
@@ -106,7 +107,7 @@ async def run_evaluation(
     api_key = env_vals.get("OPENAI_API_KEY", os.environ.get("OPENAI_API_KEY", ""))
 
     if output_run_dir is None:
-        output_run_dir = get_output_run_dir(memory_SHA, status, mode)
+        output_run_dir = get_output_run_dir(memory_SHA, status, mode, dataset)
     else:
         output_run_dir = Path(output_run_dir)
     # Send the subprocess's own rotating log to its per-run output dir so every
@@ -145,6 +146,7 @@ async def run_evaluation(
         "--judge_model", judge_model,
         "--check_n_samples", str(check_n_samples),
         "--check_n_qa", str(check_n_qa),
+        "--dataset", dataset,
     ]
     if max_logs is not None:
         launch_args += ["--max_logs", str(max_logs)]

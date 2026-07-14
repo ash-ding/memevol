@@ -150,6 +150,14 @@ def test_launch_dispatches_via_registry():
     assert sig.parameters["dataset"].default == "dynamicmem"
 
 
+def test_output_run_dir_templated_by_dataset():
+    from baselines.alma.eval_runner import get_output_run_dir
+    p_dm = get_output_run_dir("abc123", "search", "eval")  # default dynamicmem
+    assert p_dm.parent.name == "dynamicmem" and p_dm.name == "abc123_search_eval"
+    p_lc = get_output_run_dir("abc123", "search", "eval", dataset="locomo")
+    assert p_lc.parent.name == "locomo"
+
+
 # ---------------- runner ----------------
 
 def main():
