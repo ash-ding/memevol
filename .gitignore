@@ -44,6 +44,8 @@ baselines/alma/memo_test/memo_test_*.py
 
 # Per-run eval outputs (score.json + traces + memory dumps)
 baselines/alma/results/
+baselines/cc/results/
+baselines/hipporag2/results/
 
 # --- Other baselines' runtime artifacts ---
 baselines/*/outputs/

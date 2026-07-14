@@ -52,9 +52,10 @@ baselines/venv/bin/python baselines/hipporag2/run.py \
 - `--llm_model` — used BOTH as HippoRAG's internal OpenIE/triple-extraction
   LLM and as the shared QA agent's model.
 - `--judge_model` — the judge model (default `gpt-5-mini`).
-- `--embedding_batch_size` / `--embedding_dtype` — only meaningful for local
-  embedding models; left `None` for API embeddings (HippoRAG picks sane
-  local defaults: batch 4 / dtype float16).
+- `--embedding_batch_size` / `--embedding_dtype` — left `None`: for API
+  embeddings (the default `text-embedding-3-small`) → batch 16, dtype auto; for
+  local embeddings → batch 4, dtype float16 — computed automatically in
+  `_ensure_hippo`.
 - `--max_sample_concurrent` — per-eval user/sample concurrency (default 3).
 
 Examples:

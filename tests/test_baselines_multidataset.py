@@ -349,17 +349,17 @@ def test_run_baseline_locomo_end_to_end():
     llm_mod.Agent.ask, LoCoMoWorkflow.judge = _fake_ask, _fake_judge
     out_dir = Path(tempfile.mkdtemp(prefix="test_run_baseline_locomo_"))
     try:
-        score = asyncio.run(run_baseline(
-            dataset="locomo", split="test",
-            user_stage_spec={"n_samples": 1, "n_qa": 1},
-            memo_class=_StubMemo,
-            qa_model="gpt-5-mini", judge_model="gpt-5-mini",
-            out_dir=out_dir, max_sample_concurrent=1,
-        ))
-    finally:
-        llm_mod.Agent.ask, LoCoMoWorkflow.judge = orig_ask, orig_judge
+        try:
+            score = asyncio.run(run_baseline(
+                dataset="locomo", split="test",
+                user_stage_spec={"n_samples": 1, "n_qa": 1},
+                memo_class=_StubMemo,
+                qa_model="gpt-5-mini", judge_model="gpt-5-mini",
+                out_dir=out_dir, max_sample_concurrent=1,
+            ))
+        finally:
+            llm_mod.Agent.ask, LoCoMoWorkflow.judge = orig_ask, orig_judge
 
-    try:
         assert (out_dir / "score.json").exists()
         assert (out_dir / "token_usage.json").exists()
         trace_files = sorted((out_dir / "traces").glob("*.json"))
