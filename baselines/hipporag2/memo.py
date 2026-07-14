@@ -24,6 +24,7 @@ at /export/scratch_large/ding/code/HippoRAG/src/hipporag/HippoRAG.py):
 from __future__ import annotations
 
 import json
+import uuid
 from pathlib import Path
 from typing import Dict, List
 
@@ -70,14 +71,27 @@ class HippoRAGMemo(MemoStructure):
         super().__init__()
         self._hippo = None
         self._passages: List[str] = []
+        # NOTE: the recorders actually handed to general_update/general_retrieve
+        # by common/workflow.py and datasets/*/workflow.py are throwaway
+        # `self.recorder_class()` instances that are NEVER given `.user_id`
+        # (only a separate bookkeeping recorder used for trace/step logging
+        # gets `user_id = user_tag` — verified across common/workflow.py:490-508,
+        # datasets/dynamicmem/workflow.py:107-208, datasets/locomo/workflow.py:95).
+        # So `recorder.user_id` is always the dataclass default "" in practice —
+        # keying save_dir on it would collapse every user's HippoRAG graph onto
+        # the same path (silent cross-user contamination under concurrent
+        # eval). Instead rely on the documented invariant "a fresh MemoStructure
+        # instance is created per user — no cross-user state" and key save_dir
+        # on an instance-scoped id generated once here.
+        self._instance_id = uuid.uuid4().hex[:12]
 
-    def _ensure_hippo(self, user_id: str):
+    def _ensure_hippo(self):
         if self._hippo is not None:
             return
         cfg = self._cfg
         factory = cfg.get("_hippo_factory")
         embedding = cfg["embedding"]
-        save_dir = str(OUTPUTS_DIR / f"{user_id}_{embedding.replace('/', '_')}")
+        save_dir = str(OUTPUTS_DIR / f"{self._instance_id}_{embedding.replace('/', '_')}")
         if factory is not None:
             self._hippo = factory(save_dir=save_dir)
             return
@@ -95,13 +109,14 @@ class HippoRAGMemo(MemoStructure):
     async def general_update(self, recorder) -> None:
         # Called once (all_at_once) for locomo/longmemeval; per checkpoint for
         # DynamicMem TCE — accumulate + index each new segment.
-        self._ensure_hippo(getattr(recorder, "user_id", "u"))
+        self._ensure_hippo()
         new = _init_to_passages(recorder.init)
         self._passages.extend(new)
         if new:
             self._hippo.index(docs=new)   # HippoRAG.index is additive (verified: dedup-by-hash upsert)
 
     async def general_retrieve(self, recorder) -> Dict:
+        self._ensure_hippo()   # defensive no-op if general_update already ran
         query = recorder.init.get("query", "")
         k = int(self._cfg.get("top_k", 5))
         # Prefer retrieve-only; fall back to rag_qa(...).docs if absent.
