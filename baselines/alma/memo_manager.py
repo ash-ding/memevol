@@ -24,9 +24,10 @@ ALMA_ROOT = PROJECT_ROOT / "baselines" / "alma"
 
 
 class Memo_Manager:
-    def __init__(self, archive_root_dir: str = "memo_archive/", status: str = 'search', history_ckpt_path: Optional[str] = None):
+    def __init__(self, archive_root_dir: str = "memo_archive/", status: str = 'search', history_ckpt_path: Optional[str] = None, dataset: str = "dynamicmem"):
         self.project_root = PROJECT_ROOT
-        self.ARCHIVE_ROOT = ALMA_ROOT / Path(archive_root_dir) / "dynamicmem"
+        self.dataset = dataset
+        self.ARCHIVE_ROOT = ALMA_ROOT / Path(archive_root_dir) / dataset
         self.ARCHIVE_ROOT.mkdir(parents=True, exist_ok=True)
         self.LOGS_ROOT = ALMA_ROOT / "logs"
         self.LOGS_ROOT.mkdir(parents=True, exist_ok=True)
@@ -106,6 +107,7 @@ class Memo_Manager:
             judge_model=judge_model,
             check_n_samples=check_n_samples,
             check_n_qa=check_n_qa,
+            dataset=self.dataset,
         )
 
         score_path = output_run_dir / "score.json"
@@ -151,7 +153,7 @@ class Memo_Manager:
         samples_per_bin: int = 3,
     ) -> Dict:
         """Reconstruct the analysis artifact for a previously-run memo."""
-        output_run_dir = get_output_run_dir(memo_SHA, status, mode)
+        output_run_dir = get_output_run_dir(memo_SHA, status, mode, self.dataset)
         score_path = output_run_dir / "score.json"
         if not score_path.exists():
             raise FileNotFoundError(f"No score.json at {output_run_dir}")

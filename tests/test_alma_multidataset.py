@@ -158,6 +158,17 @@ def test_output_run_dir_templated_by_dataset():
     assert p_lc.parent.name == "locomo"
 
 
+def test_memo_manager_archive_root_by_dataset():
+    from baselines.alma.memo_manager import Memo_Manager
+    mm = Memo_Manager(dataset="locomo")
+    assert mm.ARCHIVE_ROOT.name == "locomo"
+    assert mm.ARCHIVE_ROOT.parent.name == "memo_archive"
+    # baseline seed stays shared across datasets
+    assert (mm.ARCHIVE_ROOT.parent / "baseline").name == "baseline"
+    mm_dm = Memo_Manager()  # default
+    assert mm_dm.ARCHIVE_ROOT.name == "dynamicmem"
+
+
 # ---------------- runner ----------------
 
 def main():
