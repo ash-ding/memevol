@@ -142,6 +142,8 @@ def get_task_list(status: str, eval_n_samples: int) -> List[str]:
     train_ids = sample_ids[:TRAIN_SAMPLES]
     eval_ids = sample_ids[TRAIN_SAMPLES:TRAIN_SAMPLES + EVAL_SAMPLES]
 
+    if eval_n_samples is None:  # coverage=full: whole split, no cap
+        return train_ids if status == "search" else eval_ids
     if status == "search":
         return train_ids[:int(eval_n_samples)]
     return eval_ids[:int(eval_n_samples)]

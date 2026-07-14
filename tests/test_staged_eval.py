@@ -326,6 +326,95 @@ def test_stage_plan_order_and_thresholds():
     assert plan[0][2] is not None and plan[1][2] is not None and plan[2][2] is None
 
 
+# ---------------- coverage=full: uncapped wire specs ----------------
+
+def test_full_wire_spec_shapes():
+    from forge.orchestrator import full_wire_spec
+    assert full_wire_spec("dynamicmem") == {
+        "n_samples": None, "n_checkpoints": None, "n_task_a": None, "n_task_c": None,
+    }
+    assert full_wire_spec("locomo") == {"n_samples": None, "n_qa": None}
+    assert full_wire_spec("longmemeval_s") == {"n_samples": None}
+
+
+def test_coverage_config_validation():
+    import yaml
+    from forge.orchestrator import build_arg_parser, _resolve_config
+    with tempfile.TemporaryDirectory() as td:
+        p = os.path.join(td, "c.yaml")
+        with open(p, "w") as f:
+            yaml.safe_dump({"datasets": {"locomo": {}}, "coverage": "everything"}, f)
+        try:
+            _resolve_config(build_arg_parser().parse_args(["--config", p]))
+        except ValueError as exc:
+            assert "coverage" in str(exc)
+        else:
+            raise AssertionError("bad coverage value accepted")
+        with open(p, "w") as f:
+            yaml.safe_dump({"datasets": {"locomo": {}}}, f)
+        cfg = _resolve_config(build_arg_parser().parse_args(
+            ["--config", p, "--coverage", "full"]))
+        assert cfg["coverage"] == "full"
+        cfg = _resolve_config(build_arg_parser().parse_args(["--config", p]))
+        assert cfg["coverage"] == "sample"  # default unchanged
+
+
+def test_get_task_list_none_means_whole_split():
+    from datasets.locomo.env import get_task_list as locomo_list
+    from datasets.longmemeval.env import get_task_list as lme_list
+    assert len(locomo_list("search", None)) == 6
+    assert len(locomo_list("test", None)) == 4
+    assert len(lme_list("search", None)) == 300
+    assert len(lme_list("test", None)) == 200
+    # capped behavior unchanged
+    assert len(locomo_list("test", 2)) == 2
+    assert len(lme_list("test", 50)) == 50
+    from datasets.dynamicmem.env import get_task_list as dm_list
+    if os.path.isdir(os.path.join(REPO, "datasets", "dynamicmem", "user_data")):
+        assert len(dm_list("test", None)) == 4
+        assert len(dm_list("search", None)) == 6
+
+
+def test_locomo_full_qa_is_all_cat14():
+    import json as _json
+    from datasets.locomo.env import load_user_data, get_task_list
+    sid = get_task_list("test", 1)[0]
+    _, _, qa = load_user_data(sid, eval_n_qa=None)
+    raw = _json.load(open(os.path.join(REPO, "datasets", "locomo", "locomo10.json")))
+    sample = next(s for s in raw if s["sample_id"] == sid)
+    expected = sum(1 for q in sample["qa"] if q.get("category") != 5)
+    assert len(qa) == expected, (len(qa), expected)
+
+
+def test_dm_full_sampling_and_nesting():
+    if not os.path.isdir(DM_USER):
+        print("  (dynamicmem user_data missing — skipped)")
+        return
+    from datasets.dynamicmem.env import load_user_checkpoints, sample_items_staged
+    _, cps = load_user_checkpoints(DM_USER)
+    full = sample_items_staged(cps, n_checkpoints=None, n_task_a=None,
+                               n_task_c=None, seed=DM_USER)
+    total = sum(len(cp.get("items", [])) for cp in cps)
+    assert len(full) == total, (len(full), total)
+    stage3 = sample_items_staged(cps, n_checkpoints=5, n_task_a=5, n_task_c=5,
+                                 seed=DM_USER)
+    full_keys = {_item_key(i) for i in full}
+    assert all(_item_key(i) in full_keys for i in stage3)  # stage3 ⊂ full
+
+
+def test_selection_accepts_full_stage():
+    from forge.selection import Entry, _fully_staged
+    from forge.orchestrator import FULL_STAGE
+    e = Entry(id="x", parent_ids=[], objectives={
+        "accuracy": 0.5, "accuracy_locomo": 0.5, "stage_locomo": FULL_STAGE,
+    })
+    assert _fully_staged(e)
+    e2 = Entry(id="y", parent_ids=[], objectives={
+        "accuracy": 0.5, "accuracy_locomo": 0.5, "stage_locomo": 2.0,
+    })
+    assert not _fully_staged(e2)
+
+
 # ---------------- runner ----------------
 
 def main():

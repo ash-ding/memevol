@@ -66,6 +66,7 @@ SUBPROCESS_TIMEOUT = {
     "stage1": 2 * 3600,
     "stage2": 4 * 3600,
     "stage3": 8 * 3600,
+    "full": 12 * 3600,   # coverage=full — whole-split single pass
 }
 
 GRACE_AFTER_SCORE = 60

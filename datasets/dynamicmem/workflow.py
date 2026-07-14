@@ -78,12 +78,17 @@ class DynamicMemWorkflow(BaseWorkflow):
         if "n_checkpoints" in spec:
             # Staged spec (forge path): first n_checkpoints checkpoints,
             # n_task_a / n_task_c items per checkpoint (nested sampling).
-            checkpoints_used = checkpoints[: int(spec["n_checkpoints"])]
+            # None sizes = no cap (coverage=full: all checkpoints / items).
+            n_cp = spec["n_checkpoints"]
+            checkpoints_used = (
+                checkpoints if n_cp is None else checkpoints[: int(n_cp)]
+            )
+            _n = lambda v: None if v is None else int(v)
             sampled = sample_items_staged(
                 checkpoints,
-                n_checkpoints=int(spec["n_checkpoints"]),
-                n_task_a=int(spec.get("n_task_a", 0)),
-                n_task_c=int(spec.get("n_task_c", 0)),
+                n_checkpoints=_n(n_cp),
+                n_task_a=_n(spec.get("n_task_a", 0)),
+                n_task_c=_n(spec.get("n_task_c", 0)),
                 seed=user_dir,
             )
         else:

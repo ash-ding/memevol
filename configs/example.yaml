@@ -82,6 +82,16 @@ llm:
 #   sequential  — one update per item (most fine-grained, most calls)
 update_type: all_at_once
 
+# Evaluation coverage — applies to mode=search AND mode=test (CLI: --coverage):
+#   sample — staged gauntlet (stage1→2→3 nested sampling + threshold gates)
+#   full   — ONE whole-split evaluation per benchmark: no stage1/2, no
+#            elimination; artifacts under <ds>/full/; stage_<ds> records 4.
+#            Sanity gate and mode=dev are unaffected. Cost anchor (test split
+#            full sizes): DynamicMem 4 users × ~400 items, LoCoMo 655 QA
+#            (cat 1-4), LongMemEval 200 questions.
+# `python -m forge.heldout` (dedicated held-out entry) defaults to full.
+coverage: sample
+
 # Asyncio semaphore cap for parallel users within one Singularity exec.
 # Higher = faster eval but more concurrent OpenAI calls (rate limits) and
 # more container memory. 3-6 is sane.

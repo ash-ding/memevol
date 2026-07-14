@@ -42,7 +42,12 @@ def _fully_staged(entry: Entry) -> bool:
     Scores from different stages are NOT comparable (a lucky stage1 score
     over 2 users vs a stage3 score over 6), so selection restricts to
     fully-staged entries when any exist. Entries without per-dataset axes
-    (pre-staged-era or dev runs) count as not fully staged."""
+    (pre-staged-era or dev runs) count as not fully staged.
+
+    coverage=full runs record stage_<ds> = 4.0 (orchestrator.FULL_STAGE) —
+    >= FINAL_STAGE, so full entries pass this filter too. Coverage is
+    uniform within a run; stage-3 vs stage-4 scores from DIFFERENT runs are
+    still not mutually comparable."""
     ds_axes = [k for k in entry.objectives if k.startswith("accuracy_")]
     if not ds_axes:
         return False

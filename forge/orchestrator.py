@@ -106,6 +106,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "judge_model": "gpt-5-mini",
     "update_type": "all_at_once",
     "max_sample_concurrent": 3,
+    # Evaluation coverage (applies to mode=search AND mode=test):
+    #   sample — the staged gauntlet (stage1→2→3 nested sampling + thresholds)
+    #   full   — ONE whole-split evaluation per benchmark (no stage1/2, no
+    #            elimination; wire stage "full", artifacts under <ds>/full/).
+    # The sanity gate and mode=dev are unaffected. CLI: --coverage.
+    "coverage": "sample",
     # Cross-stage memory cache: persist each user's Phase-1 memory per
     # (harness, dataset) and reuse it at deeper gauntlet stages (nested
     # sampling makes it bit-for-bit reusable). Stage1..3 only; sanity/dev
@@ -275,6 +281,12 @@ DEFAULT_STAGES: Dict[str, Dict[str, Dict[str, Any]]] = {
     },
 }
 
+# stage_<ds> objective value for a coverage=full evaluation. Numerically above
+# the last gauntlet tier (3) so selection's fully-staged filter accepts full
+# entries; scores at stage 3 vs 4 are still NOT mutually comparable — coverage
+# is uniform within a run.
+FULL_STAGE = 4.0
+
 _OLD_SIZE_FIELDS = ("eval_n_samples", "eval_n_qa", "check_n_samples", "check_n_qa")
 
 
@@ -299,6 +311,18 @@ def stage_wire_spec(ds: str, stage_params: Dict[str, Any]) -> Dict[str, Any]:
     spec: Dict[str, Any] = {"n_samples": int(stage_params[sample_field])}
     for f in extras:
         spec[f] = int(stage_params[f])
+    return spec
+
+
+def full_wire_spec(ds: str) -> Dict[str, Any]:
+    """Wire spec for coverage=full: every size field None = no cap (the
+    container's env/get_task_list and the workflows treat None as "whole
+    split / all checkpoints / whole buckets")."""
+    family = _benchmark_family(ds)
+    sample_field, extras = _FAMILY_FIELDS[family]
+    spec: Dict[str, Any] = {"n_samples": None}
+    for f in extras:
+        spec[f] = None
     return spec
 
 
@@ -482,6 +506,14 @@ def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
         # benchmark gets its family's DEFAULT_STAGES (see that constant).
         ds_list = [d.strip() for d in cli_datasets.split(",") if d.strip()]
         cfg["datasets"] = {ds: {} for ds in ds_list}
+
+    # coverage: CLI override + validation.
+    if getattr(args, "coverage", None) is not None:
+        cfg["coverage"] = args.coverage
+    if cfg.get("coverage", "sample") not in ("sample", "full"):
+        raise ValueError(
+            f"coverage must be 'sample' or 'full', got {cfg.get('coverage')!r}"
+        )
 
     # llm block: --anthropic-transport override + validation.
     if getattr(args, "anthropic_transport", None) is not None:
@@ -1115,8 +1147,13 @@ async def evaluate_harness(
     memory_cache: bool = True,
     gpu: bool = False,
     llm_cfg: Optional[Dict[str, Any]] = None,
+    coverage: str = "sample",
 ) -> Dict[str, Dict[str, Any]]:
-    """Run the STAGED evaluation gauntlet on every dataset (serial).
+    """Run the evaluation on every dataset (serial).
+
+    coverage="sample": the STAGED gauntlet below. coverage="full": ONE
+    whole-split pass per benchmark (plan = [("full", uncapped spec, no
+    threshold)]) — same loop, no promotion gates.
 
     Per benchmark (independent promotion): run stage1 → stage2 → stage3,
     publishing each stage's artifacts to `harnesses/<id>/<ds>/<stage>/`.
@@ -1145,7 +1182,7 @@ async def evaluate_harness(
             # Cross-stage memory cache: gauntlet tiers only (launch.py gates
             # on the stage name too; sanity/dev execs never get the mount).
             memcache_dir: Optional[Path] = None
-            if memory_cache and stage_name.startswith("stage"):
+            if memory_cache and stage_name in ("stage1", "stage2", "stage3", "full"):
                 memcache_dir = dst_root / "memory_cache"
                 memcache_dir.mkdir(parents=True, exist_ok=True)
             crashed: Optional[Exception] = None
@@ -1195,8 +1232,11 @@ async def evaluate_harness(
             scores[ds] = m
             continue
 
-        # ---- staged gauntlet (mode = search | test; mode IS the split) ----
-        plan = stage_plan(ds, params)
+        # ---- staged gauntlet OR single full pass (mode IS the split) ----
+        if coverage == "full":
+            plan = [("full", full_wire_spec(ds), None)]
+        else:
+            plan = stage_plan(ds, params)
         stage_summary: Dict[str, Any] = {}
         final_metrics: Dict[str, Any] = {}
         reached = ""
@@ -1249,7 +1289,9 @@ async def evaluate_harness(
                 f, indent=2, ensure_ascii=False,
             )
 
-        final_metrics["stage"] = float(STAGE_ORDER.index(reached) + 1)
+        final_metrics["stage"] = (
+            FULL_STAGE if reached == "full" else float(STAGE_ORDER.index(reached) + 1)
+        )
         final_metrics["eliminated"] = eliminated
         scores[ds] = final_metrics
 
@@ -1441,6 +1483,7 @@ async def propose_eval_one(
         memory_cache=cfg.get("memory_cache", True),
         gpu=cfg["gpu"]["enabled"],
         llm_cfg=cfg.get("llm"),
+        coverage=cfg.get("coverage", "sample"),
     )
     return final_id, per_ds, sanity_status, _read_parent_ids(harness_dir)
 
@@ -1798,6 +1841,7 @@ async def _adopt_orphan(
         memory_cache=cfg.get("memory_cache", True),
         gpu=cfg["gpu"]["enabled"],
         llm_cfg=cfg.get("llm"),
+        coverage=cfg.get("coverage", "sample"),
     )
     entry = _build_adopted_entry(harness_dir, per_ds)
     frontier.add(entry)
@@ -1971,6 +2015,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--proposer-model", default=None)
     parser.add_argument("--proposer-max-turns", type=int, default=None)
     parser.add_argument("--proposer-timeout-s", type=int, default=None)
+    parser.add_argument("--coverage", default=None, choices=["sample", "full"],
+                        help="Evaluation coverage (overrides cfg.coverage): "
+                             "sample = staged gauntlet (default); full = one "
+                             "whole-split evaluation per benchmark, no "
+                             "stage1/2, no threshold elimination.")
     parser.add_argument("--anthropic-transport", default=None,
                         choices=["api", "vertex"],
                         help="How claude-* QA/judge models reach Anthropic "

@@ -226,6 +226,8 @@ def get_task_list(status: str, eval_n_samples: int) -> List[str]:
     train_dirs = all_dirs[:TRAIN_USERS]
     eval_dirs = all_dirs[TRAIN_USERS:]
 
+    if eval_n_samples is None:  # coverage=full: whole split, no cap
+        return train_dirs if status == "search" else eval_dirs
     if status == "search":
         return train_dirs[:int(eval_n_samples)]
     else:  # test
@@ -456,9 +458,9 @@ def sample_items(checkpoints: List[Dict], n: Optional[int], seed: Any) -> List[D
 def sample_items_staged(
     checkpoints: List[Dict],
     *,
-    n_checkpoints: int,
-    n_task_a: int,
-    n_task_c: int,
+    n_checkpoints: Optional[int],
+    n_task_a: Optional[int],
+    n_task_c: Optional[int],
     seed: Any,
 ) -> List[Dict]:
     """Per-checkpoint task sampling for the staged-evaluation pipeline.
@@ -475,7 +477,10 @@ def sample_items_staged(
     rng = random.Random(str(seed))
     counts = {TASK_FAMILY_STATE_COMPLETION: n_task_a, TASK_FAMILY_APPLY_SERVICE: n_task_c}
     out: List[Dict] = []
-    for cp in checkpoints[: max(0, int(n_checkpoints))]:
+    # None = no cap (coverage=full): all checkpoints / whole buckets. The
+    # shuffles still run so capped selections stay prefixes of the full set.
+    cps = checkpoints if n_checkpoints is None else checkpoints[: max(0, int(n_checkpoints))]
+    for cp in cps:
         # Shuffles run in fixed checkpoint order, so a shorter checkpoint
         # prefix consumes the identical rng sequence for the checkpoints it
         # does include — selections within each checkpoint are independent
@@ -483,7 +488,8 @@ def sample_items_staged(
         for fam in (TASK_FAMILY_STATE_COMPLETION, TASK_FAMILY_APPLY_SERVICE):
             items = [i for i in cp.get("items", []) if i.get("task_family") == fam]
             rng.shuffle(items)
-            out.extend(items[: max(0, int(counts[fam]))])
+            n = counts[fam]
+            out.extend(items if n is None else items[: max(0, int(n))])
     return out
 
 
