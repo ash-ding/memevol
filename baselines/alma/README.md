@@ -71,3 +71,46 @@ The dataset-specific code (`get_task_list`, `load_user_checkpoints`,
 `tce_prompts.py`) is shared at
 [`datasets/dynamicmem/`](../../datasets/dynamicmem/). It has zero dependency
 on alma so other methods can reuse it.
+
+## Datasets
+
+ALMA targets exactly **one benchmark per run**, selected with
+`--dataset {dynamicmem,locomo,longmemeval_s,longmemeval_m}` (default
+`dynamicmem`). The dataset name resolves through
+[`registry.py`](registry.py) to a workflow class, env module, and recorder
+class (mirrors `forge/launch.py::WORKFLOWS`, but ALMA is standalone and does
+not import forge), and through [`dataset_info.py`](dataset_info.py) to the
+prompt fragments (`recorder.init` shape, evidence key, etc.) that the
+meta-agent's analysis/generation/reflection prompts render for that dataset.
+
+Per-dataset paths (templated by `<dataset>`):
+
+```
+memo_archive/<dataset>/memo_structure_<SHA>.py   # evolved memo code
+results/<dataset>/<SHA>_<status>_<mode>/          # per-run eval output
+    score.json
+    traces/<user_id>.json
+    token_usage.json
+```
+
+`memo_archive/baseline/` (the `no_mem` seed) is **shared across datasets** —
+it is not templated, since the no-memory baseline is dataset-agnostic.
+
+DynamicMem's behaviour and paths are unchanged from before multi-dataset
+support was added (`--dataset` defaults to `dynamicmem`, and its prompt
+fragments are a byte-identical extraction of the original hardcoded text —
+see `tests/test_alma_multidataset.py::test_dynamicmem_prompts_byte_identical`).
+
+Example commands (mirroring "Quick start" above, run from the project root):
+
+```bash
+# LoCoMo — smoke-size search loop, 1 step
+python baselines/alma/run_main.py \
+    --dataset locomo --status search --steps 1 \
+    --eval_n_samples 1 --eval_n_qa 3 --check_n_samples 1 --check_n_qa 2 \
+    --meta_model gpt-5-mini --execution_model gpt-5-mini --judge_model gpt-5-mini
+
+# LongMemEval (s or m variant) — evaluate a saved memo on the held-out split
+python baselines/alma/run_main.py \
+    --dataset longmemeval_s --status test --memo_SHA <SHA>
+```

@@ -73,9 +73,10 @@ async def run_evaluation(
 
     Returns the per-run output directory path.
 
-    By default the source .py file is looked up at
-    ``alma/memo_archive/{dynamicmem,baseline}/memo_structure_<SHA>.py`` and the
-    output directory is ``alma/results/dynamicmem/<SHA>_<status>_<mode>/``.
+    ``dataset`` (default ``dynamicmem``) is templated into both defaults: the
+    source .py file is looked up at
+    ``alma/memo_archive/{<dataset>,baseline}/memo_structure_<SHA>.py`` and the
+    output directory is ``alma/results/<dataset>/<SHA>_<status>_<mode>/``.
     Both defaults can be overridden via ``source_path`` / ``output_run_dir`` so
     callers outside alma (e.g. baselines/meta-harness) can reuse this runner
     without touching alma's archive layout.

@@ -222,6 +222,96 @@ def test_sampling_reads_dataset_evidence_key():
     assert ex and ex[0]["relevant_turns"] == [{"t": 1}]
 
 
+def test_locomo_end_to_end_fake():
+    """Fake-evaluator integration test for the non-DynamicMem ALMA path
+    (Task 10 brief, Step 1 fallback — no live LLM calls, no network, no cost).
+
+    Drives ``MetaAgent(dataset="locomo").run_single_memo(..., status="test")``
+    end-to-end. status="test" takes the non-search branch in run_single_memo,
+    which skips analyze_memo_structure / generate_new_code / examine_new_code
+    (each of those calls a real meta-model LLM via common.llm.Agent) and goes
+    straight to memo_manager.execute_memo_structure -> eval_runner.run_evaluation
+    -> sampling.build_analysis_artifact. That is exactly the registry ->
+    dataset_info -> memo_manager -> sampling wiring the task exercises for a
+    non-DynamicMem dataset, driven deterministically by monkeypatching
+    run_evaluation (modeled on tests/test_heldout.py's fake-evaluator pattern)
+    to drop a canned score.json + traces/conv_1.json (with a `relevant_turns`
+    step, LoCoMo's evidence key) instead of spawning the real subprocess.
+
+    Asserts: (a) no exception anywhere in that call chain, and (b) the actual
+    build_analysis_artifact call made from inside execute_memo_structure used
+    LoCoMo's evidence_key ("relevant_turns", read from DATASET_INFO — not
+    hardcoded) and its output example carries the relevant_turns payload.
+    """
+    import asyncio
+    import json
+    import shutil
+    import tempfile
+    from pathlib import Path
+
+    from baselines.alma.meta_agent import MetaAgent
+    from baselines.alma import memo_manager as MM
+    from baselines.alma.dataset_info import DATASET_INFO
+
+    sha = "faketest01"
+    archive_dir = MM.ALMA_ROOT / "memo_archive" / "locomo"
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    memo_file = archive_dir / f"memo_structure_{sha}.py"
+    memo_file.write_text("# fake memo source for integration test\n", encoding="utf-8")
+
+    fake_out_dir = Path(tempfile.mkdtemp(prefix="alma_fake_eval_"))
+
+    async def fake_run_evaluation(**kwargs):
+        traces_dir = fake_out_dir / "traces"
+        traces_dir.mkdir(parents=True, exist_ok=True)
+        with (fake_out_dir / "score.json").open("w", encoding="utf-8") as f:
+            json.dump({
+                "benchmark_eval_score": {
+                    "benchmark_overall_eval_score": 0.66,
+                    "benchmark_overall_eval_standard_deviation": 0.0,
+                },
+                "per_user": {"conv_1": {"reward": 0.66, "n_qa": 1, "failure_info": None}},
+                "invalid_users": [],
+            }, f)
+        with (traces_dir / "conv_1.json").open("w", encoding="utf-8") as f:
+            json.dump({
+                "user_id": "conv_1", "failure_info": None,
+                "steps": [{"query": "q", "predicted": "p", "reference": "r",
+                           "score": 0.66, "judge_reason": "jr", "retrieved_memory": {},
+                           "relevant_turns": [{"speaker": "A", "text": "hi", "turn_id": 3}]}],
+            }, f)
+        return fake_out_dir
+
+    captured = {}
+    real_build_artifact = MM.build_analysis_artifact
+
+    def spy_build_analysis_artifact(*args, **kwargs):
+        art = real_build_artifact(*args, **kwargs)
+        captured["evidence_key"] = kwargs.get("evidence_key")
+        captured["artifact"] = art
+        return art
+
+    orig_run_eval = MM.run_evaluation
+    orig_build_artifact = MM.build_analysis_artifact
+    MM.run_evaluation = fake_run_evaluation
+    MM.build_analysis_artifact = spy_build_analysis_artifact
+    try:
+        ma = MetaAgent(dataset="locomo")
+        asyncio.run(ma.run_single_memo(
+            memo_SHA=sha, status="test", eval_n_samples=1,
+            max_sample_concurrent=1, judge_model="gpt-5-mini",
+        ))
+    finally:
+        MM.run_evaluation = orig_run_eval
+        MM.build_analysis_artifact = orig_build_artifact
+        shutil.rmtree(fake_out_dir, ignore_errors=True)
+        memo_file.unlink(missing_ok=True)
+
+    assert captured.get("evidence_key") == "relevant_turns" == DATASET_INFO["locomo"]["evidence_key"]
+    examples = [e for e in captured["artifact"]["examples"] if "error_info" not in e]
+    assert examples and examples[0]["relevant_turns"] == [{"speaker": "A", "text": "hi", "turn_id": 3}]
+
+
 # ---------------- runner ----------------
 
 def main():
