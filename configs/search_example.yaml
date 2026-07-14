@@ -183,13 +183,6 @@ propose:
 # Frontier selection (currently single-axis, see PROGRESS.md)
 # -----------------------------------------------------------------------------
 
-selection:
-  # Softmax temperature for `Frontier.sample_parent` — only used by
-  # held-out test top-K selection scripts (NOT by search_loop, which delegates
-  # parent selection to the proposer agent per Meta-Harness paper).
-  # Lower tau = greedier, higher tau = closer to uniform random.
-  tau: 0.5
-
 # -----------------------------------------------------------------------------
 # Pre-eval sanity check (stages.sanity_check-sized run before the gauntlet)
 # -----------------------------------------------------------------------------
@@ -303,22 +296,15 @@ prompts:
 # NB this differs from top-level `coverage: full`, which is ONE full pass
 # with NO gauntlet (stage_<ds>=4); stage3-null keeps the gauntlet (=3).
 
+# A search run targets ONE dataset. Per-benchmark scores are recorded
+# independently on their own `accuracy_<dataset>` axis — there is NO
+# cross-benchmark mean, and the proposer picks priors itself (no algorithmic
+# selection). To measure how a discovered harness generalizes to OTHER
+# benchmarks, evaluate it on them via the held-out entry:
+#   venv/bin/python -m forge.heldout --config configs/test_example.yaml
+# All three benchmarks are documented below (for the field reference); only
+# `locomo` is active — (un)comment blocks to switch the active dataset.
 datasets:
-
-  dynamicmem:
-    # Per-dataset judge override (falls back to the global judge_model).
-    # gpt-5.4-2026-03-05 is the official TCE judge; downgrade to gpt-5-mini
-    # to save cost at some fidelity loss. Scores are 0.0-1.0 (official
-    # holistic Core+Detail: 0.8*core_correct + 0.2*detail_quality/2).
-    judge_model: gpt-5.4-2026-03-05
-    # Fields: n_users (of 6 search / 4 test), n_checkpoints (first k of 5),
-    # n_task_a / n_task_c (items PER CHECKPOINT per family; each checkpoint
-    # has ~17-53 of each). stage3 = 6u × 5cp × (5+5) = 300 items.
-    stages:
-      sanity_check: {n_users: 1, n_checkpoints: 1, n_task_a: 1, n_task_c: 1}
-      stage1: {n_users: 2, n_checkpoints: 1, n_task_a: 5, n_task_c: 5, threshold: 0.05}
-      stage2: {n_users: 4, n_checkpoints: 3, n_task_a: 5, n_task_c: 5, threshold: 0.10}
-      stage3: {n_users: 6, n_checkpoints: 5, n_task_a: 5, n_task_c: 5}
 
   locomo:
     # Fields: n_conversations (of 6 search / 4 test), n_qa PER CONVERSATION
@@ -331,20 +317,26 @@ datasets:
       stage2: {n_conversations: 4, n_qa: 40, threshold: 0.35}
       stage3: {n_conversations: 6, n_qa: 60}
 
-  longmemeval_s:
-    # Single-level hierarchy: n_questions (of 300 search / 200 test; each
-    # question is 1 QA + its own ~48-session haystack).
-    stages:
-      sanity_check: {n_questions: 2}
-      stage1: {n_questions: 20, threshold: 0.25}
-      stage2: {n_questions: 50, threshold: 0.30}
-      stage3: {n_questions: 100}
+  # dynamicmem:
+  #   # Per-dataset judge override (falls back to the global judge_model).
+  #   # gpt-5.4-2026-03-05 is the official TCE judge (0.0-1.0 holistic
+  #   # Core+Detail). Fields: n_users (of 6 search / 4 test), n_checkpoints
+  #   # (first k of 5), n_task_a / n_task_c (items PER CHECKPOINT; ~17-53 each).
+  #   judge_model: gpt-5.4-2026-03-05
+  #   stages:
+  #     sanity_check: {n_users: 1, n_checkpoints: 1, n_task_a: 1, n_task_c: 1}
+  #     stage1: {n_users: 2, n_checkpoints: 1, n_task_a: 5, n_task_c: 5, threshold: 0.05}
+  #     stage2: {n_users: 4, n_checkpoints: 3, n_task_a: 5, n_task_c: 5, threshold: 0.10}
+  #     stage3: {n_users: 6, n_checkpoints: 5, n_task_a: 5, n_task_c: 5}
 
-  longmemeval_m:
-    # Same 500 questions as _s but ~476-session haystacks (~1.3M tokens);
-    # each Singularity exec reloads the 2.7 GB JSON (~30s overhead).
-    stages:
-      sanity_check: {n_questions: 2}
-      stage1: {n_questions: 20, threshold: 0.25}
-      stage2: {n_questions: 50, threshold: 0.30}
-      stage3: {n_questions: 100}
+  # longmemeval_s:
+  #   # Single-level: n_questions (of 300 search / 200 test; 1 QA + ~48-session
+  #   # haystack each).
+  #   stages:
+  #     sanity_check: {n_questions: 2}
+  #     stage1: {n_questions: 20, threshold: 0.25}
+  #     stage2: {n_questions: 50, threshold: 0.30}
+  #     stage3: {n_questions: 100}
+
+  # longmemeval_m:                # same 500 Qs as _s but ~476-session haystacks
+  #   stages: { ... same shape as longmemeval_s ... }   # (2.7 GB JSON; ~30s/exec)

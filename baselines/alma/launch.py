@@ -165,6 +165,12 @@ async def main(
     # (DynamicMem: first checkpoint only), eval → the terminal "stage3" tier.
     # The spec's n_qa drives the legacy total-count
     # sampling path in DynamicMemWorkflow.
+    # ALMA is DynamicMem-ONLY by design: it hardcodes DynamicMemWorkflow and
+    # has no `--datasets` concept. Multi-benchmark search is a forge-only
+    # capability (forge/orchestrator.py). If you ever wire a dataset selector
+    # into ALMA, reject anything but a single dynamicmem here — the meta-agent
+    # loop, memo_manager reward tracking, and trace format all assume one
+    # benchmark.
     workflow = DynamicMemWorkflow(
         memo_class=memo_class,
         model=model,

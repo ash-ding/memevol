@@ -19,7 +19,7 @@ Flow per harness:
      runs the staged gauntlet at the configured stage sizes.
 
 Outputs under workspace/<run_name>/:
-  heldout_results.json   {harness_id: {objectives (accuracy, accuracy_<ds>,
+  heldout_results.json   {harness_id: {objectives (accuracy_<ds>,
                           stage_<ds>, tokens_total, ...), per_ds}}
   harnesses/<id>/<ds>/...  the usual per-stage artifacts (full/ for coverage=full)
   config.yaml, orchestrator.log — same bookkeeping as any run.
@@ -134,8 +134,7 @@ async def _run(cfg: Dict[str, Any], harness_paths: List[str]) -> None:
             if k.startswith("accuracy_")
         )
         log.info(
-            f"  {hid}: accuracy={obj.get('accuracy', 0.0):.3f}  {per_ds_str}  "
-            f"tokens={obj.get('tokens_total', 0)}"
+            f"  {hid}: {per_ds_str}  tokens={obj.get('tokens_total', 0)}"
         )
 
 

@@ -24,9 +24,6 @@ proposer:
 propose:
   k_per_step: 2             # candidates per outer-loop step (paper default)
 
-selection:
-  tau: 0.5                  # only used by Frontier.sample_parent (held-out test)
-
 sanity:
   enabled: true
   max_retries: 2
@@ -39,29 +36,30 @@ sanity:
 # the family defaults in forge/orchestrator.py::DEFAULT_STAGES (identical to
 # the values below). Thresholds are deliberately conservative — calibrate
 # against stage-score distributions after the first real search run.
+# A search run targets ONE dataset (per-benchmark scores are recorded
+# independently — there is no cross-benchmark mean, and the proposer picks
+# priors itself). To evaluate a discovered harness on OTHER benchmarks (i.e.
+# measure generalization), use the held-out entry: `python -m forge.heldout`.
+# Switch the active benchmark by (un)commenting a block below.
 datasets:
-  dynamicmem:
-    judge_model: gpt-5.4-2026-03-05   # official TCE judge (downgrade to gpt-5-mini to save cost)
-    stages:
-      sanity_check: {n_users: 1, n_checkpoints: 1, n_task_a: 1, n_task_c: 1}
-      stage1: {n_users: 2, n_checkpoints: 1, n_task_a: 5, n_task_c: 5, threshold: 0.05}
-      stage2: {n_users: 4, n_checkpoints: 3, n_task_a: 5, n_task_c: 5, threshold: 0.10}
-      stage3: {n_users: 6, n_checkpoints: 5, n_task_a: 5, n_task_c: 5}
   locomo:
     stages:
       sanity_check: {n_conversations: 1, n_qa: 3}
       stage1: {n_conversations: 2, n_qa: 20, threshold: 0.30}
       stage2: {n_conversations: 4, n_qa: 40, threshold: 0.35}
       stage3: {n_conversations: 6, n_qa: 60}
-  longmemeval_s:
-    stages:
-      sanity_check: {n_questions: 2}
-      stage1: {n_questions: 20, threshold: 0.25}
-      stage2: {n_questions: 50, threshold: 0.30}
-      stage3: {n_questions: 100}
-  longmemeval_m:                      # heavy — ~476 sessions/question to ingest
-    stages:
-      sanity_check: {n_questions: 2}
-      stage1: {n_questions: 20, threshold: 0.25}
-      stage2: {n_questions: 50, threshold: 0.30}
-      stage3: {n_questions: 100}
+  # dynamicmem:
+  #   judge_model: gpt-5.4-2026-03-05   # official TCE judge (downgrade to gpt-5-mini to save cost)
+  #   stages:
+  #     sanity_check: {n_users: 1, n_checkpoints: 1, n_task_a: 1, n_task_c: 1}
+  #     stage1: {n_users: 2, n_checkpoints: 1, n_task_a: 5, n_task_c: 5, threshold: 0.05}
+  #     stage2: {n_users: 4, n_checkpoints: 3, n_task_a: 5, n_task_c: 5, threshold: 0.10}
+  #     stage3: {n_users: 6, n_checkpoints: 5, n_task_a: 5, n_task_c: 5}
+  # longmemeval_s:
+  #   stages:
+  #     sanity_check: {n_questions: 2}
+  #     stage1: {n_questions: 20, threshold: 0.25}
+  #     stage2: {n_questions: 50, threshold: 0.30}
+  #     stage3: {n_questions: 100}
+  # longmemeval_m:                      # heavy — ~476 sessions/question to ingest
+  #   stages: { ... same as longmemeval_s ... }

@@ -22,9 +22,6 @@ proposer:
 propose:
   k_per_step: 2            # candidates per step
 
-selection:
-  tau: 0.5                 # only used for held-out test top-K
-
 sanity:
   enabled: true
   max_retries: 2
@@ -32,23 +29,24 @@ sanity:
 # Mini staged gauntlet: same schema as search.yaml but smaller stage sizes
 # for cheap iteration (omitted fields fall back to family defaults —
 # forge/orchestrator.py::DEFAULT_STAGES).
+# One dataset per search run (see search.yaml note). Uncomment to switch.
 datasets:
-  dynamicmem:
-    judge_model: gpt-5.4-2026-03-05   # official TCE judge (downgrade to gpt-5-mini to save cost)
-    stages:
-      sanity_check: {n_users: 1, n_checkpoints: 1, n_task_a: 1, n_task_c: 1}
-      stage1: {n_users: 1, n_checkpoints: 1, n_task_a: 3, n_task_c: 3, threshold: 0.05}
-      stage2: {n_users: 2, n_checkpoints: 2, n_task_a: 3, n_task_c: 3, threshold: 0.10}
-      stage3: {n_users: 2, n_checkpoints: 3, n_task_a: 3, n_task_c: 3}
   locomo:
     stages:
       sanity_check: {n_conversations: 1, n_qa: 3}
       stage1: {n_conversations: 1, n_qa: 10, threshold: 0.30}
       stage2: {n_conversations: 2, n_qa: 10, threshold: 0.35}
       stage3: {n_conversations: 2, n_qa: 15}
-  longmemeval_s:
-    stages:
-      sanity_check: {n_questions: 2}
-      stage1: {n_questions: 5, threshold: 0.25}
-      stage2: {n_questions: 8, threshold: 0.30}
-      stage3: {n_questions: 10}
+  # dynamicmem:
+  #   judge_model: gpt-5.4-2026-03-05
+  #   stages:
+  #     sanity_check: {n_users: 1, n_checkpoints: 1, n_task_a: 1, n_task_c: 1}
+  #     stage1: {n_users: 1, n_checkpoints: 1, n_task_a: 3, n_task_c: 3, threshold: 0.05}
+  #     stage2: {n_users: 2, n_checkpoints: 2, n_task_a: 3, n_task_c: 3, threshold: 0.10}
+  #     stage3: {n_users: 2, n_checkpoints: 3, n_task_a: 3, n_task_c: 3}
+  # longmemeval_s:
+  #   stages:
+  #     sanity_check: {n_questions: 2}
+  #     stage1: {n_questions: 5, threshold: 0.25}
+  #     stage2: {n_questions: 8, threshold: 0.30}
+  #     stage3: {n_questions: 10}

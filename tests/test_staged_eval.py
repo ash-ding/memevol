@@ -97,37 +97,6 @@ def test_locomo_qa_nesting():
     assert q(qa20) == q(qa20b)
 
 
-def test_selection_prefers_fully_staged():
-    """Audit M5: a lucky small-sample stage1 score must not outrank a
-    stage3 score in top-K selection / parent sampling."""
-    from forge.selection import Entry, Frontier
-
-    lucky_stage1 = Entry(id="1_aaaa", objectives={
-        "accuracy": 0.50, "accuracy_locomo": 0.50, "stage_locomo": 1.0,
-    })
-    solid_stage3 = Entry(id="2_bbbb", objectives={
-        "accuracy": 0.45, "accuracy_locomo": 0.45, "stage_locomo": 3.0,
-    })
-    f = Frontier([lucky_stage1, solid_stage3])
-    assert f.pareto_ids() == ["2_bbbb"], f.pareto_ids()
-    picks = {f.sample_parent(tau=0.5, seed=s) for s in range(20)}
-    assert picks == {"2_bbbb"}, picks
-
-    # fallback: nothing fully staged yet → compare everyone
-    f2 = Frontier([lucky_stage1])
-    assert f2.pareto_ids() == ["1_aaaa"]
-    assert f2.sample_parent(seed=0) == "1_aaaa"
-
-    # multi-dataset: one benchmark short of stage3 → not fully staged
-    partial = Entry(id="3_cccc", objectives={
-        "accuracy": 0.60,
-        "accuracy_locomo": 0.60, "stage_locomo": 3.0,
-        "accuracy_dynamicmem": 0.60, "stage_dynamicmem": 2.0,
-    })
-    f3 = Frontier([partial, solid_stage3])
-    assert f3.pareto_ids() == ["2_bbbb"], f3.pareto_ids()
-
-
 def test_test_split_honours_sample_cap():
     """Audit M7: get_task_list(status='test') ignored eval_n_samples for
     dynamicmem/locomo, so mode=test stage sizing silently ran the full
@@ -407,19 +376,6 @@ def test_dm_full_sampling_and_nesting():
     assert all(_item_key(i) in full_keys for i in stage3)  # stage3 ⊂ full
 
 
-def test_selection_accepts_full_stage():
-    from forge.selection import Entry, _fully_staged
-    from forge.orchestrator import FULL_STAGE
-    e = Entry(id="x", parent_ids=[], objectives={
-        "accuracy": 0.5, "accuracy_locomo": 0.5, "stage_locomo": FULL_STAGE,
-    })
-    assert _fully_staged(e)
-    e2 = Entry(id="y", parent_ids=[], objectives={
-        "accuracy": 0.5, "accuracy_locomo": 0.5, "stage_locomo": 2.0,
-    })
-    assert not _fully_staged(e2)
-
-
 # ---------------- mode removal: migration guards + smoke_test ----------------
 
 def test_mode_migration_guards():
@@ -539,6 +495,38 @@ def test_stage3_null_sampling_equals_full_dynamicmem():
     stage1 = sample_items_staged(cps, n_checkpoints=1, n_task_a=5, n_task_c=5, seed=DM_USER)
     full_keys = {_item_key(i) for i in staged_full}
     assert all(_item_key(i) in full_keys for i in stage1)
+
+
+def test_build_objectives_no_mean():
+    """No cross-benchmark `accuracy` mean; per-dataset axes recorded independently."""
+    from forge.orchestrator import _build_objectives
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        hd = os.path.join(td, "h"); os.makedirs(hd)
+        open(os.path.join(hd, "harness.py"), "w").write("x = 1\n")
+        per_ds = {
+            "locomo": {"raw_score": 0.42, "score_max": 1, "stage": 3.0, "tokens": 100},
+            "dynamicmem": {"raw_score": 0.31, "score_max": 1, "stage": 3.0, "tokens": 50},
+        }
+        obj = _build_objectives(per_ds, __import__("pathlib").Path(hd))
+    assert "accuracy" not in obj            # NO mean
+    assert obj["accuracy_locomo"] == 0.42
+    assert obj["accuracy_dynamicmem"] == 0.31
+    assert obj["stage_locomo"] == 3.0
+    assert obj["tokens_total"] == 150
+
+
+def test_frontier_is_pure_record_store():
+    """Frontier no longer exposes selection methods (proposer self-selects)."""
+    from forge.selection import Frontier, Entry
+    f = Frontier([Entry(id="1_a", objectives={"accuracy_locomo": 0.5})])
+    assert not hasattr(f, "pareto_ids")
+    assert not hasattr(f, "sample_parent")
+    assert not hasattr(Frontier, "OBJECTIVES")
+    # to_dict has no OBJECTIVES header, entries round-trip
+    d = f.to_dict()
+    assert "objectives" not in d and len(d["entries"]) == 1
+    assert Frontier.from_dict(d).get("1_a").objectives == {"accuracy_locomo": 0.5}
 
 
 # ---------------- runner ----------------

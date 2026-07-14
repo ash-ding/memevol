@@ -39,11 +39,12 @@ under [`baselines/`](baselines/) — see [baselines/README.md](baselines/README.
 │      │ (Singularity)   │  stage3 (below threshold ⇒ out);   │
 │      └────────┬────────┘  Phase-1 memory cached across      │
 │               │           stages → score.json + traces      │
-│      ┌────────▼────────┐                                    │
-│      │ Frontier update │  objectives = {accuracy,           │
-│      └─────────────────┘    accuracy_<ds>, stage_<ds>,      │
-│                              robustness, code_length,       │
-│                              tokens_total, ...}             │
+│      ┌────────▼────────┐  per-benchmark axes only —         │
+│      │ Frontier update │  objectives = {accuracy_<ds>,      │
+│      └─────────────────┘    stage_<ds>, robustness_<ds>,    │
+│                              code_length, tokens_total, ...} │
+│                              (no cross-benchmark mean;       │
+│                               proposer self-selects priors)  │
 └─────────────────────────────────────────────────────────────┘
 ```
 

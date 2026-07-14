@@ -29,7 +29,7 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(description="alma — DynamicMem memory evolution (baseline)")
+    parser = argparse.ArgumentParser(description="alma — DynamicMem memory evolution (baseline). DynamicMem-ONLY: no multi-dataset support (that is a forge-only capability).")
 
     parser.add_argument("--meta_model", type=str, default="gpt-5")
     parser.add_argument("--execution_model", type=str, default="gpt-5-mini")

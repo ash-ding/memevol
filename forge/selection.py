@@ -1,24 +1,23 @@
-"""Pareto frontier + selection helpers.
+"""Frontier record store.
 
-`Frontier` records every evaluated harness with its objectives and the list
-of `parent_ids` (priors that the proposer drew from when writing it).
+`Frontier` records every evaluated harness with its objectives (per-dataset
+`accuracy_<ds>` / `stage_<ds>` / telemetry) and the `parent_ids` the proposer
+drew from. It is a persisted population, NOT a selection algorithm.
 
-v4 (Meta-Harness paper alignment): the search loop NO LONGER calls
-`sample_parent` — the proposer is responsible for browsing prior
-candidates and picking what to build on. `sample_parent` is preserved
-solely as a utility for held-out-test top-K selection.
-
-`OBJECTIVES` is still ("accuracy",) — multi-axis Pareto frontier is on the
-roadmap (PROGRESS.md issue #5) but not yet wired in.
+There is deliberately NO algorithmic parent selection (Meta-Harness paper
+alignment): the search loop only `add()`s + `save()`s, and the proposer
+reads frontier.json directly to pick which prior(s) to build on. The old
+`sample_parent` / `pareto_ids` / `OBJECTIVES` / mean-`accuracy` machinery was
+removed 2026-07-14 — it was dead code keyed on a cross-benchmark mean that no
+longer exists (each dataset is recorded independently; a run normally targets
+one dataset).
 """
 from __future__ import annotations
 
 import json
-import math
-import random
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 
 
 @dataclass
@@ -31,37 +30,8 @@ class Entry:
     created_at: Optional[str] = None
 
 
-# Highest gauntlet tier (stage3). `stage_<ds>` objectives record the tier a
-# benchmark reached; see forge/orchestrator.py::evaluate_harness.
-FINAL_STAGE = 3.0
-
-
-def _fully_staged(entry: Entry) -> bool:
-    """True iff every evaluated benchmark reached the final gauntlet stage.
-
-    Scores from different stages are NOT comparable (a lucky stage1 score
-    over 2 users vs a stage3 score over 6), so selection restricts to
-    fully-staged entries when any exist. Entries without per-dataset axes
-    (pre-staged-era or dev runs) count as not fully staged.
-
-    coverage=full runs record stage_<ds> = 4.0 (orchestrator.FULL_STAGE) —
-    >= FINAL_STAGE, so full entries pass this filter too. Coverage is
-    uniform within a run; stage-3 vs stage-4 scores from DIFFERENT runs are
-    still not mutually comparable."""
-    ds_axes = [k for k in entry.objectives if k.startswith("accuracy_")]
-    if not ds_axes:
-        return False
-    for k in ds_axes:
-        stage_key = "stage_" + k[len("accuracy_"):]
-        if float(entry.objectives.get(stage_key, 0.0)) < FINAL_STAGE:
-            return False
-    return True
-
-
 class Frontier:
-    """Population + Pareto helpers."""
-
-    OBJECTIVES: Tuple[str, ...] = ("accuracy",)
+    """Persisted population of evaluated harnesses (a record store)."""
 
     def __init__(self, entries: Optional[List[Entry]] = None):
         self._entries: List[Entry] = list(entries or [])
@@ -98,87 +68,6 @@ class Frontier:
         return before - len(self._entries)
 
     # ------------------------------------------------------------------
-    # Frontier
-    # ------------------------------------------------------------------
-
-    def _selection_pool(self) -> List[Entry]:
-        """Entries eligible for score comparison: the fully-staged subset
-        when non-empty (same-stage scores are the only comparable ones),
-        otherwise everyone (early runs where nothing finished stage3)."""
-        staged = [e for e in self._entries if _fully_staged(e)]
-        return staged or list(self._entries)
-
-    def pareto_ids(self) -> List[str]:
-        """Ids on the Pareto frontier (for multi-axis) or top-1 (single axis).
-
-        Compares within `_selection_pool()` — an entry eliminated at stage1
-        with a lucky small-sample score must not outrank a stage3 entry."""
-        pool = self._selection_pool()
-        if not pool:
-            return []
-        if len(self.OBJECTIVES) == 1:
-            axis = self.OBJECTIVES[0]
-            best = max(pool, key=lambda e: e.objectives.get(axis, 0.0))
-            return [best.id]
-        frontier_ids: List[str] = []
-        for a in pool:
-            dominated = False
-            for b in pool:
-                if a.id == b.id:
-                    continue
-                ge_all = all(
-                    b.objectives.get(o, 0.0) >= a.objectives.get(o, 0.0)
-                    for o in self.OBJECTIVES
-                )
-                gt_any = any(
-                    b.objectives.get(o, 0.0) > a.objectives.get(o, 0.0)
-                    for o in self.OBJECTIVES
-                )
-                if ge_all and gt_any:
-                    dominated = True
-                    break
-            if not dominated:
-                frontier_ids.append(a.id)
-        return frontier_ids
-
-    def sample_parent(
-        self,
-        tau: float = 0.5,
-        seed: Optional[int] = None,
-    ) -> Optional[str]:
-        """Softmax-sample over all entries.
-
-        ⚠ NOT used by the search loop anymore (v4 delegates parent
-        selection to the proposer agent). Kept as a utility for held-out
-        test top-K selection where you might want a stochastic but
-        score-weighted pick.
-
-        score(e)  = e.objectives[primary_axis]
-        prob(e)   ∝ exp(score / tau)
-        Primary axis is OBJECTIVES[0].
-
-        Samples within `_selection_pool()` — restricted to fully-staged
-        entries when any exist, since cross-stage scores aren't comparable.
-        """
-        pool = self._selection_pool()
-        if not pool:
-            return None
-        axis = self.OBJECTIVES[0]
-        logits = [float(e.objectives.get(axis, 0.0)) / max(1e-6, tau) for e in pool]
-        m = max(logits)
-        exps = [math.exp(l - m) for l in logits]
-        total = sum(exps)
-        probs = [x / total for x in exps] if total > 0 else [1.0 / len(exps)] * len(exps)
-        rng = random.Random(seed)
-        r = rng.random()
-        acc = 0.0
-        for e, p in zip(pool, probs):
-            acc += p
-            if r <= acc:
-                return e.id
-        return pool[-1].id
-
-    # ------------------------------------------------------------------
     # Persistence (with backward-compat for v3 frontier.json)
     # ------------------------------------------------------------------
 
@@ -195,10 +84,7 @@ class Frontier:
             if e.created_at is not None:
                 d["created_at"] = e.created_at
             out_entries.append(d)
-        return {
-            "objectives": list(self.OBJECTIVES),
-            "entries": out_entries,
-        }
+        return {"entries": out_entries}
 
     @classmethod
     def from_dict(cls, data: dict) -> "Frontier":
