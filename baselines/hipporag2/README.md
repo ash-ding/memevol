@@ -95,6 +95,8 @@ as `forge.heldout`'s `coverage=full`):
 
 ## Output
 
+Each eval run creates a fresh per-instance `outputs/<uuid>_<embedding>/` HippoRAG graph directory (embeddings + knowledge graph) per user, and these directories accumulate across runs (gitignored but growing on disk) — periodically clean `baselines/hipporag2/outputs/` if disk is a concern.
+
 ```
 baselines/hipporag2/
 ├── outputs/<instance_id>_<embedding>/   # HippoRAG's own per-instance graph

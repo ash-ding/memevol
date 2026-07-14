@@ -1,11 +1,10 @@
-"""Dataset registry for ALMA — maps a dataset name to its workflow, env
-module, and recorder class. Mirrors forge/launch.py::WORKFLOWS (which ALMA
-must NOT import — baselines are standalone), extended with the recorder class
-because ALMA's code-generation prompt introspects it via get_metadata_dict.
+"""Dataset registry for baselines (alma, cc, hipporag2) — maps a dataset name
+to its workflow, env module, and recorder class. Mirrors forge/launch.py::WORKFLOWS
+(which baselines must NOT import — they are standalone), extended with the
+recorder class because the proposer prompt introspects it via get_metadata_dict.
 
-ALMA targets exactly ONE dataset per run (selected with --dataset); this is
-not multi-dataset-at-once. Add a new benchmark by adding one line here + one
-block in dataset_info.py.
+Each baseline targets exactly ONE dataset per run (selected with --dataset).
+Add a new benchmark by adding one line here + one block in dataset_info.py.
 """
 from __future__ import annotations
 
@@ -38,7 +37,6 @@ def resolve(dataset: str) -> Tuple[type, ModuleType, type]:
     """Return (workflow_cls, env_module, recorder_cls) for `dataset`."""
     if dataset not in REGISTRY:
         raise ValueError(
-            f"unknown dataset {dataset!r}; ALMA supports {DATASETS}. "
-            f"(ALMA runs one dataset per run — pick one.)"
+            f"unknown dataset {dataset!r}; supported datasets: {DATASETS}."
         )
     return REGISTRY[dataset]

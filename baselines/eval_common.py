@@ -28,7 +28,12 @@ _FAMILY_FIELDS = {
 
 
 def _family(dataset: str) -> str:
-    return "longmemeval" if dataset.startswith("longmemeval") else dataset
+    family = "longmemeval" if dataset.startswith("longmemeval") else dataset
+    if family not in _FAMILY_FIELDS:
+        raise ValueError(
+            f"unknown dataset {dataset!r}; supported datasets: {sorted(_FAMILY_FIELDS.keys())}"
+        )
+    return family
 
 
 def family_full_spec(dataset: str) -> Dict[str, Any]:
