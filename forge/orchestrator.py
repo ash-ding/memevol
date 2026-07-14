@@ -315,15 +315,24 @@ def _benchmark_family(ds: str) -> str:
     return ds
 
 
+def _wire_size(v: Any) -> Optional[int]:
+    """Stage size field → wire value. None (a `null` / `full` / `all` field,
+    normalized by _resolve_dataset_stages) passes through as None = no cap
+    (whole pool / whole split), reusing the same downstream machinery as
+    coverage=full; anything else is coerced to int."""
+    return None if v is None else int(v)
+
+
 def stage_wire_spec(ds: str, stage_params: Dict[str, Any]) -> Dict[str, Any]:
     """Normalize a stage's benchmark-native size fields to the wire spec the
-    container consumes: {"n_samples": int, ...family extras}. `threshold`
-    is an orchestrator-side concern and is stripped."""
+    container consumes: {"n_samples": int|None, ...family extras}. A None
+    field means full coverage of that dimension. `threshold` is an
+    orchestrator-side concern and is stripped."""
     family = _benchmark_family(ds)
     sample_field, extras = _FAMILY_FIELDS[family]
-    spec: Dict[str, Any] = {"n_samples": int(stage_params[sample_field])}
+    spec: Dict[str, Any] = {"n_samples": _wire_size(stage_params[sample_field])}
     for f in extras:
-        spec[f] = int(stage_params[f])
+        spec[f] = _wire_size(stage_params[f])
     return spec
 
 
@@ -385,6 +394,16 @@ def _resolve_dataset_stages(ds: str, params: Dict[str, Any]) -> None:
             )
         for field, default in DEFAULT_STAGES[family][name].items():
             block.setdefault(field, default)
+        # Full-coverage sentinel: a size field of null / "full" / "all"
+        # (case-insensitive) → None = that dimension's whole pool / split,
+        # reusing coverage=full's downstream None path. Intended for stage3
+        # (progressive gauntlet with a full final stage); the monotonicity
+        # check below treats None as +inf, so a stray null at an earlier
+        # stage forces later stages full or errors out.
+        for field in (sample_field, *extras):
+            v = block.get(field)
+            if isinstance(v, str) and v.strip().lower() in ("full", "all"):
+                block[field] = None
         # sanity_check and stage3 never gate
         if name in ("sanity_check", "stage3"):
             block.pop("threshold", None)
@@ -393,12 +412,17 @@ def _resolve_dataset_stages(ds: str, params: Dict[str, Any]) -> None:
             raise ValueError(f"datasets.{ds}.stages.{name}.threshold must be in [0,1], got {thr}")
 
     # Monotonic non-decreasing sizes across stage1..3 (nesting depends on it).
+    # None (full coverage) counts as the largest value, so it must not precede
+    # a concrete size — a null/full field forces every later stage full too.
     for field in (sample_field, *extras):
-        seq = [int(stages[name][field]) for name in STAGE_ORDER]
-        if any(b < a for a, b in zip(seq, seq[1:])):
+        seq = [stages[name][field] for name in STAGE_ORDER]
+        cmp = [float("inf") if v is None else int(v) for v in seq]
+        if any(b < a for a, b in zip(cmp, cmp[1:])):
             raise ValueError(
                 f"datasets.{ds}.stages: {field} must be non-decreasing across "
-                f"stage1..stage3 (got {seq}) — staged nesting depends on it"
+                f"stage1..stage3 (got {seq}) — staged nesting depends on it; "
+                f"a null/full field (= full coverage) may only be followed by "
+                f"another null/full field"
             )
 
 

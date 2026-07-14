@@ -300,6 +300,40 @@ def test_evaluate_harness_smoke_single_sanity_pass():
         assert (paths.harnesses_dir / hid / "locomo" / "score.json").exists()
 
 
+def test_evaluate_harness_stage3_null_full_final():
+    """coverage=sample gauntlet where stage3 uses null sizes → stage1/2 gate
+    on concrete sizes, stage3 runs a full-coverage wire spec, reaches 3.0."""
+    calls = []
+    with tempfile.TemporaryDirectory() as td, _test_workspace():
+        src = _mk_src_harness(td)
+        hid = H._stage_harness(src)
+        ds_cfg = {"locomo": {"stages": {
+            "stage1": {"n_conversations": 2, "n_qa": 20, "threshold": 0.3},
+            "stage2": {"n_conversations": 4, "n_qa": 40, "threshold": 0.35},
+            "stage3": {"n_conversations": None, "n_qa": None},
+        }}}
+        O._resolve_dataset_stages("locomo", ds_cfg["locomo"])
+        orig = O.run_evaluation
+        O.run_evaluation = _fake_run_evaluation_factory(calls)
+        try:
+            per_ds = asyncio.run(O.evaluate_harness(
+                hid, Path("/fake.sif"),
+                datasets_config=ds_cfg,
+                split="search", smoke=False,
+                model="gpt-5-mini", judge_model="gpt-5-mini",
+                update_type="all_at_once", max_sample_concurrent=1,
+                memory_cache=False, coverage="sample",
+            ))
+        finally:
+            O.run_evaluation = orig
+        # 0.42 clears the 0.3/0.35 thresholds → all three stages run
+        assert [c["stage"] for c in calls] == ["stage1", "stage2", "stage3"]
+        # stage3's wire spec carries None (full coverage); earlier stages don't
+        assert calls[2]["spec"] == {"n_samples": None, "n_qa": None}
+        assert calls[0]["spec"] == {"n_samples": 2, "n_qa": 20}
+        assert per_ds["locomo"]["stage"] == 3.0  # reached stage3 (not 4.0 = coverage=full)
+
+
 # ---------------- runner ----------------
 
 def main():

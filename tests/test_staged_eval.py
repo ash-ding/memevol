@@ -464,6 +464,86 @@ def test_smoke_yaml_parses_with_smoke_test():
         assert cfg["smoke_test"] is False and "mode" not in cfg
 
 
+# ---------------- stage sizes: null = full coverage ----------------
+
+def test_stage_null_wire_equals_full():
+    from forge.orchestrator import stage_wire_spec, full_wire_spec, _resolve_dataset_stages
+    # null on every stage3 field → wire spec identical to full_wire_spec
+    for ds in ("dynamicmem", "locomo", "longmemeval_s"):
+        p = {"stages": {"stage3": {}}}
+        # seed stage3 with the family's fields set to None
+        _resolve_dataset_stages(ds, p)  # fill defaults first
+        for f in list(p["stages"]["stage3"]):
+            if f != "threshold":
+                p["stages"]["stage3"][f] = None
+        assert stage_wire_spec(ds, p["stages"]["stage3"]) == full_wire_spec(ds), ds
+
+
+def test_stage_full_all_aliases_normalize_to_none():
+    from forge.orchestrator import _resolve_dataset_stages
+    p = {"stages": {"stage3": {"n_conversations": "full", "n_qa": "ALL"}}}
+    _resolve_dataset_stages("locomo", p)
+    assert p["stages"]["stage3"]["n_conversations"] is None
+    assert p["stages"]["stage3"]["n_qa"] is None
+
+
+def test_stage_null_stage3_is_valid_and_monotonic():
+    from forge.orchestrator import _resolve_dataset_stages
+    p = {"stages": {
+        "stage1": {"n_conversations": 2, "n_qa": 20, "threshold": 0.3},
+        "stage2": {"n_conversations": 4, "n_qa": 40, "threshold": 0.35},
+        "stage3": {"n_conversations": None, "n_qa": None},
+    }}
+    _resolve_dataset_stages("locomo", p)  # must not raise
+    assert p["stages"]["stage3"]["n_qa"] is None
+
+
+def test_stage_null_before_concrete_rejected():
+    from forge.orchestrator import _resolve_dataset_stages
+    # null at stage1 (= full = +inf) followed by a concrete stage2 → decreasing
+    p = {"stages": {
+        "stage1": {"n_conversations": None, "n_qa": None},
+        "stage2": {"n_conversations": 4, "n_qa": 40, "threshold": 0.35},
+        "stage3": {"n_conversations": 6, "n_qa": 60},
+    }}
+    try:
+        _resolve_dataset_stages("locomo", p)
+    except ValueError as exc:
+        assert "non-decreasing" in str(exc)
+    else:
+        raise AssertionError("null-before-concrete stage sizes accepted")
+
+
+def test_stage_all_null_valid():
+    from forge.orchestrator import _resolve_dataset_stages
+    p = {"stages": {
+        "stage1": {"n_conversations": None, "n_qa": None, "threshold": 0.3},
+        "stage2": {"n_conversations": None, "n_qa": None, "threshold": 0.35},
+        "stage3": {"n_conversations": None, "n_qa": None},
+    }}
+    _resolve_dataset_stages("locomo", p)  # all-full is trivially non-decreasing
+
+
+def test_stage3_null_sampling_equals_full_dynamicmem():
+    """The core guarantee: a stage3-null wire spec samples the SAME item set
+    as coverage=full for a real DynamicMem user."""
+    if not os.path.isdir(DM_USER):
+        print("  (dynamicmem user_data missing — skipped)")
+        return
+    from datasets.dynamicmem.env import load_user_checkpoints, sample_items_staged
+    _, cps = load_user_checkpoints(DM_USER)
+    # full via None (what stage3-null produces on the wire)
+    staged_full = sample_items_staged(
+        cps, n_checkpoints=None, n_task_a=None, n_task_c=None, seed=DM_USER)
+    all_items = sample_items_staged(
+        cps, n_checkpoints=99999, n_task_a=99999, n_task_c=99999, seed=DM_USER)
+    assert {_item_key(i) for i in staged_full} == {_item_key(i) for i in all_items}
+    # and stage1 sample ⊂ stage3-null (nesting preserved)
+    stage1 = sample_items_staged(cps, n_checkpoints=1, n_task_a=5, n_task_c=5, seed=DM_USER)
+    full_keys = {_item_key(i) for i in staged_full}
+    assert all(_item_key(i) in full_keys for i in stage1)
+
+
 # ---------------- runner ----------------
 
 def main():
