@@ -139,8 +139,8 @@ def test_launch_dispatches_via_registry():
     import inspect
     import baselines.alma.launch as launch
     src = inspect.getsource(launch)
-    # dispatches through the registry
-    assert "from baselines.alma.registry import" in src
+    # dispatches through the shared registry
+    assert "from baselines.registry import" in src
     assert "resolve(dataset)" in src
     # no hardcoded DynamicMem workflow/get_task_list import survives
     assert "from datasets.dynamicmem.workflow import DynamicMemWorkflow" not in src

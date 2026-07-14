@@ -37,7 +37,7 @@ if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
 from common.harness_base import MemoStructure
-from baselines.alma.registry import resolve, DATASETS
+from baselines.registry import resolve, DATASETS
 from common.tokens import init_global_tracker
 from common.logger import get_logger
 

@@ -41,7 +41,7 @@ class MetaAgent:
         self.execution_model = execution_model
 
     def _get_recorder_class(self):
-        from baselines.alma.registry import resolve
+        from baselines.registry import resolve
         return resolve(self.dataset)[2]
 
     def _history_ckpt_filename(self, result_dir: str, update_type: str, steps: int, timestamp: str) -> str:
