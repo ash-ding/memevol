@@ -3,22 +3,8 @@ from dataclasses import fields
 from pathlib import Path
 from typing import Any, Dict
 
-from datasets.dynamicmem.env import Basic_Recorder
-
-TASK_DESCRIPTION = {
-    'dynamicmem': """The evaluation of downstream agent system is based on DynamicMem:
-- Each task is a single user's digital life: months of app activity logs spanning apps like Fitbit, banking (Chase), calendar, messaging, and LLM assistants.
-- The agent must answer natural-language questions about the user's habits, preferences, and behavioural patterns.
-- Questions span life domains: work routines, health habits, financial behaviours, social activities, and leisure preferences.
-- Different users have **entirely different lifestyles, occupations, and activity patterns** — memory must be personalised per user.
-- The memory structure should strengthen the following abilities of the agent:
-    - Personalised Profile Construction: building a structured user profile from raw app-log sequences (recorder.init['app_logs']).
-    - Longitudinal Pattern Extraction: identifying recurring behaviours (weekly meetings, daily exercise, monthly financial transfers) from timestamped log entries.
-    - Cross-Domain Synthesis: connecting behavioural patterns across different life domains (e.g. work stress → reduced fitness activity).
-    - Temporal Precision: storing and retrieving when (day-of-week, time-of-day, frequency) specific behaviours occur.
-    - Selective Retrieval: for a given QA question, surfacing only the relevant subset of the user profile rather than the entire log history.
-""",
-}
+from common.harness_base import Basic_Recorder
+from baselines.alma.dataset_info import DATASET_INFO
 
 CHROMA_CHEETSHEET = """## Initialize Chroma DB
 
@@ -171,7 +157,8 @@ Class: Embedding
 """
 
 
-def build_analysis_prompt(memo_info):
+def build_analysis_prompt(memo_info, dataset="dynamicmem"):
+    info = DATASET_INFO[dataset]
     MEMO_ANALYSIS_OUTPUT_FORMAT = {
         "learned_from_suggestion_example": {
             "type": "string",
@@ -179,7 +166,7 @@ def build_analysis_prompt(memo_info):
         },
         "trajectory_score_assessment": {
             "type": "array",
-            "description": "Per-QA gap analysis for each sampled QA example (ONLY entries with the standard QA shape; entries whose 'error_info' key is set belong to 'execution_errors' instead). Compare relevant_app_logs (ground truth) against retrieved_memory (what memory returned) to diagnose failures.",
+            "description": f"Per-QA gap analysis for each sampled QA example (ONLY entries with the standard QA shape; entries whose 'error_info' key is set belong to 'execution_errors' instead). Compare {info['evidence_key']} (ground truth) against retrieved_memory (what memory returned) to diagnose failures.",
             "items": {
                 "type": "object",
                 "properties": {
@@ -197,7 +184,7 @@ def build_analysis_prompt(memo_info):
                     },
                     "gap_diagnosis": {
                         "type": "string",
-                        "description": "What key information exists in relevant_app_logs but is missing, incomplete, or wrong in retrieved_memory. For high-score examples, note what the memory got right. Do NOT attempt to attribute the gap to Phase 1 vs Phase 2 — you cannot see the full memory database, so that call is a guess."
+                        "description": f"What key information exists in {info['evidence_key']} but is missing, incomplete, or wrong in retrieved_memory. For high-score examples, note what the memory got right. Do NOT attempt to attribute the gap to Phase 1 vs Phase 2 — you cannot see the full memory database, so that call is a guess."
                     },
                     "judge_insight": {
                         "type": "string",
@@ -276,34 +263,11 @@ def build_analysis_prompt(memo_info):
     - Final MemoStructure (inheriting `MemoStructure`) contains:
         - **general_update**: Phase 1 — called to build a user profile from app logs.
         - **general_retrieve**: Phase 2 — called once per QA question to retrieve relevant memory.
-    - Two-phase protocol:
-        - `general_update(recorder)`: called during Phase 1 with chunks of app logs.
-          `recorder.init['app_logs']` = current batch of log entries.
-          Expected behaviour: extract and store user habits, preferences, and behavioural patterns.
-        - `general_retrieve(recorder)`: called during Phase 2 before each QA question.
-          `recorder.init['query']` = current question; `recorder.init['app_logs']` = all logs (reference).
-          Returns Dict passed to the answering agent.
-          Expected behaviour: retrieve facts relevant to the query from the stored memory.
-          NOTE: the downstream QA agent only sees the returned Dict and the question — it does NOT
-          have access to app_logs directly.
+{info['analysis_protocol']}
 
 2. **examples** — a mixed list of TWO shapes; inspect the keys on each entry to decide which shape you are looking at.
 
-    **Shape A — sampled QA pair (the usual case):**
-        - `user_id`: which user this QA pair belongs to (e.g. "user_001"). Examples are sampled from one randomly-chosen valid user, binned by judge score.
-        - `query`: the natural-language question asked
-        - `retrieved_memory`: the dict returned by `general_retrieve` for this question
-        - `predicted`: the agent's answer
-        - `reference`: the ground-truth answer
-        - `score`: float 0.0–1.0, rated by the official DynamicMem TCE holistic judge (per-field 0.8·core_correct + 0.2·detail_quality/2, averaged across the item's fields; missing fields score 0). Interpretation:
-            - 0.0–0.2: mostly or completely incorrect — core facts wrong or missing for nearly all fields.
-            - 0.3–0.7: partially correct — a subset of fields has the core fact right; details and/or the remaining fields are wrong or missing.
-            - 0.8–0.9: all (or nearly all) core facts correct, with imperfect detail quality.
-            - 1.0: fully correct on every field, core and details.
-        - `judge_reason`: the LLM judge's brief explanation of why it gave that score — highlights which key points were hit or missed
-        - `relevant_app_logs`: the specific app log entries that contain the ground-truth evidence for this question
-
-    Analyze failure patterns both globally and per-user — some failures may be user-specific (e.g. a user with unusual data patterns) while others are systematic. Compare `relevant_app_logs` against `retrieved_memory` to identify what the memory should have stored but didn't. Use `judge_reason` to understand exactly which key points were missing or incorrect. High-score examples are provided as contrast — they show what the memory does well; avoid breaking these.
+{info['analysis_shape_a']}
 
     **Shape B — execution error record (appears when the generated code crashed on some users):**
         - `error_info`: a string of the form
@@ -328,7 +292,7 @@ Step 1 — Learn from past suggestions
 Step 2a — Inspect QA trajectories and diagnose gaps (Shape A entries only)
     For each sampled QA example, perform a gap analysis:
     1. Read `judge_reason` to understand which key points the answer missed or got wrong.
-    2. Compare `relevant_app_logs` (ground-truth evidence) against `retrieved_memory` (what memory returned):
+    2. Compare `{info['evidence_key']}` (ground-truth evidence) against `retrieved_memory` (what memory returned):
        list the facts that are in the logs but absent from retrieved memory (→ gap_diagnosis).
     3. For high-score examples, note what the memory did well so you can avoid breaking it.
     Do NOT try to attribute a gap to Phase 1 vs Phase 2 — you cannot see the full memory database after
@@ -356,7 +320,7 @@ Extra checks:
     3. If retrieval returns empty dicts, prioritise structural fixes (keying, type consistency).
 
 ### Benchmark Information:
-{TASK_DESCRIPTION['dynamicmem']}
+{info['task_description']}
 
 ### Required Output:
 Return a JSON object following this schema:
@@ -399,7 +363,9 @@ def build_generate_new_code_prompt(
     memo_info: Dict[str, Any],
     analysis_result: Dict[str, Any],
     recorder: Basic_Recorder,
+    dataset: str = "dynamicmem",
 ):
+    info = DATASET_INFO[dataset]
     basic_classes = _read_harness_base()
 
     interaction_recorder_info = get_metadata_dict(recorder)
@@ -417,35 +383,15 @@ def build_generate_new_code_prompt(
 
     interaction_prompt = f"""
     Your `general_retrieve` and `general_update` will take `Basic_Recorder` as input.
-    The DynamicMemRecorder (a subclass of Basic_Recorder) has these attributes:
+    The {info['recorder_class_name']} (a subclass of Basic_Recorder) has these attributes:
     {json.dumps(interaction_recorder_info, indent=2, ensure_ascii=False)}
 
-    == DynamicMem Two-Phase Protocol ==
-
-    Phase 1 — general_update(recorder):
-      Called N times to build user memory from app logs.
-      recorder.init['app_logs']     = List[dict]  — current batch of app log entries
-      Each app_log entry has: app_log_id, timestamp, app_name, api_name, request, response.
-      Expected behaviour: extract and store user habits, preferences, and behavioural patterns into internal DB.
-      NOTE: general_update may be called multiple times (once per chunk of logs); your internal DB must be
-      persistent across calls (store it as self.* attributes on the MemoStructure instance).
-
-    Phase 2 — general_retrieve(recorder):
-      Called once per QA question (after Phase 1 is complete).
-      recorder.init['query']        = str          — current natural-language question
-      recorder.init['app_logs']     = List[dict]   — all app logs (reference only)
-      Return value: Dict  — memory context passed directly to the answering agent.
-      Expected behaviour: retrieve facts relevant to the query from the stored memory.
-      The returned dict is sent verbatim to the agent — keep it clean, structured, and non-redundant.
-      IMPORTANT: the downstream QA agent ONLY sees the returned Dict and the question.
-      It does NOT have access to app_logs.
-    """
+{info['gen_protocol']}"""
 
     system_prompt = f"""You are a senior AI software engineer. Your task is to build an agent memory system composed of multiple specialised memory layers and a coordinating memory structure.
-The agent will be used in the DynamicMem personalisation benchmark.
-Your memory structure aims to help a downstream QA agent accurately answer questions about a specific user's habits, preferences, and behavioural patterns.
+{info['gen_intro']}
 
-{TASK_DESCRIPTION['dynamicmem']}
+{info['task_description']}
 
 You are given the following two base classes:
 <BACKBONE_CODE>
@@ -455,7 +401,7 @@ You are given the following two base classes:
 Inherit these base classes and import as follows:
 ```python
 from common.harness_base import Sub_memo_layer, MemoStructure
-from datasets.dynamicmem.env import Basic_Recorder
+{info['recorder_env_import']}
 from common.llm import Agent, Embedding
 from langchain_chroma import Chroma
 ```
@@ -465,13 +411,7 @@ from langchain_chroma import Chroma
 </CODE_INPUT>
 
 <CODE_USAGE>
-Your memory structure will be used in the two-phase DynamicMem workflow:
-    - `general_update(recorder)`: called during Phase 1 (once or multiple times) to ingest app logs
-      and build a personalised user profile in the internal database.
-    - `general_retrieve(recorder)`: called during Phase 2 (once per QA question) to retrieve
-      relevant facts from the stored profile. The returned Dict is given directly to the answering agent.
-    IMPORTANT: each user gets a fresh MemoStructure() instance — there is NO cross-user memory sharing.
-    The same instance persists across all Phase 1 + Phase 2 calls for one user.
+{info['code_usage']}
 </CODE_USAGE>
 
 Here are the basic tools provided:
@@ -487,50 +427,7 @@ Here are the basic tools provided:
 {TOOL_CHEETSHEET}
 </OTHER_TOOLS>
 
-### Your Task:
-Modify or create code that fully satisfies the following design goals:
-
-1. **Multiple Memory Layers:**
-   - Create multiple subclasses of `Sub_memo_layer`.
-   - Each layer must have a clear responsibility and maintain its own database (Chroma or NetworkX).
-   - Think carefully about what type of behavioural data belongs in each layer
-     (e.g., temporal patterns, cross-domain correlations, preference summaries).
-
-2. **General Retrieve/Update Orchestration:**
-   - Create a subclass of `MemoStructure` that orchestrates all layers.
-   - `general_update()` should propagate app-log information to relevant layers.
-   - `general_retrieve()` should chain layer outputs intelligently for the given query.
-     Output from one layer can become input to the next.
-
-3. **Personalisation and Temporal Precision:**
-   - Store *when* behaviours occur (day-of-week, time-of-day, frequency), not just *what*.
-   - Design retrieval to surface only the facts relevant to the current question.
-   - Avoid returning the entire stored profile; be selective and query-aware.
-
-4. **Out-of-the-Box Reasoning:**
-   - Think about the semantic flow of information across layers.
-   - Avoid hard-coded if/else branches for specific apps or domains.
-   - Express generalizable principles: the structure should work for users with very different lifestyles.
-   - Keep retrieved memory clean and useful — avoid repetition or truncated meaningful text.
-
-5. **Integration with Utilities:**
-   - Use Chroma for semantic similarity search (query-aware retrieval).
-   - Use NetworkX for structural/relational patterns across apps or time slots.
-   - Use Agent for LLM-based summarisation or pattern extraction if needed.
-
-6. **Code Quality:**
-   - Output clean, runnable Python code following PEP8.
-   - `general_retrieve()` and `general_update()` accept a `Basic_Recorder` and orchestrate end-to-end.
-   - Initialize all layers in `MemoStructure.__init__`.
-   - Avoid placeholders like `pass` or `# TODO`.
-   - Do not overuse defensive programming; raise exceptions for unexpected conditions.
-
-The goal is to build a memory system that accurately captures individual user behaviour from app logs
-and retrieves the right facts for any personalisation question.
-
-### Important:
-- Think creatively about data flow — outputs of one layer can feed into the next.
-- Provide **only the final rewritten code**, no explanations.
+{info['design_goals']}
 """
 
     if memo_info.get('source_code', ''):
@@ -556,7 +453,8 @@ and retrieves the right facts for any personalisation question.
     return system_prompt, user_prompt
 
 
-def build_reflection_prompt(code_str: str, recorder: Basic_Recorder, error_msg):
+def build_reflection_prompt(code_str: str, recorder: Basic_Recorder, error_msg, dataset: str = "dynamicmem"):
+    info = DATASET_INFO[dataset]
     basic_classes = _read_harness_base()
 
     interaction_recorder_info = get_metadata_dict(recorder)
@@ -564,15 +462,7 @@ def build_reflection_prompt(code_str: str, recorder: Basic_Recorder, error_msg):
     Your `general_retrieve` and `general_update` will take `Basic_Recorder` as input:
     {json.dumps(interaction_recorder_info, indent=2, ensure_ascii=False)}
 
-    == DynamicMem Two-Phase Protocol ==
-    Phase 1 — general_update(recorder):
-      recorder.init['app_logs']     = List[dict]  — current batch of app log entries
-    Phase 2 — general_retrieve(recorder):
-      recorder.init['query']        = str          — current question
-      recorder.init['app_logs']     = List[dict]   — all logs (reference)
-      Must return a Dict for the downstream agent.
-      NOTE: the QA agent only sees the returned Dict + question, NOT app_logs.
-    """
+{info['reflection_protocol']}"""
 
     system_prompt = f"""You are a senior AI software engineer and code repair expert.
 Your role is to carefully analyse the provided code and error information, identify potential errors or design flaws, and directly rewrite or edit the code to fix those issues — while keeping the main design goals and intentions exactly the same.
@@ -587,10 +477,7 @@ You are given the following context and base classes:
 </CODE_INPUT>
 
 <CODE_USAGE>
-Your memory structure will be used in the DynamicMem two-phase workflow:
-    - `general_update(recorder)`: Phase 1 — ingest app logs and build user profile.
-    - `general_retrieve(recorder)`: Phase 2 — retrieve facts relevant to the query; return a Dict.
-    IMPORTANT: each user gets a fresh MemoStructure() instance — no cross-user sharing.
+{info['reflection_code_usage']}
 </CODE_USAGE>
 
 ### Your Task:
