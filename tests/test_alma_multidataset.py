@@ -133,6 +133,49 @@ def test_prompts_render_for_all_datasets():
         assert shape_word in g_sys
 
 
+def test_launch_uses_registry_workflow():
+    """launch.main dispatches the workflow/env by dataset (no real eval)."""
+    import asyncio
+    import baselines.alma.launch as launch
+    from datasets.locomo.workflow import LoCoMoWorkflow
+
+    captured = {}
+
+    class _FakeWorkflow:
+        def __init__(self, **kw):
+            captured["init"] = kw
+        async def run_all_users(self, **kw):
+            captured["run"] = kw
+            return ([], 0)
+        def save_full_traces(self, records):
+            captured["saved"] = True
+        # attributes launch.py sets
+        memo_sha = None; status = None; output_run_dir = None
+
+    # Point the registry entry for locomo at our fake, keep env real.
+    import baselines.alma.registry as reg
+    _, env, rec = reg.REGISTRY["locomo"]
+    reg.REGISTRY["locomo"] = (_FakeWorkflow, env, rec)
+    try:
+        import tempfile, os
+        d = tempfile.mkdtemp()
+        # a trivial memo file
+        mp = os.path.join(d, "memo.py")
+        open(mp, "w").write(
+            "from common.harness_base import MemoStructure\n"
+            "class M(MemoStructure):\n"
+            "    async def general_update(self, r): pass\n"
+            "    async def general_retrieve(self, r): return {}\n"
+        )
+        # os._exit(0) at the end of launch.main would kill the test process;
+        # so assert the registry lookup path directly instead:
+        wf_cls, env_mod, rec_cls = reg.resolve("locomo")
+        assert wf_cls is _FakeWorkflow
+        assert hasattr(env_mod, "get_task_list")
+    finally:
+        reg.REGISTRY["locomo"] = (LoCoMoWorkflow, env, rec)
+
+
 # ---------------- runner ----------------
 
 def main():

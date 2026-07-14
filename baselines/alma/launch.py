@@ -37,10 +37,9 @@ if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
 from common.harness_base import MemoStructure
-from datasets.dynamicmem.workflow import DynamicMemWorkflow
+from baselines.alma.registry import resolve, DATASETS
 from common.tokens import init_global_tracker
 from common.logger import get_logger
-from datasets.dynamicmem.env import get_task_list
 
 log = get_logger("main", level_styles={
     "INFO": {"icon": "🚀", "color": "green"},
@@ -123,6 +122,7 @@ async def main(
     module_path: str,
     memory_id: str,
     output_run_dir: str,
+    dataset: str = "dynamicmem",
     update_type: str = "all_at_once",
     n_chunks: int = 5,
     max_logs: Optional[int] = None,
@@ -157,21 +157,17 @@ async def main(
     # task list + small QA count) by capping the list itself; the shared
     # workflow no longer resamples.
     task_list_size = check_n_samples if mode == "check" else eval_n_samples
-    task_list = get_task_list(status=status, eval_n_samples=int(task_list_size))
+
+    # 4. Resolve the workflow and env from the registry, then get task list
+    workflow_cls, env_module, _recorder_cls = resolve(dataset)
+    task_list = env_module.get_task_list(status=status, eval_n_samples=int(task_list_size))
     log.info(f"Task list ({status}, size={len(task_list)}): {[t[-15:] for t in task_list]}")
 
-    # 4. Build workflow and run. alma maps its legacy (mode, *_n_qa) knobs
+    # 5. Build workflow and run. alma maps its legacy (mode, *_n_qa) knobs
     # onto the shared workflow's staged API: check → the cheap "sanity" tier
-    # (DynamicMem: first checkpoint only), eval → the terminal "stage3" tier.
-    # The spec's n_qa drives the legacy total-count
-    # sampling path in DynamicMemWorkflow.
-    # ALMA is DynamicMem-ONLY by design: it hardcodes DynamicMemWorkflow and
-    # has no `--datasets` concept. Multi-benchmark search is a forge-only
-    # capability (forge/orchestrator.py). If you ever wire a dataset selector
-    # into ALMA, reject anything but a single dynamicmem here — the meta-agent
-    # loop, memo_manager reward tracking, and trace format all assume one
-    # benchmark.
-    workflow = DynamicMemWorkflow(
+    # (first checkpoint only for DynamicMem), eval → the terminal "stage3" tier.
+    # The spec's n_qa drives the legacy total-count sampling path.
+    workflow = workflow_cls(
         memo_class=memo_class,
         model=model,
         update_type=update_type,
@@ -198,7 +194,7 @@ async def main(
         max_sample_concurrent=max_sample_concurrent,
     )
 
-    # 5. Persist outputs
+    # 6. Persist outputs
     score_payload = _build_score_json(records[:record_len])
     with (run_dir / "score.json").open("w", encoding="utf-8") as f:
         json.dump(score_payload, f, indent=2, ensure_ascii=False)
@@ -228,6 +224,7 @@ if __name__ == "__main__":
     parser.add_argument("--memory_id", required=True)
     parser.add_argument("--output_run_dir", required=True,
                         help="Absolute path to the per-run output directory")
+    parser.add_argument("--dataset", default="dynamicmem", choices=DATASETS)
     parser.add_argument("--update_type", default="all_at_once",
                         choices=["all_at_once", "chunked", "sequential"])
     parser.add_argument("--n_chunks", type=int, default=5)
@@ -247,6 +244,7 @@ if __name__ == "__main__":
         module_path=args.module_path,
         memory_id=args.memory_id,
         output_run_dir=args.output_run_dir,
+        dataset=args.dataset,
         update_type=args.update_type,
         n_chunks=args.n_chunks,
         max_logs=args.max_logs,
