@@ -9,16 +9,15 @@ producing comparable metrics: per-user reward, judge-scored accuracy, and
 the shared `DynamicMemWorkflow`, so it automatically follows the official
 TCE v2 checkpoint protocol (checkpoint-interleaved ingestion, two task
 families, official holistic 0–1 judge) — its numbers ARE comparable with
-forge. `hipporag2` now drives its `HippoRAGMemo` through
-`baselines.eval_common.run_baseline`, which resolves the SAME production
-per-dataset workflow the main method uses (`baselines.registry.resolve`), so
-its DynamicMem numbers get the official TCE protocol too, and it runs on all
-four datasets (dynamicmem/locomo/longmemeval_s/longmemeval_m) via one
-`run.py --dataset ...` entrypoint. `cc` still runs two-phase via the
-`load_user_data` compat shim (last checkpoint only, generic 0–10 judge) —
-temporally self-consistent but **not** the official protocol and **not**
-directly comparable with forge/alma DynamicMem numbers; full adaptation is
-deferred (see PROGRESS.md).
+forge. `hipporag2` and `cc` both now drive their `MemoStructure`
+(`HippoRAGMemo` / `CCMemo`) through `baselines.eval_common.run_baseline`,
+which resolves the SAME production per-dataset workflow the main method
+uses (`baselines.registry.resolve`), so their DynamicMem numbers get the
+official TCE protocol too, and both run on all four datasets
+(dynamicmem/locomo/longmemeval_s/longmemeval_m) via one `run.py --dataset
+...` entrypoint. `cc` bypasses the shared QA agent (`CCPassThroughMixin`
+overrides `_answer_query`) — its own tool-using answer is judged verbatim
+instead of being relayed through a second LLM call.
 
 All baselines share **`baselines/venv/`** (full ML install:
 `pip install -r baselines/requirements.txt`) and write artifacts under
@@ -27,7 +26,7 @@ each baseline's own `logs/` and `results/` directories (gitignored).
 | Baseline | Approach | Optimization | Best for |
 |---|---|---|---|
 | **[alma](alma/)** | LLM-meta-agent search loop | Yes — propose / select / evolve over harness code | Established baseline; the framework's "v1" memory-architecture search |
-| **[cc](cc/)** | Claude Code as direct QA agent | None (zero-shot) | What-if: just give CC the raw user data + tools and let it answer |
+| **[cc](cc/)** | Claude Code as direct QA agent (native answer, multi-dataset) | None (zero-shot) | What-if: just give CC the raw user data + tools and let it answer |
 | **[hipporag2](hipporag2/)** | Graph-based RAG pipeline as retrieval memory (OpenIE → KG → PPR retrieval → passages; shared QA agent answers) | None (fixed pipeline) | Hand-designed memory architecture comparison point, multi-dataset |
 
 ---
@@ -65,28 +64,33 @@ prior code, traces, and scores.
 
 ## cc — Claude Code as direct QA agent
 
-Skips memory-architecture design entirely. Per question, Claude Code is
-given the user's data files in a working directory and access to standard
-SDK tools (Read, Grep, Glob), then asked to answer. Same judge as the rest
-of the framework, so scores are directly comparable.
+Skips memory-architecture design entirely. `CCMemo` (`baselines/cc/memo.py`)
+is a `MemoStructure` run through the same `baselines.eval_common.run_baseline`
+shared runner as hipporag2, on any of the four datasets:
+
+- **Phase 1 (`general_update`)**: stashes the currently-visible data
+  (dynamicmem: app_logs; locomo: conversation; longmemeval: sessions —
+  dispatch on `recorder.init` keys) into a per-user temp directory as a
+  single JSON file.
+- **Phase 2 (`general_retrieve`)**: runs Claude Code with tool access
+  (Read, Grep, Glob) to that temp directory and asks it to answer the
+  question directly — no separate retrieval step. `CCPassThroughMixin`
+  overrides `_answer_query` so the workflow judges cc's own answer
+  verbatim, bypassing the shared QA agent entirely.
 
 ```bash
-# Single QA dry run
-baselines/venv/bin/python baselines/cc/eval_cc.py \
-    --model claude-sonnet-4-20250514 --dry_run
+# Full eval on one dataset
+baselines/venv/bin/python baselines/cc/run.py \
+    --dataset locomo --model claude-sonnet-4-20250514
 
-# Full eval
-baselines/venv/bin/python baselines/cc/eval_cc.py \
-    --model claude-sonnet-4-20250514
-
-# Both Sonnet and Opus side-by-side
-baselines/venv/bin/python baselines/cc/eval_cc.py --model all
+baselines/venv/bin/python baselines/cc/run.py \
+    --dataset dynamicmem --stage-spec '{"n_samples": 2}'
 ```
 
 Useful as an upper-bound reference: how well does a strong agent do **with
 no learned memory structure at all**, just raw access + tools?
 
-Artifacts: `baselines/cc/{logs/, results/}`.
+Artifacts: `baselines/cc/results/<dataset>/<split>/`.
 
 ---
 

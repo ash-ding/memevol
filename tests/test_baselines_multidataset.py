@@ -246,6 +246,57 @@ def test_hipporag_memo_retrieve_returns_passages(monkeypatch=None):
     assert "passages" in out and out["passages"]
 
 
+# -------------------- cc (native-answer MemoStructure) --------------------
+
+def test_cc_passthrough_returns_native_answer():
+    import asyncio
+    from baselines.cc.memo import CCPassThroughMixin
+    from common.workflow import BaseWorkflow
+    from common.harness_base import MemoStructure
+    class _Memo(MemoStructure):
+        async def general_update(self, r): return None
+        async def general_retrieve(self, r): return {}
+    class _W(CCPassThroughMixin, BaseWorkflow):
+        # BaseWorkflow is an ABC with several other abstract hooks unrelated
+        # to _answer_query; stub them so the class can be instantiated (none
+        # of these are exercised by this test — only _answer_query is). Same
+        # pattern as test_answer_query_hook_default_and_override above.
+        async def load_user_data(self, user_dir, eval_n_qa): return (None, [])
+        async def phase1_log_init(self, recorder, chunk): return None
+        def build_query_recorder_init(self, init_data, qa): return {}
+        def build_qa_prompt(self, query, retrieved, qa_metadata, reference=""): return [
+            {"role": "system", "content": ""}, {"role": "user", "content": ""}
+        ]
+        def extract_relevant_context(self, qa, init_data): return None
+        def build_qa_metadata(self, qa): return {}
+        async def log_qa_step(self, **kwargs): return None
+    w = _W(memo_class=_Memo, model="gpt-5-mini", update_type="all_at_once")
+    out = asyncio.new_event_loop().run_until_complete(
+        w._answer_query(agent=None, system_msg="s", user_msg="u",
+                        retrieved={"cc_answer": "NATIVE"}))
+    assert out == "NATIVE"
+
+
+def test_cc_memo_writes_context_and_answers(monkeypatch=None):
+    """general_retrieve writes the visible data + runs cc (stubbed) and returns
+    its answer under cc_answer."""
+    import asyncio
+    from baselines.cc.memo import CCMemo
+    from baselines.eval_common import make_memo_class
+    async def _fake_ask(question, tmp_dir, model, max_turns):
+        return ("STUB ANSWER", {}, [{"role": "assistant", "type": "text", "content": "STUB ANSWER"}])
+    Cls = make_memo_class(CCMemo, model="sonnet", max_turns=5, _ask_cc=_fake_ask)
+    memo = Cls()
+    class _Rec:
+        user_id = "u1"
+        init = {"sessions": [{"session_id": "s", "date": "d",
+                "messages": [{"role": "user", "content": "hi"}]}], "query": "q?"}
+    loop = asyncio.new_event_loop()
+    loop.run_until_complete(memo.general_update(_Rec()))
+    out = loop.run_until_complete(memo.general_retrieve(_Rec()))
+    assert out["cc_answer"] == "STUB ANSWER"
+
+
 # -------------------- runner --------------------
 
 def main():
