@@ -233,7 +233,7 @@ class DynamicMemWorkflow(BaseWorkflow):
         agent = Agent(system_prompt="", model=self.model)
         answer_err: Optional[Tuple[str, str]] = None
         try:
-            raw_answer = await agent.ask(prompt, reasoning_effort=self.reasoning_effort)
+            raw_answer = await self._answer_query(agent, "", prompt, retrieved)
         except Exception as exc:
             # Keep the official empty-answer semantics (parse failure → 0)
             # but surface the transport error to the failure_info tally.
@@ -252,6 +252,12 @@ class DynamicMemWorkflow(BaseWorkflow):
             retrieved_memory=retrieved, relevant_context=relevant_context,
         )
         return answer_err
+
+    async def _answer_query(self, agent, system_msg, user_msg, retrieved) -> str:
+        """Default TCE answer path (unchanged). `system_msg` is unused here —
+        the TCE prompt is a single string. Overridable for pass-through
+        baselines."""
+        return await agent.ask(user_msg, reasoning_effort=self.reasoning_effort)
 
     def _build_answer_prompt(self, item: Dict, memory_blocks: List[str]) -> str:
         if item["task_family"] == TASK_FAMILY_STATE_COMPLETION:

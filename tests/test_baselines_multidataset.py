@@ -27,6 +27,47 @@ def test_alma_still_imports_shared_registry():
     assert alma_resolve is shared_resolve
 
 
+def test_answer_query_hook_default_and_override():
+    from common.workflow import BaseWorkflow
+    from datasets.dynamicmem.workflow import DynamicMemWorkflow
+    # both classes expose the hook
+    assert hasattr(BaseWorkflow, "_answer_query")
+    assert hasattr(DynamicMemWorkflow, "_answer_query")
+
+    # a pass-through mixin overriding the hook returns the method's answer
+    import asyncio
+    class _PassThrough:
+        async def _answer_query(self, agent, system_msg, user_msg, retrieved):
+            return retrieved.get("cc_answer", "")
+    class _W(_PassThrough, BaseWorkflow):
+        # BaseWorkflow is an ABC with several other abstract hooks unrelated
+        # to _answer_query; stub them so the class can be instantiated (none
+        # of these are exercised by this test — only _answer_query is).
+        async def load_user_data(self, user_dir, eval_n_qa): return (None, [])
+        async def phase1_log_init(self, recorder, chunk): return None
+        def build_query_recorder_init(self, init_data, qa): return {}
+        def build_qa_prompt(self, query, retrieved, qa_metadata, reference=""): return [
+            {"role": "system", "content": ""}, {"role": "user", "content": ""}
+        ]
+        def extract_relevant_context(self, qa, init_data): return None
+        def build_qa_metadata(self, qa): return {}
+        async def log_qa_step(self, **kwargs): return None
+    # instantiate minimally: BaseWorkflow needs memo_class; use a dummy
+    from common.harness_base import MemoStructure
+    class _Memo(MemoStructure):
+        async def general_update(self, r): return None
+        async def general_retrieve(self, r): return {}
+    w = _W(memo_class=_Memo, model="gpt-5-mini", update_type="all_at_once")
+    loop = asyncio.new_event_loop()
+    try:
+        out = loop.run_until_complete(
+            w._answer_query(agent=None, system_msg="s", user_msg="u", retrieved={"cc_answer": "HELLO"})
+        )
+    finally:
+        loop.close()
+    assert out == "HELLO"
+
+
 def main():
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = []

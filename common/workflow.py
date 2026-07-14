@@ -335,6 +335,15 @@ class BaseWorkflow(ABC):
             self._judge_instance = self._make_judge()
         return await self._judge_instance.score(query, predicted, reference)
 
+    async def _answer_query(self, agent, system_msg, user_msg, retrieved) -> str:
+        """Produce the final answer from the retrieved context. Default =
+        the standard QA agent. Overridable so a baseline whose method answers
+        natively (e.g. Claude Code) can return its own answer verbatim."""
+        agent.messages = [{"role": "system", "content": system_msg}]
+        return await agent.ask(
+            user_msg, with_history=False, reasoning_effort=self.reasoning_effort
+        )
+
     # ---- Main entry point: run all users ----
 
     async def run_all_users(
@@ -542,13 +551,8 @@ class BaseWorkflow(ABC):
             system_msg = prompt[0]["content"]
             user_msg = prompt[1]["content"]
 
-            agent.messages = [{"role": "system", "content": system_msg}]
             try:
-                answer = await agent.ask(
-                    user_msg,
-                    with_history=False,
-                    reasoning_effort=self.reasoning_effort,
-                )
+                answer = await self._answer_query(agent, system_msg, user_msg, retrieved)
             except Exception as exc:
                 # QA-agent transport failure (retries already exhausted in
                 # common.llm). Mirror the retrieve-error path: record a
