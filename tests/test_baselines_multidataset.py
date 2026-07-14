@@ -248,7 +248,7 @@ def test_hipporag_memo_retrieve_returns_passages(monkeypatch=None):
 
 # -------------------- cc (native-answer MemoStructure) --------------------
 
-def test_cc_passthrough_returns_native_answer():
+def test_cc_passthrough_answers_user_msg_via_cc():
     import asyncio
     from baselines.cc.memo import CCPassThroughMixin
     from common.workflow import BaseWorkflow
@@ -256,45 +256,42 @@ def test_cc_passthrough_returns_native_answer():
     class _Memo(MemoStructure):
         async def general_update(self, r): return None
         async def general_retrieve(self, r): return {}
+        async def _run_cc(self, question):
+            self.seen = question
+            return ("NATIVE:" + question, {}, [])
     class _W(CCPassThroughMixin, BaseWorkflow):
-        # BaseWorkflow is an ABC with several other abstract hooks unrelated
-        # to _answer_query; stub them so the class can be instantiated (none
-        # of these are exercised by this test — only _answer_query is). Same
-        # pattern as test_answer_query_hook_default_and_override above.
-        async def load_user_data(self, user_dir, eval_n_qa): return (None, [])
-        async def phase1_log_init(self, recorder, chunk): return None
-        def build_query_recorder_init(self, init_data, qa): return {}
-        def build_qa_prompt(self, query, retrieved, qa_metadata, reference=""): return [
-            {"role": "system", "content": ""}, {"role": "user", "content": ""}
-        ]
-        def extract_relevant_context(self, qa, init_data): return None
-        def build_qa_metadata(self, qa): return {}
-        async def log_qa_step(self, **kwargs): return None
+        async def load_user_data(self, *a, **k): return None
+        def phase1_log_init(self, *a, **k): return None
+        def build_query_recorder_init(self, *a, **k): return {}
+        def build_qa_prompt(self, *a, **k): return [{"content": ""}, {"content": ""}]
+        def extract_relevant_context(self, *a, **k): return None
+        def build_qa_metadata(self, *a, **k): return {}
+        async def log_qa_step(self, *a, **k): return None
     w = _W(memo_class=_Memo, model="gpt-5-mini", update_type="all_at_once")
+    memo = _Memo()
     out = asyncio.new_event_loop().run_until_complete(
-        w._answer_query(agent=None, system_msg="s", user_msg="u",
-                        retrieved={"cc_answer": "NATIVE"}))
-    assert out == "NATIVE"
+        w._answer_query(agent=None, system_msg="SYS", user_msg="Q?", retrieved={}, memo=memo))
+    assert out == "NATIVE:SYS\n\nQ?"   # system_msg prepended to user_msg
 
 
-def test_cc_memo_writes_context_and_answers(monkeypatch=None):
-    """general_retrieve writes the visible data + runs cc (stubbed) and returns
-    its answer under cc_answer."""
+def test_cc_memo_retrieve_empty_and_run_cc_answers():
     import asyncio
     from baselines.cc.memo import CCMemo
     from baselines.eval_common import make_memo_class
-    async def _fake_ask(question, tmp_dir, model, max_turns):
-        return ("STUB ANSWER", {}, [{"role": "assistant", "type": "text", "content": "STUB ANSWER"}])
+    async def _fake_ask(question, tmp_dir, model, max_turns, system_prompt=None):
+        return ("STUB:" + question, {}, [])
     Cls = make_memo_class(CCMemo, model="sonnet", max_turns=5, _ask_cc=_fake_ask)
     memo = Cls()
     class _Rec:
-        user_id = "u1"
+        user_id = ""
         init = {"sessions": [{"session_id": "s", "date": "d",
                 "messages": [{"role": "user", "content": "hi"}]}], "query": "q?"}
     loop = asyncio.new_event_loop()
     loop.run_until_complete(memo.general_update(_Rec()))
     out = loop.run_until_complete(memo.general_retrieve(_Rec()))
-    assert out["cc_answer"] == "STUB ANSWER"
+    assert out == {}                                   # cc injects no memory; answers via files
+    ans, _u, _t = loop.run_until_complete(memo._run_cc("FORMATTED PROMPT"))
+    assert ans == "STUB:FORMATTED PROMPT"
 
 
 # -------------------- runner --------------------

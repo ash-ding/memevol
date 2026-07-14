@@ -1,17 +1,24 @@
-"""cc as a native-answer MemoStructure: Phase 1 stashes the currently-visible
-data into a per-user temp dir; Phase 2 runs Claude Code (with Read/Grep/Glob
-tool access to that temp dir) to ANSWER the query directly — no separate QA
-agent. `CCPassThroughMixin` overrides `BaseWorkflow._answer_query` so the
-workflow's shared QA step returns cc's native answer verbatim (judged as-is,
-same judge as the main method).
+"""cc as a native-answer MemoStructure: Phase 1 (`general_update`) stashes the
+currently-visible data into a per-user temp dir. Phase 2 (`general_retrieve`)
+re-stashes the CURRENT visible data (the workflow may have grown the visible
+prefix, e.g. DynamicMem checkpoints) and returns `{}` — cc injects NO memory
+into the QA prompt; it answers by reading the temp-dir file itself via tools.
+
+The actual answering happens in `CCPassThroughMixin._answer_query`, which
+overrides `BaseWorkflow._answer_query` so the workflow's shared Phase-2 step
+runs Claude Code (with Read/Grep/Glob tool access to the memo's temp dir) on
+the EXACT formatted prompt (`system_msg` + `user_msg`) the main method would
+pose to its own QA agent — this is what makes cc emit the benchmark's
+required output format (e.g. DynamicMem TCE's "Return JSON only" + skeleton)
+instead of free prose that the judge can't parse.
 
 `ask_cc` / `DISALLOWED_TOOLS` / the SDK-parser monkey-patch are transplanted
 verbatim from the old `baselines/cc/eval_cc.py` (DynamicMem-only script,
 removed in favor of this multi-dataset module). The one adaptation: the old
-script hardcoded a single-dataset `SYSTEM_PROMPT` constant; `ask_cc`'s call
-signature (question, tmp_dir, model, max_turns) is unchanged, so the
-per-dataset system prompt is derived by inspecting which context filename
-`_write_context` dropped into `tmp_dir` (see `_system_prompt_for_dir`).
+script hardcoded a single-dataset `SYSTEM_PROMPT` constant; `ask_cc` now takes
+an explicit `system_prompt` param (falling back to the per-dataset
+file-schema prompt derived from `tmp_dir`'s contents — see
+`_system_prompt_for_dir`) so callers can supply their own.
 """
 from __future__ import annotations
 
@@ -83,13 +90,6 @@ _CONTEXT = {
         "A list of chat sessions, each {session_id, date, messages: [{role, content}]}."),
 }
 _FILENAME_TO_KEY = {fname: key for key, (fname, _schema) in _CONTEXT.items()}
-_GUIDELINES = (
-    "### Guidelines\n"
-    "- Be specific and factual. Include concrete details (times, days, locations, frequencies) when available.\n"
-    "- If you are not certain, provide your best estimate based on observable patterns.\n"
-    "- Keep your answer concise (1-3 sentences).\n"
-    "- Output only your answer — no preamble, no explanation, no \"Based on the logs...\" prefix."
-)
 
 
 def _context_key(init: dict) -> str:
@@ -101,24 +101,31 @@ def _context_key(init: dict) -> str:
 
 def _system_prompt(key: str) -> str:
     fname, schema = _CONTEXT[key]
-    return (f"You are a personal assistant with access to a user's data.\n\n### Data\n"
+    return (f"You are answering a task using a user's data.\n\n### Data\n"
             f"The file `{fname}` in your working directory contains the data. {schema}\n"
-            f"This is the ONLY file you should read.\n\n### Task\nUse your tools to search the "
-            f"data, then answer the question.\n\n{_GUIDELINES}")
+            f"This is the ONLY file you should read.\n\n### Instructions\n"
+            f"Use your tools to read the data, then answer the task in the user message. "
+            f"Follow the task's output-format instructions EXACTLY — if it asks for JSON, "
+            f"output only the JSON object, no prose or preamble.")
 
 
 def _system_prompt_for_dir(tmp_dir: str) -> str:
     """Derive the per-dataset system prompt from which known context file
-    `_write_context` dropped into tmp_dir — keeps ask_cc's call signature
-    (question, tmp_dir, model, max_turns) unchanged across datasets."""
+    `_write_context` dropped into tmp_dir — used as ask_cc's fallback when no
+    explicit `system_prompt` is passed."""
     for fname in os.listdir(tmp_dir):
         if fname in _FILENAME_TO_KEY:
             return _system_prompt(_FILENAME_TO_KEY[fname])
     raise FileNotFoundError(f"no recognized context file in {tmp_dir}: {os.listdir(tmp_dir)}")
 
 
-async def ask_cc(question: str, tmp_dir: str, model: str, max_turns: int = 30) -> tuple[str, dict, list]:
+async def ask_cc(question: str, tmp_dir: str, model: str, max_turns: int = 30,
+                  system_prompt: str | None = None) -> tuple[str, dict, list]:
     """Ask Claude Code a question with tool access to tmp_dir.
+
+    `system_prompt`: explicit system prompt to use (e.g. the per-dataset
+    file-schema prompt built by CCMemo._run_cc). Falls back to deriving one
+    from tmp_dir's contents (`_system_prompt_for_dir`) when not given.
 
     Returns (answer_text, usage_info, trace).
     trace is a list of dicts recording each step:
@@ -128,7 +135,7 @@ async def ask_cc(question: str, tmp_dir: str, model: str, max_turns: int = 30) -
     """
     options = ClaudeCodeOptions(
         cwd=tmp_dir,
-        system_prompt=_system_prompt_for_dir(tmp_dir),
+        system_prompt=system_prompt or _system_prompt_for_dir(tmp_dir),
         permission_mode="bypassPermissions",
         max_turns=max_turns,
         model=model,
@@ -205,15 +212,22 @@ class CCMemo(MemoStructure):
         self._write_context(recorder.init, getattr(recorder, "user_id", "u"))
 
     async def general_retrieve(self, recorder) -> dict:
-        # ensure the CURRENT visible data is on disk (Phase-2 init carries the prefix)
+        # ensure the CURRENT visible data is on disk (Phase-2 init carries the
+        # prefix); inject NO memory into the QA prompt — cc reads via file
+        # tools (see CCPassThroughMixin._answer_query, which calls _run_cc
+        # with the workflow's own formatted prompt).
         self._write_context(recorder.init, getattr(recorder, "user_id", "u"))
-        q = recorder.init.get("query", "")
-        qdate = recorder.init.get("question_date")
-        question = f"Current Date: {qdate}\n{q}" if qdate else q
+        return {}
+
+    async def _run_cc(self, question: str) -> tuple:
+        """Run Claude Code on `question` (the workflow's exact formatted
+        prompt) with tool access to this user's temp dir. Requires
+        general_update/general_retrieve to have already run at least once
+        (sets self._tmp_dir + self._key)."""
         ask = self._cfg.get("_ask_cc", ask_cc)
-        answer, usage, trace = await ask(question, self._tmp_dir, self._cfg["model"],
-                                         self._cfg.get("max_turns", 30))
-        return {"cc_answer": answer, "cc_trace": trace}
+        return await ask(question, self._tmp_dir, self._cfg["model"],
+                         self._cfg.get("max_turns", 30),
+                         system_prompt=_system_prompt(self._key))
 
     def __del__(self):
         # Best-effort cleanup of the per-instance scratch dir. One MemoStructure
@@ -227,7 +241,19 @@ class CCMemo(MemoStructure):
 
 
 class CCPassThroughMixin:
-    """Make the workflow's answer step return cc's native answer verbatim
-    (no shared QA agent, no relay) — see BaseWorkflow._answer_query."""
-    async def _answer_query(self, agent, system_msg, user_msg, retrieved) -> str:
-        return retrieved.get("cc_answer", "")
+    """Make the workflow's answer step run Claude Code on the EXACT formatted
+    prompt (`system_msg` + `user_msg`) the main method would pose to its own
+    QA agent, instead of relaying a pre-computed answer — see
+    BaseWorkflow._answer_query. This is what makes cc emit the benchmark's
+    required output format (e.g. DynamicMem TCE JSON) rather than free prose."""
+    async def _answer_query(self, agent, system_msg, user_msg, retrieved, memo=None) -> str:
+        if memo is None:
+            raise RuntimeError(
+                "CCPassThroughMixin._answer_query requires `memo` (the CCMemo "
+                "instance) to reach _run_cc — the workflow call site must "
+                "pass memo=memo (see common/workflow.py / "
+                "datasets/dynamicmem/workflow.py)."
+            )
+        question = f"{system_msg}\n\n{user_msg}" if system_msg else user_msg
+        answer, _usage, _trace = await memo._run_cc(question)
+        return answer
