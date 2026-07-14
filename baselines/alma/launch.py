@@ -3,7 +3,7 @@ Alma subprocess entry point.
 
 Invoked by baselines/alma/eval_runner.py. Steps:
   1. Dynamically load the MemoStructure subclass from the staged memo file.
-  2. Run DynamicMemWorkflow across all users.
+  2. Run the dataset's workflow (resolved from the registry) across all users.
   3. Write score.json, full traces (per-user), and token usage
      to the caller-supplied output_run_dir.
 
