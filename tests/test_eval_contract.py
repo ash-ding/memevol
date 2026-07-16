@@ -69,7 +69,7 @@ def test_forge_loads_the_harness_class_not_the_base():
     assert load_harness_class(seed).__name__ == "NoMemoryHarness"
 
 
-def test_phase1_update_calls_general_update_once():
+def test_phase1_update_calls_build_memory_once():
     """The workflow hands the whole data in ONE build_memory_from_data call."""
     from common.workflow import BaseWorkflow
     from common.harness_base import MemoStructure
@@ -100,7 +100,7 @@ def test_phase1_update_calls_general_update_once():
     assert calls == [[1, 2, 3, 4, 5]]   # ONE call, whole data (not chunked by the workflow)
 
 
-def test_general_answer_used_else_agent():
+def test_use_memory_to_answer_used_else_agent():
     """The answer step uses memo.use_memory_to_answer; falls back to the agent on None."""
     import asyncio
     from common.workflow import BaseWorkflow  # noqa: F401 (import proves module loads post-refactor)
@@ -120,7 +120,7 @@ def test_general_answer_used_else_agent():
     assert loop.run_until_complete(d.use_memory_to_answer(None, {}, "Q")) is None
 
 
-def test_general_answer_gets_query_scoped_recorder():
+def test_use_memory_to_answer_gets_query_scoped_recorder():
     """Both answer sites pass the query-scoped retrieve_recorder to use_memory_to_answer,
     not the phase-1 recorder — so recorder.init means the same thing everywhere."""
     import inspect

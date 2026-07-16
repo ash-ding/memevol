@@ -249,7 +249,7 @@ def test_hipporag_memo_retrieve_returns_passages(monkeypatch=None):
 
 # -------------------- cc (native-answer MemoStructure) --------------------
 
-def test_cc_general_answer_runs_cc():
+def test_cc_use_memory_to_answer_runs_cc():
     import asyncio
     from baselines.cc.memo import CCMemo
     from baselines.eval_common import make_memo_class
