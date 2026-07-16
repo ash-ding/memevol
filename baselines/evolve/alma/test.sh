@@ -7,9 +7,9 @@
 # ===========================================================================
 
 # --- Evaluate a specific memo on held-out test users ---
-# <SHA> must exist under baselines/alma/memo_archive/dynamicmem/memo_structure_<SHA>.py
-# Results land in baselines/alma/results/dynamicmem/<SHA>_test_eval/
-python baselines/alma/run_main.py \
+# <SHA> must exist under baselines/evolve/alma/memo_archive/dynamicmem/memo_structure_<SHA>.py
+# Results land in baselines/evolve/alma/results/dynamicmem/<SHA>_test_eval/
+python baselines/evolve/alma/run_main.py \
     --meta_model gpt-5 \
     --execution_model gpt-5-mini \
     --judge_model gpt-5-mini \
@@ -18,7 +18,7 @@ python baselines/alma/run_main.py \
 
 # --- Evaluate the no-memory baseline on held-out users ---
 # Establishes the floor reward; useful for comparing any learned memo.
-python baselines/alma/run_main.py \
+python baselines/evolve/alma/run_main.py \
     --meta_model gpt-5 \
     --execution_model gpt-5-mini \
     --judge_model gpt-5-mini \
@@ -26,7 +26,7 @@ python baselines/alma/run_main.py \
     --memo_SHA no_mem
 
 # --- Quick smoke eval (1 user, 3 QA) to verify plumbing ---
-python baselines/alma/run_main.py \
+python baselines/evolve/alma/run_main.py \
     --meta_model gpt-5 \
     --execution_model gpt-5-mini \
     --judge_model gpt-5-mini \

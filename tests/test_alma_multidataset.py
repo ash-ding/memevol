@@ -15,7 +15,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 
 def test_registry_resolves_all_four():
-    from baselines.alma.registry import REGISTRY, DATASETS, resolve
+    from baselines.evolve.alma.registry import REGISTRY, DATASETS, resolve
     from datasets.dynamicmem.workflow import DynamicMemWorkflow
     from datasets.locomo.workflow import LoCoMoWorkflow
     from datasets.longmemeval.workflow import LongMemEvalSWorkflow, LongMemEvalMWorkflow
@@ -40,7 +40,7 @@ def test_registry_resolves_all_four():
 
 
 def test_registry_unknown_raises():
-    from baselines.alma.registry import resolve
+    from baselines.evolve.alma.registry import resolve
     try:
         resolve("nope")
     except ValueError as e:
@@ -57,8 +57,8 @@ _REQUIRED_INFO_KEYS = {
 
 
 def test_dataset_info_has_all_datasets_and_keys():
-    from baselines.alma.dataset_info import DATASET_INFO
-    from baselines.alma.registry import DATASETS
+    from baselines.evolve.alma.dataset_info import DATASET_INFO
+    from baselines.evolve.alma.registry import DATASETS
     assert set(DATASET_INFO) == set(DATASETS)
     for ds, info in DATASET_INFO.items():
         missing = _REQUIRED_INFO_KEYS - set(info)
@@ -68,7 +68,7 @@ def test_dataset_info_has_all_datasets_and_keys():
 
 
 def test_dataset_info_evidence_keys_and_recorders():
-    from baselines.alma.dataset_info import DATASET_INFO
+    from baselines.evolve.alma.dataset_info import DATASET_INFO
     assert DATASET_INFO["dynamicmem"]["evidence_key"] == "relevant_app_logs"
     assert DATASET_INFO["locomo"]["evidence_key"] == "relevant_turns"
     assert DATASET_INFO["longmemeval_s"]["evidence_key"] == "relevant_sessions"
@@ -85,7 +85,7 @@ def test_dynamicmem_prompts_byte_identical():
     """The dataset_info extraction must not change DynamicMem prompt text."""
     import json
     from pathlib import Path
-    from baselines.alma import meta_agent_prompt as m
+    from baselines.evolve.alma import meta_agent_prompt as m
     from datasets.dynamicmem.env import DynamicMemRecorder
 
     fixture = json.loads(
@@ -118,8 +118,8 @@ def test_dynamicmem_prompts_byte_identical():
 
 
 def test_prompts_render_for_all_datasets():
-    from baselines.alma import meta_agent_prompt as m
-    from baselines.alma.registry import resolve, DATASETS
+    from baselines.evolve.alma import meta_agent_prompt as m
+    from baselines.evolve.alma.registry import resolve, DATASETS
     memo_info = {"source_code": "class Foo: pass", "examples": [],
                  "benchmark_eval_score": {"benchmark_overall_eval_score": 0.0}}
     for ds in DATASETS:
@@ -137,7 +137,7 @@ def test_launch_dispatches_via_registry():
     """launch.py resolves its workflow/env from the registry, not a hardcoded
     DynamicMem import (main() can't be called in-process — it os._exit(0)s)."""
     import inspect
-    import baselines.alma.launch as launch
+    import baselines.evolve.alma.launch as launch
     src = inspect.getsource(launch)
     # dispatches through the shared registry
     assert "from baselines.registry import" in src
@@ -151,7 +151,7 @@ def test_launch_dispatches_via_registry():
 
 
 def test_output_run_dir_templated_by_dataset():
-    from baselines.alma.eval_runner import get_output_run_dir
+    from baselines.evolve.alma.eval_runner import get_output_run_dir
     p_dm = get_output_run_dir("abc123", "search", "eval")  # default dynamicmem
     assert p_dm.parent.name == "dynamicmem" and p_dm.name == "abc123_search_eval"
     p_lc = get_output_run_dir("abc123", "search", "eval", dataset="locomo")
@@ -159,19 +159,19 @@ def test_output_run_dir_templated_by_dataset():
 
 
 def test_memo_manager_archive_root_by_dataset():
-    from baselines.alma.memo_manager import Memo_Manager
+    from baselines.evolve.alma.memo_manager import Memo_Manager
     mm = Memo_Manager(dataset="locomo")
     assert mm.ARCHIVE_ROOT.name == "locomo"
     assert mm.ARCHIVE_ROOT.parent.name == "memo_archive"
     mm_dm = Memo_Manager()  # default
     assert mm_dm.ARCHIVE_ROOT.name == "dynamicmem"
     # baseline seed dir is shared across datasets (same parent as any dataset archive)
-    from baselines.alma.memo_manager import Memo_Manager as _MM
+    from baselines.evolve.alma.memo_manager import Memo_Manager as _MM
     assert _MM(dataset="locomo").ARCHIVE_ROOT.parent == _MM(dataset="dynamicmem").ARCHIVE_ROOT.parent
 
 
 def test_meta_agent_recorder_by_dataset():
-    from baselines.alma.meta_agent import MetaAgent
+    from baselines.evolve.alma.meta_agent import MetaAgent
     from datasets.locomo.env import LoCoMoRecorder
     from datasets.dynamicmem.env import DynamicMemRecorder
     ma = MetaAgent(dataset="locomo")
@@ -183,7 +183,7 @@ def test_meta_agent_recorder_by_dataset():
 
 def test_run_main_parses_dataset():
     import importlib
-    rm = importlib.import_module("baselines.alma.run_main")
+    rm = importlib.import_module("baselines.evolve.alma.run_main")
     import sys as _sys
     argv = ["run_main.py", "--dataset", "longmemeval_m", "--steps", "1"]
     old = _sys.argv
@@ -203,7 +203,7 @@ def test_run_main_parses_dataset():
 
 def test_sampling_reads_dataset_evidence_key():
     import json, tempfile, os
-    from baselines.alma.sampling import build_analysis_artifact
+    from baselines.evolve.alma.sampling import build_analysis_artifact
     d = tempfile.mkdtemp()
     # minimal score.json + one trace with a locomo-style evidence key
     json.dump({"benchmark_eval_score": {"benchmark_overall_eval_score": 1.0,
@@ -250,9 +250,9 @@ def test_locomo_end_to_end_fake():
     import tempfile
     from pathlib import Path
 
-    from baselines.alma.meta_agent import MetaAgent
-    from baselines.alma import memo_manager as MM
-    from baselines.alma.dataset_info import DATASET_INFO
+    from baselines.evolve.alma.meta_agent import MetaAgent
+    from baselines.evolve.alma import memo_manager as MM
+    from baselines.evolve.alma.dataset_info import DATASET_INFO
 
     sha = "faketest01"
     archive_dir = MM.ALMA_ROOT / "memo_archive" / "locomo"
@@ -314,7 +314,7 @@ def test_locomo_end_to_end_fake():
 
 
 def test_history_ckpt_filename_includes_dataset():
-    from baselines.alma.meta_agent import MetaAgent
+    from baselines.evolve.alma.meta_agent import MetaAgent
     ma = MetaAgent(dataset="locomo")
     fn = ma._history_ckpt_filename("check", 10, "TS")
     assert "locomo" in fn and fn == "check_locomo_10_TS.json"

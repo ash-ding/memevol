@@ -1,7 +1,7 @@
 """
 Memo manager for alma: persists generated memo code, tracks reward / visit
 counts for softmax selection, and orchestrates subprocess evaluation through
-baselines.alma.eval_runner.
+baselines.evolve.alma.eval_runner.
 """
 
 from __future__ import annotations
@@ -16,12 +16,12 @@ from typing import Any, Dict, List, Optional
 
 import numpy as np
 
-from baselines.alma.dataset_info import DATASET_INFO
-from baselines.alma.eval_runner import get_output_run_dir, run_evaluation
-from baselines.alma.sampling import build_analysis_artifact
+from baselines.evolve.alma.dataset_info import DATASET_INFO
+from baselines.evolve.alma.eval_runner import get_output_run_dir, run_evaluation
+from baselines.evolve.alma.sampling import build_analysis_artifact
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-ALMA_ROOT = PROJECT_ROOT / "baselines" / "alma"
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+ALMA_ROOT = PROJECT_ROOT / "baselines" / "evolve" / "alma"
 
 
 class Memo_Manager:

@@ -19,7 +19,7 @@ non-evolved memory architecture:
   end-to-end HippoRAG pipeline comparison.
 
 hipporag2 runs through the **same shared runner** as cc
-(`baselines.eval_common.run_baseline`), which resolves the SAME production
+(`baselines.harness.eval_common.run_baseline`), which resolves the SAME production
 per-dataset workflow the main method uses (`baselines.registry.resolve`) —
 so DynamicMem gets the official TCE v2 checkpoint protocol + holistic judge,
 not a compat-shim script. The old single-dataset `eval_hipporag2.py` was
@@ -36,7 +36,7 @@ calls.
 ## Usage
 
 ```bash
-baselines/venv/bin/python baselines/hipporag2/run.py \
+baselines/venv/bin/python baselines/harness/hipporag2/run.py \
     --dataset {dynamicmem,locomo,longmemeval_s,longmemeval_m} \
     [--split test|search] \
     [--stage-spec '<json>'] \
@@ -69,23 +69,23 @@ Examples:
 
 ```bash
 # OpenAI API embedding (no GPU needed), full held-out eval
-baselines/venv/bin/python baselines/hipporag2/run.py \
+baselines/venv/bin/python baselines/harness/hipporag2/run.py \
     --dataset locomo --embedding text-embedding-3-small
 
 # Local GPU embedding (NVIDIA)
-baselines/venv/bin/python baselines/hipporag2/run.py \
+baselines/venv/bin/python baselines/harness/hipporag2/run.py \
     --dataset longmemeval_s --embedding nvidia/NV-Embed-v2 \
     --embedding_batch_size 2 --embedding_dtype float16
 
 # Quick check, capped to 2 units
-baselines/venv/bin/python baselines/hipporag2/run.py \
+baselines/venv/bin/python baselines/harness/hipporag2/run.py \
     --dataset dynamicmem --stage-spec '{"n_samples": 2}'
 ```
 
 ## Stage-spec fields
 
 `--stage-spec` is a raw JSON object of USER OVERRIDES merged over the
-family's full-coverage base (`baselines.eval_common.family_full_spec` /
+family's full-coverage base (`baselines.harness.eval_common.family_full_spec` /
 `effective_stage_spec` — mirrors `forge.orchestrator.full_wire_spec`
 exactly, so an omitted field stays `null` = uncapped, not zero). All units
 are PER-RUN counts (no gauntlet/staging here — this is a single pass, same
@@ -102,10 +102,10 @@ as `forge.heldout`'s `coverage=full`):
 
 ## Output
 
-Each eval run creates a fresh per-instance `outputs/<uuid>_<embedding>/` HippoRAG graph directory (embeddings + knowledge graph) per user, and these directories accumulate across runs (gitignored but growing on disk) — periodically clean `baselines/hipporag2/outputs/` if disk is a concern.
+Each eval run creates a fresh per-instance `outputs/<uuid>_<embedding>/` HippoRAG graph directory (embeddings + knowledge graph) per user, and these directories accumulate across runs (gitignored but growing on disk) — periodically clean `baselines/harness/hipporag2/outputs/` if disk is a concern.
 
 ```
-baselines/hipporag2/
+baselines/harness/hipporag2/
 ├── outputs/<instance_id>_<embedding>/   # HippoRAG's own per-instance graph
 │                                       # cache (OpenIE, embeddings, KG) — gitignored
 └── results/<dataset>/<split>/

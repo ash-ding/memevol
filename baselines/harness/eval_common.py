@@ -97,7 +97,7 @@ async def run_baseline(
     )
     workflow.save_full_traces(records[:n])
     # Score summary: reuse alma's builder shape (mean per-user reward).
-    from baselines.alma.launch import _build_score_json
+    from baselines.evolve.alma.launch import _build_score_json
     score = _build_score_json(records[:n])
     with (out_dir / "score.json").open("w", encoding="utf-8") as f:
         json.dump(score, f, indent=2, ensure_ascii=False)

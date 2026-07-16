@@ -11,7 +11,7 @@ benchmark's required output format (e.g. DynamicMem TCE's "Return JSON
 only" skeleton) instead of free prose the judge can't parse.
 
 cc runs through the **same shared runner** as hipporag2
-(`baselines.eval_common.run_baseline`), which resolves the SAME production
+(`baselines.harness.eval_common.run_baseline`), which resolves the SAME production
 per-dataset workflow the main method uses (`baselines.registry.resolve`) —
 so DynamicMem gets the official TCE v2 checkpoint protocol + holistic judge,
 not a compat-shim script. The old single-dataset `eval_cc.py` was replaced
@@ -27,7 +27,7 @@ each call.
 ## Usage
 
 ```bash
-baselines/venv/bin/python baselines/cc/run.py \
+baselines/venv/bin/python baselines/harness/cc/run.py \
     --dataset {dynamicmem,locomo,longmemeval_s,longmemeval_m} \
     [--split test|search] \
     [--stage-spec '<json>'] \
@@ -62,21 +62,21 @@ Examples:
 
 ```bash
 # Full held-out eval, one dataset, default model (sonnet)
-baselines/venv/bin/python baselines/cc/run.py --dataset locomo
+baselines/venv/bin/python baselines/harness/cc/run.py --dataset locomo
 
 # Opus, capped to 2 units for a quick check
-baselines/venv/bin/python baselines/cc/run.py \
+baselines/venv/bin/python baselines/harness/cc/run.py \
     --dataset dynamicmem --model opus --stage-spec '{"n_samples": 2}'
 
 # LongMemEval-m, search split (comparable to what the proposer itself sees)
-baselines/venv/bin/python baselines/cc/run.py \
+baselines/venv/bin/python baselines/harness/cc/run.py \
     --dataset longmemeval_m --split search
 ```
 
 ## Stage-spec fields
 
 `--stage-spec` is a raw JSON object of USER OVERRIDES merged over the
-family's full-coverage base (`baselines.eval_common.family_full_spec` /
+family's full-coverage base (`baselines.harness.eval_common.family_full_spec` /
 `effective_stage_spec` — mirrors `forge.orchestrator.full_wire_spec`
 exactly, so an omitted field stays `null` = uncapped, not zero). All units
 are PER-RUN counts (no gauntlet/staging here — this is a single pass, same
@@ -93,17 +93,17 @@ as `forge.heldout`'s `coverage=full`):
 
 ```bash
 # 2 DynamicMem users, all 5 checkpoints, 3 Task-A + 3 Task-C items per checkpoint
-baselines/cc/run.py --dataset dynamicmem \
+baselines/harness/cc/run.py --dataset dynamicmem \
     --stage-spec '{"n_samples": 2, "n_checkpoints": 5, "n_task_a": 3, "n_task_c": 3}'
 
 # 3 LoCoMo conversations, 10 QA each
-baselines/cc/run.py --dataset locomo --stage-spec '{"n_samples": 3, "n_qa": 10}'
+baselines/harness/cc/run.py --dataset locomo --stage-spec '{"n_samples": 3, "n_qa": 10}'
 ```
 
 ## Output
 
 ```
-baselines/cc/results/<dataset>/<split>/
+baselines/harness/cc/results/<dataset>/<split>/
 ├── score.json          # {"benchmark_eval_score": {...}, "per_user": {...}, "invalid_users": [...]}
 ├── token_usage.json     # per-model token totals (common.tokens.TokenTracker)
 └── traces/<user_id>.json   # full per-user QA trajectory (no sampling)

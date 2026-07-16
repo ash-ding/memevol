@@ -1,8 +1,8 @@
 """
-Alma eval runner — spawns baselines/alma/launch.py in a subprocess.
+Alma eval runner — spawns baselines/evolve/alma/launch.py in a subprocess.
 
 Produces a per-run output directory at:
-    baselines/alma/results/<dataset>/<SHA>_<status>_<mode>/
+    baselines/evolve/alma/results/<dataset>/<SHA>_<status>_<mode>/
 
 Wall-clock subprocess timeout is enforced per mode (check=2h, eval=8h) with a
 hard kill + RuntimeError when exceeded.
@@ -37,8 +37,8 @@ from common.logger import get_logger
 
 log = get_logger("main")
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-ALMA_ROOT = PROJECT_ROOT / "baselines" / "alma"
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
+ALMA_ROOT = PROJECT_ROOT / "baselines" / "evolve" / "alma"
 
 SUBPROCESS_TIMEOUT = {
     "check": 2 * 3600,   # 2 hours

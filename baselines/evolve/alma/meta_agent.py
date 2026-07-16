@@ -9,8 +9,8 @@ from typing import Any, Dict, Optional
 from common.harness_base import MemoStructure
 from common.llm import Agent
 from common.logger import get_logger
-from baselines.alma.memo_manager import Memo_Manager
-from baselines.alma.meta_agent_prompt import (
+from baselines.evolve.alma.memo_manager import Memo_Manager
+from baselines.evolve.alma.meta_agent_prompt import (
     build_analysis_prompt,
     build_generate_new_code_prompt,
     build_reflection_prompt,

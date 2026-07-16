@@ -3,13 +3,13 @@ to the main method (same split/judge/scoring via the per-dataset workflow).
 cc is a NATIVE-answer baseline: `CCMemo.use_memory_to_answer` bypasses the shared
 QA agent so the workflow judges cc's own tool-using answer verbatim.
 
-    python baselines/cc/run.py --dataset locomo
-    python baselines/cc/run.py --dataset dynamicmem --stage-spec '{"n_samples": 2}'
+    python baselines/harness/cc/run.py --dataset locomo
+    python baselines/harness/cc/run.py --dataset dynamicmem --stage-spec '{"n_samples": 2}'
 """
 from __future__ import annotations
 import argparse, asyncio, sys
 from pathlib import Path
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 try:
@@ -17,8 +17,8 @@ try:
 except ImportError:
     pass
 from baselines.registry import DATASETS
-from baselines.eval_common import make_memo_class, run_baseline, parse_stage_spec
-from baselines.cc.memo import CCMemo, MODEL_ALIASES
+from baselines.harness.eval_common import make_memo_class, run_baseline, parse_stage_spec
+from baselines.harness.cc.memo import CCMemo, MODEL_ALIASES
 
 
 def main():

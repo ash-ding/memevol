@@ -13,7 +13,7 @@ required output format (e.g. DynamicMem TCE's "Return JSON only" + skeleton)
 instead of free prose that the judge can't parse.
 
 `ask_cc` / `DISALLOWED_TOOLS` / the SDK-parser monkey-patch are transplanted
-verbatim from the old `baselines/cc/eval_cc.py` (DynamicMem-only script,
+verbatim from the old `eval_cc.py` (DynamicMem-only script,
 removed in favor of this multi-dataset module). The one adaptation: the old
 script hardcoded a single-dataset `SYSTEM_PROMPT` constant; `ask_cc` now takes
 an explicit `system_prompt` param (falling back to the per-dataset

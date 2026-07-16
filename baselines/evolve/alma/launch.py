@@ -1,7 +1,7 @@
 """
 Alma subprocess entry point.
 
-Invoked by baselines/alma/eval_runner.py. Steps:
+Invoked by baselines/evolve/alma/eval_runner.py. Steps:
   1. Dynamically load the MemoStructure subclass from the staged memo file.
   2. Run the dataset's workflow (resolved from the registry) across all users.
   3. Write score.json, full traces (per-user), and token usage
@@ -32,7 +32,7 @@ from typing import Any, List, Optional
 import numpy as np
 
 # Ensure project root is on sys.path
-_project_root = Path(__file__).resolve().parents[2]
+_project_root = Path(__file__).resolve().parents[3]
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 

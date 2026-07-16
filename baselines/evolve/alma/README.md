@@ -11,19 +11,19 @@ Run from the **project root**:
 
 ```bash
 # Smoke test — 2 users, 2 steps, 10 QA per user
-python baselines/alma/run_main.py \
+python baselines/evolve/alma/run_main.py \
     --status search \
     --eval_n_samples 2 --eval_n_qa 10 \
     --steps 2
 
 # Full training — 6 users, 10 steps, 20 QA per user
-python baselines/alma/run_main.py \
+python baselines/evolve/alma/run_main.py \
     --status search \
     --eval_n_samples 6 --eval_n_qa 20 \
     --steps 10
 
 # Evaluate a saved memo on held-out users (007–010)
-python baselines/alma/run_main.py \
+python baselines/evolve/alma/run_main.py \
     --status test \
     --memo_SHA <SHA>
 ```
@@ -33,7 +33,7 @@ See `search.sh` for search-loop examples and `test.sh` for held-out evaluation e
 ## Layout
 
 ```
-baselines/alma/
+baselines/evolve/alma/
 ├── run_main.py         # CLI entry
 ├── meta_agent.py       # MetaAgent: analyze → generate → examine → evaluate
 ├── memo_manager.py     # memo lifecycle, reward, softmax selection
@@ -59,7 +59,7 @@ baselines/alma/
 
 Shared infrastructure (`harness_base.py`, `llm.py`, `tokens.py`,
 `logger.py`, the `DynamicMemWorkflow`) was long ago extracted to
-[`common/`](../../common/) and [`datasets/dynamicmem/`](../../datasets/dynamicmem/)
+[`common/`](../../../common/) and [`datasets/dynamicmem/`](../../../datasets/dynamicmem/)
 — alma imports it from there. Since the 2026-07 TCE upgrade, alma's
 DynamicMem evals therefore follow the official checkpoint protocol
 (0–1 holistic judge) automatically.
@@ -69,7 +69,7 @@ DynamicMem evals therefore follow the official checkpoint protocol
 The dataset-specific code (`get_task_list`, `load_user_checkpoints`,
 `DynamicMemRecorder`, the official TCE prompts + holistic judge in
 `tce_prompts.py`) is shared at
-[`datasets/dynamicmem/`](../../datasets/dynamicmem/). It has zero dependency
+[`datasets/dynamicmem/`](../../../datasets/dynamicmem/). It has zero dependency
 on alma so other methods can reuse it.
 
 ## Datasets
@@ -105,12 +105,12 @@ Example commands (mirroring "Quick start" above, run from the project root):
 
 ```bash
 # LoCoMo — smoke-size search loop, 1 step
-python baselines/alma/run_main.py \
+python baselines/evolve/alma/run_main.py \
     --dataset locomo --status search --steps 1 \
     --eval_n_samples 1 --eval_n_qa 3 --check_n_samples 1 --check_n_qa 2 \
     --meta_model gpt-5-mini --execution_model gpt-5-mini --judge_model gpt-5-mini
 
 # LongMemEval (s or m variant) — evaluate a saved memo on the held-out split
-python baselines/alma/run_main.py \
+python baselines/evolve/alma/run_main.py \
     --dataset longmemeval_s --status test --memo_SHA <SHA>
 ```

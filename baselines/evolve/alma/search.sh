@@ -7,7 +7,7 @@
 
 # --- Full search run (default settings) ---
 # 6 search users, 10 meta-learning steps, 20 QA per user per round
-python baselines/alma/run_main.py \
+python baselines/evolve/alma/run_main.py \
     --meta_model gpt-5 \
     --execution_model gpt-5-mini \
     --judge_model gpt-5-mini \
@@ -21,7 +21,7 @@ python baselines/alma/run_main.py \
 
 # --- Quick smoke test (minimal workload, verify end-to-end) ---
 # 2 users, 2 steps, 10 QA per user
-python baselines/alma/run_main.py \
+python baselines/evolve/alma/run_main.py \
     --meta_model gpt-5 \
     --execution_model gpt-5-mini \
     --judge_model gpt-5-mini \
@@ -32,8 +32,8 @@ python baselines/alma/run_main.py \
     --max_sample_concurrent 3
 
 # --- Resume from checkpoint ---
-# Checkpoint files live under baselines/alma/logs/ after the first step.
-python baselines/alma/run_main.py \
+# Checkpoint files live under baselines/evolve/alma/logs/ after the first step.
+python baselines/evolve/alma/run_main.py \
     --meta_model gpt-5 \
     --execution_model gpt-5-mini \
     --judge_model gpt-5-mini \
