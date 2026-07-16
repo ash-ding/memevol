@@ -65,8 +65,9 @@ ABC), implementing the two-phase contract:
 
 - **Phase 1** — `build_memory_from_data(recorder)`: ingest a stream of user data
   (app logs, conversation turns, chat sessions) into any internal structure
-  (dict, vector store, graph, hierarchy, ...). Called multiple times per
-  user when `update_type=chunked|sequential`.
+  (dict, vector store, graph, hierarchy, ...). Called once per visible-data
+  batch (per checkpoint for DynamicMem); the memory system chooses its own
+  ingestion granularity internally.
 - **Phase 2** — `retrieve_memory_for_query(recorder)`: given the current query in
   `recorder.init["query"]`, return a dict that's fed to the QA agent as
   context. Must be read-only w.r.t. memory state (DynamicMem interleaves
