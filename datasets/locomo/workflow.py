@@ -12,8 +12,9 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple, Type
 
-from common.harness_base import Basic_Recorder, MemoStructure
+from common.harness_base import MemoStructure
 from common.logger import get_logger
+from common.recorder import Basic_Recorder
 from common.workflow import BaseWorkflow
 from datasets.locomo.env import (
     LoCoMoRecorder,

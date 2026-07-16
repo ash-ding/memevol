@@ -1,58 +1,21 @@
-"""Abstract base classes for DynamicMem-style memory harnesses.
+"""The standardized memory-system contract every benchmark evaluates through.
 
-`Basic_Recorder` — per-user state container used by all benchmarks and
-passed into `build_memory_from_data` / `retrieve_memory_for_query`. Benchmark-specific
-recorders (e.g. `DynamicMemRecorder`, `LoCoMoRecorder`) inherit from it.
+`MemoStructure` exposes three OPTIONAL-override hooks — BUILD
+(`build_memory_from_data`) / RETRIEVE (`retrieve_memory_for_query`) /
+ANSWER (`use_memory_to_answer`) — all with safe defaults. A fresh instance
+is created per user/sample, so no cross-user state is possible.
 
-`MemoStructure` / `Sub_memo_layer` — the two-phase contract every harness
-must implement.
+The data envelope the hooks receive is `Basic_Recorder`, defined in
+`common/recorder.py` (re-imported here, so the legacy
+`from common.harness_base import Basic_Recorder` path keeps working).
 """
 
 from __future__ import annotations
 
-import asyncio
-from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from abc import ABC
 from typing import Any, Dict, Optional
 
-
-@dataclass
-class Basic_Recorder:
-    """Base class for task recorders. Domain-specific recorders inherit from this."""
-
-    init: Dict[str, Any] = field(default_factory=dict)
-    steps: list = field(default_factory=list)
-    reward: float = 0.0
-    _lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
-
-    async def log_init(self, *args, **kwargs):
-        async with self._lock:
-            self.init = kwargs
-
-    async def log_step(self, **kwargs):
-        async with self._lock:
-            self.steps.append(kwargs)
-
-    async def set_reward(self, reward: float):
-        async with self._lock:
-            self.reward = reward
-
-# only for alma method, claude code should ignore this class
-@dataclass
-class Sub_memo_layer(ABC):
-    """Abstract class for retrieve/update sub-function."""
-    layer_intro: str = "Introduction of the structure of current defined Database(if any), corresponding Update and Retrieve method."
-    database: Optional[Any] = None
-
-    @abstractmethod
-    async def retrieve(self, **kwargs):
-        """The retrieve function of current layer."""
-        pass
-
-    @abstractmethod
-    async def update(self, **kwargs):
-        """The update function of current layer."""
-        pass
+from common.recorder import Basic_Recorder  # noqa: F401  (re-export: legacy import path)
 
 
 class MemoStructure(ABC):

@@ -65,11 +65,11 @@ TASK_FAMILY_APPLY_SERVICE = "apply_service"
 
 
 # ---------------------------------------------------------------------------
-# Recorder — Basic_Recorder lives in common/; DynamicMemRecorder is the
-# domain-specific subclass used by DynamicMem.
+# Recorder — Basic_Recorder lives in common/recorder.py; DynamicMemRecorder is
+# the domain-specific subclass used by DynamicMem.
 # ---------------------------------------------------------------------------
 
-from common.harness_base import Basic_Recorder  # noqa: E402  (re-export)
+from common.recorder import Basic_Recorder  # noqa: E402  (re-export)
 
 
 @dataclass

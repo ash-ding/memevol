@@ -3,7 +3,7 @@ from dataclasses import fields
 from pathlib import Path
 from typing import Any, Dict
 
-from common.harness_base import Basic_Recorder
+from common.recorder import Basic_Recorder
 from baselines.evolve.alma.dataset_info import DATASET_INFO
 
 CHROMA_CHEETSHEET = """## Initialize Chroma DB
@@ -348,15 +348,23 @@ def get_metadata_dict(instance) -> dict:
     return meta_dict
 
 
-def _read_harness_base() -> str:
-    """The backbone code shown to the LLM — kept at common/harness_base.py.
+def _read_contract_files() -> str:
+    """The backbone code shown to the LLM: the shared eval contract
+    (common/harness_base.py, which pulls in the Basic_Recorder envelope from
+    common/recorder.py) followed by alma's own layered-memory vocabulary
+    (baselines/evolve/alma/memo_layers.py) — fixed order, each part labeled
+    with its source path.
 
     (alma deliberately stays on the common base; forge's evolution target is
     the separate forge/harness_base.py, which alma must NOT pick up.)"""
-    path = Path(__file__).resolve().parents[3] / "common" / "harness_base.py"
-    if not path.exists():
-        raise FileNotFoundError(f"Cannot find harness_base.py at {path.resolve()}")
-    return path.read_text(encoding="utf-8")
+    root = Path(__file__).resolve().parents[3]
+    parts = []
+    for rel in ("common/harness_base.py", "baselines/evolve/alma/memo_layers.py"):
+        path = root / rel
+        if not path.exists():
+            raise FileNotFoundError(f"Cannot find {rel} at {path.resolve()}")
+        parts.append(f"# ===== source: {rel} =====\n{path.read_text(encoding='utf-8')}")
+    return "\n".join(parts)
 
 
 def build_generate_new_code_prompt(
@@ -366,7 +374,7 @@ def build_generate_new_code_prompt(
     dataset: str = "dynamicmem",
 ):
     info = DATASET_INFO[dataset]
-    basic_classes = _read_harness_base()
+    basic_classes = _read_contract_files()
 
     interaction_recorder_info = get_metadata_dict(recorder)
     # Guard against analysis LLM returning an error dict ({"error": ..., "raw_output": ...})
@@ -400,7 +408,8 @@ You are given the following two base classes:
 
 Inherit these base classes and import as follows:
 ```python
-from common.harness_base import Sub_memo_layer, MemoStructure
+from common.harness_base import MemoStructure
+from baselines.evolve.alma.memo_layers import Sub_memo_layer
 {info['recorder_env_import']}
 from common.llm import Agent, Embedding
 from langchain_chroma import Chroma
@@ -455,7 +464,7 @@ Here are the basic tools provided:
 
 def build_reflection_prompt(code_str: str, recorder: Basic_Recorder, error_msg, dataset: str = "dynamicmem"):
     info = DATASET_INFO[dataset]
-    basic_classes = _read_harness_base()
+    basic_classes = _read_contract_files()
 
     interaction_recorder_info = get_metadata_dict(recorder)
     interaction_prompt = f"""

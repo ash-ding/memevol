@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple, Type
 
-from common.harness_base import Basic_Recorder
+from common.recorder import Basic_Recorder
 from common.workflow import BaseWorkflow
 from datasets.longmemeval.env import (
     LongMemEvalRecorder,

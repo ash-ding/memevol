@@ -33,6 +33,28 @@ baselines/
   per-dataset workflows via `baselines.harness.eval_common.run_baseline`, so
   their scores sit on the same axis as any evolved harness's.
 
+## Method-boundary conventions
+
+These rules keep scores comparable while keeping methods independent. They
+bind every method here — including `evolve/evolvemem/` and
+`evolve/memevolve/` (currently paper PDFs only), which will be implemented
+under the same convention:
+
+- **The eval surface is mandatorily shared.** A method's FINAL ARTIFACT is a
+  `common.harness_base.MemoStructure` subclass implementing the 3-hook
+  contract, and it is scored ONLY through the shared registry/workflow path
+  (`baselines/registry.py` → `datasets/<bench>/workflow.py` + the shared
+  judge). No method ships its own scoring loop — otherwise its numbers stop
+  being comparable.
+- **Dependency direction is one-way.** Methods import `common/` (and
+  `datasets/` / `baselines/registry.py`); `common/` NEVER imports a method;
+  methods NEVER import each other. Method-specific design vocabulary lives
+  inside the method's own directory (e.g. alma's `Sub_memo_layer` in
+  `evolve/alma/memo_layers.py`), never in `common/`.
+- **Duplication over coupling.** If two methods need similar internal
+  machinery, copy it. Duplicated internals are acceptable — preferred, even —
+  because independence between methods matters more than DRY.
+
 **DynamicMem protocol status (since the 2026-07 TCE upgrade)**: alma runs
 the shared `DynamicMemWorkflow`, so it automatically follows the official
 TCE v2 checkpoint protocol (checkpoint-interleaved ingestion, two task
