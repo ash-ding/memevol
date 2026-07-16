@@ -18,6 +18,12 @@ not a compat-shim script. The old single-dataset `eval_cc.py` was replaced
 by `run.py` (2026-07); numbers from that script are NOT comparable to
 `run.py`'s DynamicMem output (different protocol).
 
+Per the standardized `MemoStructure` contract, `general_update` is called
+ONCE per build call with the whole newly-visible data already in
+`recorder.init` — ingestion granularity is the memo's own choice
+(`self.chunked(...)` / `self._update_type` / `self._n_chunks`); `CCMemo`
+doesn't chunk at all, it just stashes the whole payload to disk each call.
+
 ## Usage
 
 ```bash

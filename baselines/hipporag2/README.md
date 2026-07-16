@@ -26,6 +26,14 @@ not a compat-shim script. The old single-dataset `eval_hipporag2.py` was
 replaced by `run.py` (2026-07); numbers from that script are NOT comparable
 to `run.py`'s DynamicMem output (different protocol).
 
+Per the standardized `MemoStructure` contract, `general_update` is called
+ONCE per build call with the whole newly-visible data already in
+`recorder.init` — ingestion granularity is the memo's own choice
+(`self.chunked(...)` / `self._update_type` / `self._n_chunks`); `HippoRAGMemo`
+indexes the whole call's passages in one shot (no chunking) and relies on
+`HippoRAG.index()`'s additive/dedup-by-hash behavior for correctness across
+calls.
+
 ## Usage
 
 ```bash

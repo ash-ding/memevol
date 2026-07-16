@@ -621,6 +621,7 @@ class BaseWorkflow(ABC):
                 f"{type(self).__name__}: default _phase1_update expects init_data to be a list; "
                 f"got {type(init_data).__name__}. Override _phase1_update for non-list init."
             )
+        # NOTE: max_logs is NOT segment-aware — it trims THIS call's init_data, so for DynamicMem's per-checkpoint delta it would trim each delta, not the total visible pool (latent: defaults to None, unused in forge).
         items = init_data[-self.max_logs:] if self.max_logs else init_data
         log.info(f"[Phase 1] general_update ({len(items)} {self._phase1_item_label})")
         r = self.recorder_class()
