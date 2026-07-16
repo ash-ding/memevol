@@ -14,12 +14,13 @@ historical harnesses in old workspaces that still import
 
 The contract (unchanged from common):
 
-  Phase 1 — `general_update(recorder)` is called one or more times with
-  `recorder.init` holding a chunk of raw benchmark data (see the per-dataset
-  shapes in the proposer system prompt). Build/extend your memory.
-  For DynamicMem the calls follow the official TCE checkpoint protocol:
-  chronological app-log segments, interleaved with Phase-2 queries at each
-  checkpoint — never assume you have seen the full stream.
+  Phase 1 — `general_update(recorder)` is called ONCE per build call with
+  `recorder.init` holding the data newly visible for that call (see the
+  per-dataset shapes in the proposer system prompt). Build/extend your memory;
+  choose your own ingestion granularity (use `self.chunked(...)` for chunking).
+  For DynamicMem the calls follow the official TCE checkpoint protocol: one call
+  per checkpoint with that checkpoint's new app-log segment, interleaved with
+  Phase-2 queries — accumulate across calls; never assume you have the full stream.
 
   Phase 2 — `general_retrieve(recorder)` is called once per query with
   `recorder.init` holding the query (+ benchmark-specific context). Return a
