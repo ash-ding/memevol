@@ -288,9 +288,9 @@ DEFAULT_STAGES: Dict[str, Dict[str, Dict[str, Any]]] = {
 }
 
 # stage_<ds> objective value for a coverage=full evaluation. Numerically above
-# the last gauntlet tier (3) so selection's fully-staged filter accepts full
-# entries; scores at stage 3 vs 4 are still NOT mutually comparable — coverage
-# is uniform within a run.
+# the last gauntlet tier (3) so full-coverage entries are distinguishable in
+# frontier telemetry; scores at stage 3 vs 4 are still NOT mutually comparable —
+# coverage is uniform within a run.
 FULL_STAGE = 4.0
 
 _OLD_SIZE_FIELDS = ("eval_n_samples", "eval_n_qa", "check_n_samples", "check_n_qa")
