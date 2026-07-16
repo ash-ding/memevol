@@ -120,6 +120,23 @@ def test_general_answer_used_else_agent():
     assert loop.run_until_complete(d.general_answer(None, {}, "Q")) is None
 
 
+def test_general_answer_gets_query_scoped_recorder():
+    """Both answer sites pass the query-scoped retrieve_recorder to general_answer,
+    not the phase-1 recorder — so recorder.init means the same thing everywhere."""
+    import inspect
+    from common import workflow as bw
+    from datasets.dynamicmem import workflow as dw
+
+    base_src = inspect.getsource(bw.BaseWorkflow.run_single_user)
+    dm_src = inspect.getsource(dw.DynamicMemWorkflow._run_item)
+
+    # Both should pass retrieve_recorder (spaces removed for robustness)
+    assert "general_answer(retrieve_recorder" in base_src.replace(" ", ""), \
+        "BaseWorkflow.run_single_user must pass retrieve_recorder to general_answer"
+    assert "general_answer(retrieve_recorder" in dm_src.replace(" ", ""), \
+        "DynamicMemWorkflow._run_item must pass retrieve_recorder to general_answer"
+
+
 def main():
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = []

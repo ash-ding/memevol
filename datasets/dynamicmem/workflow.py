@@ -234,7 +234,7 @@ class DynamicMemWorkflow(BaseWorkflow):
         agent = Agent(system_prompt="", model=self.model)
         answer_err: Optional[Tuple[str, str]] = None
         try:
-            ans = await memo.general_answer(recorder, retrieved, prompt)
+            ans = await memo.general_answer(retrieve_recorder, retrieved, prompt)
             if ans is None:
                 ans = await agent.ask(prompt, reasoning_effort=self.reasoning_effort)
             raw_answer = ans
