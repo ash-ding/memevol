@@ -5,6 +5,15 @@ against the same benchmark set as the main method ([forge/](../forge/)),
 producing comparable metrics: per-user reward, judge-scored accuracy, and
 (for some) token / latency telemetry.
 
+## Contents
+
+1. [Layout — two kinds of baseline](#layout--two-kinds-of-baseline)
+2. [Method-boundary conventions](#method-boundary-conventions)
+3. [Existing baselines](#existing-baselines)
+4. [**Adding a harness baseline** — adapting an existing memory system](#adding-a-harness-baseline--adapting-an-existing-memory-system)
+5. [Adding an evolve baseline](#adding-an-evolve-baseline)
+6. [Shared foundation](#shared-foundation)
+
 ## Layout — two kinds of baseline
 
 `baselines/` is split by WHAT is being compared:
@@ -15,7 +24,9 @@ baselines/
 ├── requirements.txt     # shared full ML install
 ├── venv/                # shared Python 3.12 venv (gitignored)
 ├── evolve/              # SEARCH-METHOD baselines — compared against forge ITSELF
-│   └── alma/            #   LLM-meta-agent search loop (memevol's original method)
+│   ├── alma/            #   LLM-meta-agent search loop (memevol's original method)
+│   ├── evolvemem/       #   (paper PDF; to be implemented under the conventions below)
+│   └── memevolve/       #   (paper PDF; to be implemented under the conventions below)
 └── harness/             # READY-MADE MEMORY SYSTEMS — compared against forge's
     ├── eval_common.py   #   EVOLVED HARNESSES. Shared runner: run_baseline()
     ├── cc/              #   Claude Code as direct QA agent (native answer)
@@ -36,9 +47,7 @@ baselines/
 ## Method-boundary conventions
 
 These rules keep scores comparable while keeping methods independent. They
-bind every method here — including `evolve/evolvemem/` and
-`evolve/memevolve/` (currently paper PDFs only), which will be implemented
-under the same convention:
+bind every method here:
 
 - **The eval surface is mandatorily shared.** A method's FINAL ARTIFACT is a
   `common.harness_base.MemoStructure` subclass implementing the 3-hook
@@ -46,6 +55,11 @@ under the same convention:
   (`baselines/registry.py` → `datasets/<bench>/workflow.py` + the shared
   judge). No method ships its own scoring loop — otherwise its numbers stop
   being comparable.
+- **Split discipline.** Development, tuning, and any internal
+  search/self-improvement loop run on the **search split** only
+  (`--split search` / `--status search`). The **test split** is touched
+  exactly once per reported number (`--split test`, the default for
+  harness runners — same data path as `forge.heldout`).
 - **Dependency direction is one-way.** Methods import `common/` (and
   `datasets/` / `baselines/registry.py`); `common/` NEVER imports a method;
   methods NEVER import each other. Method-specific design vocabulary lives
@@ -55,24 +69,11 @@ under the same convention:
   machinery, copy it. Duplicated internals are acceptable — preferred, even —
   because independence between methods matters more than DRY.
 
-**DynamicMem protocol status (since the 2026-07 TCE upgrade)**: alma runs
-the shared `DynamicMemWorkflow`, so it automatically follows the official
-TCE v2 checkpoint protocol (checkpoint-interleaved ingestion, two task
-families, official holistic 0–1 judge) — its numbers ARE comparable with
-forge. `hipporag2` and `cc` both drive their `MemoStructure`
-(`HippoRAGMemo` / `CCMemo`) through `baselines.harness.eval_common.run_baseline`,
-which resolves the SAME production per-dataset workflow the main method
-uses (`baselines.registry.resolve`), so their DynamicMem numbers get the
-official TCE protocol too, and both run on all four datasets
-(dynamicmem/locomo/longmemeval_s/longmemeval_m) via one `run.py --dataset
-...` entrypoint. `cc` bypasses the shared QA agent (`CCMemo.use_memory_to_answer`,
-the standardized answer hook every `MemoStructure` may implement) — its own
-tool-using answer is judged verbatim instead of being relayed through a
-second LLM call.
-
 All baselines share **`baselines/venv/`** (full ML install:
 `pip install -r baselines/requirements.txt`) and write artifacts under
 each baseline's own `logs/` and `results/` directories (gitignored).
+
+## Existing baselines
 
 | Baseline | Kind | Approach | Optimization | Best for |
 |---|---|---|---|---|
@@ -80,9 +81,7 @@ each baseline's own `logs/` and `results/` directories (gitignored).
 | **[harness/cc](harness/cc/)** | ready-made harness | Claude Code as direct QA agent (native answer, multi-dataset) | None (zero-shot) | What-if: just give CC the raw user data + tools and let it answer |
 | **[harness/hipporag2](harness/hipporag2/)** | ready-made harness | Graph-based RAG pipeline as retrieval memory (OpenIE → KG → PPR retrieval → passages; shared QA agent answers) | None (fixed pipeline) | Hand-designed memory architecture comparison point, multi-dataset |
 
----
-
-## evolve/alma — meta-learning loop
+### evolve/alma — meta-learning loop
 
 The original method memevol shipped with: an LLM meta-agent reads sampled
 QA trajectories, identifies failure patterns, and proposes new memory-
@@ -109,30 +108,24 @@ Artifacts: `baselines/evolve/alma/{logs/, memo_archive/, results/}`. See
 **Key difference from forge**: alma's proposer is a single LLM call with
 compressed feedback (sampled trajectories + meta-prompt), whereas forge's
 proposer is an agentic CC SDK call with full filesystem access to all
-prior code, traces, and scores.
+prior code, traces, and scores. alma runs the shared per-dataset workflows
+(including the official DynamicMem TCE v2 checkpoint protocol), so its
+numbers ARE comparable with forge.
 
----
-
-## harness/cc — Claude Code as direct QA agent
+### harness/cc — Claude Code as direct QA agent
 
 Skips memory-architecture design entirely. `CCMemo`
-(`baselines/harness/cc/memo.py`) is a `MemoStructure` run through the same
-`baselines.harness.eval_common.run_baseline` shared runner as hipporag2, on
-any of the four datasets:
+([harness/cc/memo.py](harness/cc/memo.py)):
 
-- **Phase 1 (`build_memory_from_data`)**: stashes the currently-visible data
-  (dynamicmem: app_logs; locomo: conversation; longmemeval: sessions —
-  dispatch on `recorder.init` keys) into a per-user temp directory as a
-  single JSON file.
-- **Phase 2 (`retrieve_memory_for_query`)**: runs Claude Code with tool access
-  (Read, Grep, Glob) to that temp directory and asks it to answer the
-  question directly — no separate retrieval step.
-- **Answer (`use_memory_to_answer`)**: runs Claude Code on the workflow's exact
-  formatted prompt so the workflow judges cc's own answer verbatim,
-  bypassing the shared QA agent entirely.
+- **BUILD**: stashes the currently-visible data into a per-user temp
+  directory as a single JSON file.
+- **RETRIEVE**: returns `{}` — no separate retrieval step.
+- **ANSWER** (`use_memory_to_answer`): runs Claude Code with tool access
+  (Read, Grep, Glob) over the temp directory, on the workflow's exact
+  formatted prompt — cc's own answer is judged verbatim, bypassing the
+  shared QA agent. This is the one baseline that overrides the answer hook.
 
 ```bash
-# Full eval on one dataset
 baselines/venv/bin/python baselines/harness/cc/run.py \
     --dataset locomo --model claude-sonnet-4-20250514
 
@@ -140,41 +133,29 @@ baselines/venv/bin/python baselines/harness/cc/run.py \
     --dataset dynamicmem --stage-spec '{"n_samples": 2}'
 ```
 
-Useful as an upper-bound reference: how well does a strong agent do **with
-no learned memory structure at all**, just raw access + tools?
+Useful as a reference point: how well does a strong agent do **with no
+learned memory structure at all**, just raw access + tools?
 
 Artifacts: `baselines/harness/cc/results/<dataset>/<split>/`.
 
----
+### harness/hipporag2 — graph-based RAG pipeline as retrieval memory
 
-## harness/hipporag2 — graph-based RAG pipeline as a retrieval MemoStructure
+`HippoRAGMemo` ([harness/hipporag2/memo.py](harness/hipporag2/memo.py))
+wraps [HippoRAG2](https://github.com/OSU-NLP-Group/HippoRAG)'s pipeline:
 
-`HippoRAGMemo` (`baselines/harness/hipporag2/memo.py`) wraps
-[HippoRAG2](https://github.com/OSU-NLP-Group/HippoRAG)'s pipeline as a
-`MemoStructure` — a fixed (non-evolved) memory architecture run through the
-same `baselines.harness.eval_common.run_baseline` shared runner as the rest
-of the baselines, on any of the four datasets:
-
-- **Phase 1 (`build_memory_from_data`)**: converts the ingested unit's data into text
-  passages (dynamicmem: app_logs; locomo: conversation turns; longmemeval:
-  session messages — dispatch on `recorder.init` keys) and indexes them into a
-  per-user HippoRAG graph (OpenIE → NER + triples → knowledge graph + entity
-  embeddings). Indexing is additive across calls, so DynamicMem's per-
-  checkpoint segments accumulate correctly.
-- **Phase 2 (`retrieve_memory_for_query`)**: fact retrieval → reranking → personalized
-  PageRank → top-k passages, returned as `{"passages": [...]}`. The **shared
-  QA agent** (not HippoRAG's own `rag_qa` reader) answers from those passages,
-  and the per-dataset workflow judges/scores identically to the main method —
-  a fair "HippoRAG-as-memory" comparison point rather than an end-to-end
-  HippoRAG pipeline comparison.
+- **BUILD**: converts the visible data into text passages and indexes them
+  into a per-user HippoRAG graph (OpenIE → NER + triples → knowledge graph +
+  entity embeddings). Indexing is additive across calls, so DynamicMem's
+  per-checkpoint segments accumulate correctly.
+- **RETRIEVE**: fact retrieval → reranking → personalized PageRank → top-k
+  passages, returned as `{"passages": [...]}`. The **shared QA agent**
+  answers from those passages — a fair "HippoRAG-as-memory" comparison, not
+  an end-to-end HippoRAG pipeline comparison.
 
 ```bash
 # OpenAI API embedding (no GPU needed)
 baselines/venv/bin/python baselines/harness/hipporag2/run.py \
     --dataset locomo --embedding text-embedding-3-small
-
-baselines/venv/bin/python baselines/harness/hipporag2/run.py \
-    --dataset dynamicmem --stage-spec '{"n_samples": 2}'
 
 # Local GPU embedding (NVIDIA)
 baselines/venv/bin/python baselines/harness/hipporag2/run.py \
@@ -182,44 +163,209 @@ baselines/venv/bin/python baselines/harness/hipporag2/run.py \
     --embedding_batch_size 2 --embedding_dtype float16
 ```
 
-Useful as a hand-designed comparison: how does a published RAG pipeline
-perform on these benchmarks vs forge-evolved harnesses?
-
 Artifacts: `baselines/harness/hipporag2/{outputs/, results/<dataset>/<split>/}`.
 
 ---
 
-## Adding a new harness baseline (mem0 / letta / zep / ...)
+## Adding a harness baseline — adapting an existing memory system
 
-A new ready-made memory system needs exactly two files under
-`baselines/harness/<name>/`:
+This is the recipe for evaluating an existing, human-crafted memory system
+(mem0, letta, zep, MemGPT, your own prototype, ...) under this repo's
+protocol. The whole adaptation is two files under
+`baselines/harness/<name>/`; everything else — split resolution, the
+per-dataset evaluation protocol (including DynamicMem's checkpoint
+interleaving), judging, scoring, trace persistence — comes from the shared
+runner and is byte-identical to what forge-evolved harnesses get.
 
-1. **`memo.py`** — a `common.harness_base.MemoStructure` subclass
-   implementing the 3-hook contract:
-   - `async build_memory_from_data(recorder)` — ingest the data visible in
-     `recorder.init` (dispatch on its keys: `app_logs` / `conversation` /
-     `sessions`). Called once per build call; accumulate across calls
-     (DynamicMem delivers per-checkpoint deltas).
-   - `async retrieve_memory_for_query(recorder)` — return the dict fed to
-     the shared QA agent (e.g. `{"passages": [...]}`).
-   - `async use_memory_to_answer(recorder, retrieved, prompt)` — OPTIONAL;
-     return an answer string to bypass the shared QA agent (like cc), or
-     `None`/omit to use it (like hipporag2).
-   Per-run config travels as the `_cfg` class attribute
-   (`eval_common.make_memo_class`) — the workflow instantiates the class
-   with no args.
-2. **`run.py`** — an argparse CLI that builds the configured memo class and
-   calls `baselines.harness.eval_common.run_baseline(dataset=..., split=...,
-   user_stage_spec=parse_stage_spec(...), memo_class=..., qa_model=...,
-   judge_model=..., out_dir=...)`. Copy `harness/hipporag2/run.py` as the
-   template — it is ~40 lines.
+### Step 0 — understand what you're adapting to
 
-That's it: split resolution, per-dataset judge, scoring, and the full
-DynamicMem TCE checkpoint protocol all come from the shared runner, so the
-numbers are directly comparable to forge-evolved harnesses (same code, not
-"comparable" code). No `__init__.py` needed (namespace packages).
+Your system is driven through three async hooks on a
+`common.harness_base.MemoStructure` subclass. The evaluation lifecycle per
+user/sample:
+
+```
+fresh instance created                       # NO cross-user state — ever
+  → build_memory_from_data(recorder)          # 1..N times (N>1 only for DynamicMem:
+                                              #   one call per checkpoint, DELTA data)
+  → per query:  retrieve_memory_for_query(recorder)   # MUST be read-only
+                use_memory_to_answer(recorder, retrieved, prompt)  # optional
+```
+
+Three lifecycle rules that trip up adapters:
+
+1. **Fresh instance per user.** If your system persists state on disk,
+   scope it per instance — e.g. `HippoRAGMemo` creates
+   `uuid.uuid4().hex[:12]`-suffixed save dirs in `__init__`. Do NOT key
+   state on `recorder.user_id` (it is always `""` at memo call sites).
+2. **BUILD accumulates.** For LoCoMo/LongMemEval you get ONE build call
+   with everything; for DynamicMem you get FIVE calls, each with only that
+   checkpoint's new log segment. Your ingestion must be additive.
+3. **RETRIEVE is read-only.** DynamicMem interleaves queries with
+   ingestion at checkpoints — a retrieve that mutates memory corrupts
+   checkpoint isolation (and the cross-stage memory cache).
+
+### Step 1 — `memo.py`: the adapter class
+
+`recorder.init` shapes per benchmark (dispatch on the keys):
+
+| Benchmark | BUILD `recorder.init` | RETRIEVE `recorder.init` |
+|---|---|---|
+| dynamicmem | `{"app_logs": [log, ...]}` — each log: `app_log_id, timestamp, app_name, api_name, request, response`. Per-checkpoint DELTA | `{"app_logs": [...visible prefix...], "query": str}` |
+| locomo | `{"conversation": {...}}` — `speaker_a/b`, `session_1..N` (turn lists: `speaker, dia_id, text`), `session_N_date_time` | `{"conversation": {...}, "query": str}` |
+| longmemeval_s/m | `{"sessions": [session, ...]}` — each: `session_id, date, messages[{role, content}]` | `{"sessions": [...], "query": str, "question_date": str}` |
+
+Skeleton:
+
+```python
+# baselines/harness/<name>/memo.py
+import uuid
+from typing import Dict, Optional
+from common.harness_base import MemoStructure
+
+class MyMemo(MemoStructure):
+    _cfg: Dict = {}                     # filled by eval_common.make_memo_class
+
+    def __init__(self):
+        super().__init__()
+        self._instance_id = uuid.uuid4().hex[:12]   # per-user state scoping
+        self._system = ...              # construct the wrapped memory system
+                                        #   using self._cfg (model names, top-k, ...)
+
+    async def build_memory_from_data(self, recorder) -> None:
+        init = recorder.init
+        if "app_logs" in init:          # dynamicmem (per-checkpoint delta)
+            texts = [render_log(l) for l in init["app_logs"]]
+        elif "conversation" in init:    # locomo
+            texts = [render_turn(t) for t in iter_turns(init["conversation"])]
+        elif "sessions" in init:        # longmemeval
+            texts = [render_msg(s, m) for s in init["sessions"] for m in s["messages"]]
+        self._system.add(texts)         # ADDITIVE — never reset here
+
+    async def retrieve_memory_for_query(self, recorder) -> Dict:
+        hits = self._system.search(recorder.init["query"], top_k=...)
+        return {"passages": hits}       # read-only w.r.t. memory state
+
+    # OPTIONAL — only if your system answers natively (agentic systems).
+    # Return None / omit entirely to let the shared QA agent answer.
+    # async def use_memory_to_answer(self, recorder, retrieved, prompt) -> Optional[str]:
+    #     return await self._system.answer(prompt)
+```
+
+Notes on the RETRIEVE return dict:
+
+- Any dict works — it is rendered into the benchmark's QA prompt. A flat
+  `{"passages": [...]}` is the safe generic choice.
+- **DynamicMem tip**: `{"inline_memory_blocks": [str, ...]}` renders each
+  block verbatim into the official TCE answer prompt's `[Memory]` section;
+  any other dict shape is serialized as one JSON block. Surface the source
+  logs *with their `app_log_id`* — evidence citation is scored.
+- Override `use_memory_to_answer` ONLY for systems whose value proposition
+  includes answering (like cc). Retrieval-style systems should let the
+  shared QA agent answer — that keeps the comparison about *memory*, not
+  about who has the better answerer.
+
+### Step 2 — `run.py`: the CLI entry
+
+Copy [harness/hipporag2/run.py](harness/hipporag2/run.py) (~40 lines) and
+adjust the flags your system needs. Core shape:
+
+```python
+from baselines.registry import DATASETS
+from baselines.harness.eval_common import make_memo_class, run_baseline, parse_stage_spec
+from baselines.harness.<name>.memo import MyMemo
+
+p.add_argument("--dataset", required=True, choices=sorted(DATASETS))
+p.add_argument("--split", default="test", choices=["test", "search"])
+p.add_argument("--stage-spec", default=None)   # JSON size overrides, e.g. '{"n_samples": 2}'
+...
+memo_cls = make_memo_class(MyMemo, top_k=a.top_k, ...)   # → sets _cfg
+result = asyncio.run(run_baseline(
+    dataset=a.dataset, split=a.split,
+    user_stage_spec=parse_stage_spec(a.stage_spec),
+    memo_class=memo_cls, qa_model=a.model, judge_model=a.judge_model,
+    out_dir=Path(__file__).resolve().parent / "results" / a.dataset / a.split,
+))
+```
+
+`make_memo_class` exists because the workflow instantiates the memo class
+with **no arguments** — your CLI config travels as the `_cfg` class
+attribute. No `__init__.py` files needed (namespace packages).
+
+### Step 3 — dependencies
+
+Add your system's packages to [`baselines/requirements.txt`](requirements.txt)
+and install into the shared venv:
+
+```bash
+baselines/venv/bin/pip install -r baselines/requirements.txt
+```
+
+(Heavy/conflicting deps? Note them in your baseline's own README; the
+shared venv is the default, not a hard rule — but scoring still MUST go
+through `run_baseline`.)
+
+### Step 4 — validate on the SEARCH split (cheap, iterate freely)
+
+```bash
+# One conversation, a handful of QAs — does the adapter run end-to-end?
+baselines/venv/bin/python baselines/harness/<name>/run.py \
+    --dataset locomo --split search --stage-spec '{"n_samples": 1, "n_qa": 3}'
+
+# DynamicMem protocol check — 1 user exercises the checkpoint interleaving
+baselines/venv/bin/python baselines/harness/<name>/run.py \
+    --dataset dynamicmem --split search --stage-spec '{"n_samples": 1}'
+```
+
+Iterate here as much as you like — this is the split the main method
+searches on. Read `results/<dataset>/search/traces/<user>.json`: each QA
+step records the query, your retrieved dict, the answer, and
+`judge_reason` — the fastest way to see whether your retrieval is
+surfacing the right memory.
+
+### Step 5 — final numbers on the TEST split
+
+```bash
+# Whole test split (the default --split; = forge.heldout coverage=full)
+baselines/venv/bin/python baselines/harness/<name>/run.py --dataset locomo
+baselines/venv/bin/python baselines/harness/<name>/run.py --dataset dynamicmem
+baselines/venv/bin/python baselines/harness/<name>/run.py --dataset longmemeval_s
+```
+
+Outputs land in `baselines/harness/<name>/results/<dataset>/test/`:
+`score.json` (mean reward = the number you report, same 0–1 scale as
+forge's `accuracy_<dataset>`), `token_usage.json`, `traces/`. Because the
+task list, workflow, judge, and scoring are the main method's own code,
+these numbers are directly comparable to any forge-evolved harness's
+held-out score — same code, not "comparable" code. Touch the test split
+once per reported number; tuning happens in Step 4.
 
 ---
+
+## Adding an evolve baseline
+
+Evolve-framework baselines (a search loop that *produces* memory systems —
+e.g. the EvolveMem / MemEvolve papers staged under `evolve/`) differ too
+much internally for a step-by-step recipe: each has its own proposer,
+feedback signal, and population management. What binds them is the
+convention set above, concretely:
+
+1. **Own directory, internal freedom.** Everything method-specific —
+   search loop, prompts, checkpointing, its own base classes — lives in
+   `baselines/evolve/<name>/`. Copy machinery from alma if useful; do not
+   import it.
+2. **The final artifact is a 3-hook `MemoStructure`.** Whatever the search
+   produces must be loadable as a `common.harness_base.MemoStructure`
+   subclass (directly, or via a thin adapter) so it can be scored through
+   the shared workflow path. If the method's native artifact is not a
+   Python class, the adapter is part of the baseline.
+3. **Internal loops stay on the search split.** Every self-improvement
+   iteration evaluates on `status/split = search`. The test split is used
+   exactly once, for the final frozen artifact — mirroring how forge's
+   search never touches test data (`forge.heldout` is the only test entry).
+4. **Reference implementation**: [evolve/alma/](evolve/alma/) — its
+   `run_main.py --status {search,test}` split handling, `eval_runner.py` →
+   shared-workflow scoring, and `memo_archive/` artifact management are the
+   patterns to mirror (by copying, not importing).
 
 ## Shared foundation
 
@@ -229,11 +375,11 @@ All baselines (and forge) build on the same dataset adapters and judge:
   env module, recorder) resolution, shared by BOTH `evolve/` and `harness/`
   (mirrors `forge/launch.py::WORKFLOWS`; baselines never import forge).
 - **[`datasets/<bench>/env.py`](../datasets/)** — `load_user_data`,
-  `get_task_list`, per-benchmark Recorder.
+  `get_task_list` (the single source of truth for the search/test split),
+  per-benchmark Recorder.
 - **[`common/judge.py`](../common/judge.py)** — LLM-as-judge with
-  configurable prompt template and score range. Scores are directly
-  comparable when methods share the same judge config (see the DynamicMem
-  protocol-status note above for the current exception).
+  configurable prompt template and score range (DynamicMem uses the
+  official TCE holistic judge in `datasets/dynamicmem/tce_prompts.py`).
 - **[`common/llm.py`](../common/llm.py)** — `Agent` / `Embedding`
   wrappers with automatic token tracking; baselines use these so their
   cost numbers are comparable to forge's.

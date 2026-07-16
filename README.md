@@ -1,21 +1,43 @@
 # memevol
 
-Evolutionary search over **memory architectures for AI agents**.
+**memevol sits at the intersection of self-evolving agents and agent memory: a
+coding agent evolves memory-system code for AI agents, evaluated across
+long-context memory benchmarks.**
 
-A Claude-Code-SDK-driven proposer iteratively writes Python harnesses
-implementing memory systems and evaluates them across multiple long-context
-QA benchmarks. The main method targets the open question:
+## Contents
 
-> Can a coding agent invent memory architectures that approach human-brain-level
-> capabilities — multi-tier organization, principled forgetting and
-> consolidation, temporal awareness, dynamic re-organization — going beyond
-> what hand-designed retrieval databases can achieve?
+1. [Codebase structure](#1-codebase-structure)
+2. [How forge works](#2-how-forge-works)
+3. [The `MemoStructure` contract](#3-the-memostructure-contract)
+4. [Setup & quickstart](#4-setup--quickstart)
 
-The main method lives at **[`forge/`](forge/)**. Comparison baselines
-(alma meta-learning loop, Claude Code as direct QA agent, HippoRAG2) live
-under [`baselines/`](baselines/) — see [baselines/README.md](baselines/README.md).
+Comparison baselines live under [`baselines/`](baselines/) — see
+**[baselines/README.md](baselines/README.md)** for what they are and for the
+step-by-step guide to adapting an existing memory system into this repo's
+evaluation protocol.
 
-## How forge works
+---
+
+## 1. Codebase structure
+
+| Directory | Role |
+|---|---|
+| [`forge/`](forge/) | **The main method.** Claude-Code-SDK proposer + Singularity-sandboxed evaluator + frontier record store; searches over harness code |
+| [`common/`](common/) | The shared evaluation platform: the [`MemoStructure`](common/harness_base.py) contract, the [`Basic_Recorder`](common/recorder.py) data envelope, the [`BaseWorkflow`](common/workflow.py) scheduler, LLM/judge/embedding kernel, token tracking, memory cache, logging |
+| [`datasets/`](datasets/) | One adapter per benchmark: `env.py` (data loading + recorder + split), `workflow.py` (evaluation protocol), `prompts.py` (QA-agent prompt) |
+| [`baselines/`](baselines/) | Comparison methods, split into `evolve/` (search-method baselines, compared against forge itself) and `harness/` (ready-made memory systems, compared against forge-evolved harnesses) — [README](baselines/README.md) |
+| [`seeds/`](seeds/) | Opt-in seed harness library. A seed is copied into a run as candidate #0 (e.g. `no_memory` — the calibration floor any real memory design must beat) |
+| [`configs/`](configs/) | [`search_example.yaml`](configs/search_example.yaml) (documented AND runnable search config) + [`test_example.yaml`](configs/test_example.yaml) (held-out test flow) |
+| [`containers/`](containers/) | Singularity image definitions (eval base + proposer base) |
+| [`tools/`](tools/) | Operator scripts (prompt-version bookkeeping, run watchdog) |
+| [`tests/`](tests/) | Zero-dependency test suites, run under both venvs |
+| `workspace/` | Per-run state (gitignored): one directory per search run — harnesses, scores, traces, frontier |
+
+---
+
+## 2. How forge works
+
+### The outer loop
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
@@ -48,51 +70,104 @@ under [`baselines/`](baselines/) — see [baselines/README.md](baselines/README.
 └─────────────────────────────────────────────────────────────┘
 ```
 
-Two evaluation-efficiency mechanisms (2026-07):
+The proposer is **not** told which prior to use. Following the
+[Meta-Harness paper](docs/meta%20hearness.pdf), CC browses the run's
+`harnesses/` and `frontier.json` itself (Read/Grep/Glob + Bash + jq +
+WebSearch), decides which candidates to study, and records its chosen
+priors in the new harness's `meta.json::parent_ids`. There is no
+algorithmic selection — the frontier is a pure record store.
+
+Two evaluation-efficiency mechanisms:
 
 - **Staged evaluation** — each benchmark runs a stage1→2→3 promotion
-  gauntlet with config thresholds (per-benchmark independent); bad
-  candidates die on a ~20-item stage1 instead of consuming a full eval.
-  Sampling is deterministic and *nested* (a smaller stage's task set is a
-  strict subset of a larger one).
+  gauntlet with config thresholds; bad candidates die on a ~20-item stage1
+  instead of consuming a full eval. Sampling is deterministic and *nested*
+  (a smaller stage's task set is a strict subset of a larger one).
 - **Cross-stage memory cache** — the memory a harness builds in Phase 1 is
   snapshotted (pickle; per checkpoint for DynamicMem) and reused at deeper
-  stages instead of being rebuilt. See `common/memory_cache.py`.
+  stages instead of being rebuilt. See [`common/memory_cache.py`](common/memory_cache.py).
 
-Each generated **harness** is a Python class inheriting
-`forge.harness_base.MemoStructure` (a documented subclass of the common
-ABC), implementing the two-phase contract:
+### What the proposer sees inside its container
 
-- **Phase 1** — `build_memory_from_data(recorder)`: ingest a stream of user data
-  (app logs, conversation turns, chat sessions) into any internal structure
-  (dict, vector store, graph, hierarchy, ...). Called once per visible-data
-  batch (per checkpoint for DynamicMem); the memory system chooses its own
-  ingestion granularity internally.
-- **Phase 2** — `retrieve_memory_for_query(recorder)`: given the current query in
-  `recorder.init["query"]`, return a dict that's fed to the QA agent as
-  context. Must be read-only w.r.t. memory state (DynamicMem interleaves
-  queries with ingestion at checkpoints — query pollution breaks
-  checkpoint isolation).
+Each propose call runs Claude Code in a fresh Singularity container with a
+**deliberately selective** bind list — not a whole-repo mount:
 
-Per-user isolation: a fresh instance is created for every user — no
-cross-user state. The harness must handle all benchmark `recorder.init`
-shapes (typically by dispatching on init keys).
+```
+/workspace                      (RW, cwd)  = workspace/<run_id>/ — THIS run only
+├── harnesses/<int>_<hash8>/    every prior candidate: harness.py, meta.json,
+│                                <dataset>/score.json + stages.json + traces/,
+│                                and the exact prompts that produced it
+│                                (.prompt_system.txt / .prompt_task.txt)
+└── frontier.json               the population with per-benchmark scores
 
-The proposer is **not** told which prior to use. Per the
-[Meta-Harness paper](docs/meta%20hearness.pdf), CC browses
-`workspace/<run_id>/harnesses/` and `frontier.json` itself, decides which
-candidates to read (via Read/Grep/Glob + Bash + jq + WebSearch), and
-records its chosen priors in the new harness's `meta.json::parent_ids`.
+/app                            (RO, selective; PYTHONPATH=/app)
+├── forge/harness_base.py       the MemoStructure base the new harness must inherit
+├── common/{harness_base,recorder,llm,logger}.py
+└── datasets/                   env/workflow/prompts per benchmark + raw data,
+                                with the held-out TEST SPLIT PHYSICALLY ABSENT
+                                (search-mode overlay binds shadow it — filtered
+                                data files, gold answers stubbed out)
+```
 
-## Benchmarks
+Not visible, by construction: `.env`, `.git`, other runs' workspaces,
+`baselines/`, the host outer-loop code (`forge/orchestrator.py` etc.), and
+the prompt-template package (prompts are rendered host-side and staged into
+the harness dir). The evaluator container is similarly selective: full
+`common/` + `datasets/` RO, `forge/launch.py` as entrypoint, the candidate
+harness RO at `/harness`, output RW at `/out` — same search-split-only data
+overlay during search.
+
+---
+
+## 3. The `MemoStructure` contract
+
+Everything this repo evaluates — forge-evolved harnesses AND ready-made
+baseline memory systems — is a subclass of
+[`common.harness_base.MemoStructure`](common/harness_base.py) implementing
+three optional-override hooks:
+
+```python
+class MyMemory(MemoStructure):
+
+    async def build_memory_from_data(self, recorder) -> None:
+        """BUILD. recorder.init holds the data newly visible for THIS call.
+        Called once per visible-data batch (per checkpoint for DynamicMem);
+        accumulate across calls and choose your own ingestion granularity."""
+
+    async def retrieve_memory_for_query(self, recorder) -> Dict:
+        """RETRIEVE. recorder.init holds the query (+ per-benchmark metadata).
+        Return the dict fed to the QA agent. Must be READ-ONLY w.r.t. memory
+        state (DynamicMem interleaves queries with ingestion at checkpoints)."""
+
+    async def use_memory_to_answer(self, recorder, retrieved, prompt) -> Optional[str]:
+        """ANSWER (optional). Return the answer string to bypass the standard
+        QA agent, or None (the default) to let it answer from `retrieved`.
+        forge NEVER overrides this — the search optimizes memory, not the
+        answerer. Agentic baselines may (e.g. Claude Code answers natively)."""
+```
+
+A fresh instance is created per user/sample — no cross-user state. The
+`recorder` is the evaluation **data envelope**
+([`common/recorder.py`](common/recorder.py)): the benchmark fills
+`recorder.init` (each benchmark with a different shape — dispatch on its
+keys), the workflow logs steps and reward for traces. One contract, two
+consumers:
+
+- **forge-evolved harnesses** implement build + retrieve (inheriting
+  [`forge/harness_base.py`](forge/harness_base.py), a documented subclass);
+- **baseline memory systems** implement the same hooks and are scored
+  through the *same* per-dataset workflows — see
+  [baselines/README.md](baselines/README.md) for the adaptation guide.
+
+### Benchmarks
 
 Three benchmarks are wired in (each runs as its own Singularity exec
-against the same harness, scored to `[0, 1]` then averaged):
+against the same harness):
 
 | Dataset | Source | Protocol | Split |
 |---|---|---|---|
 | **[DynamicMem](datasets/dynamicmem/)** | App-activity logs (~1500/user over 15 months) | Official **TCE v2 checkpoint protocol**: ingestion interleaved with tasks at 5 quarterly checkpoints; two task families (state completion + personalized service); official holistic Core+Detail judge, scores 0–1 | 6 users search / 4 test |
-| **[LoCoMo](datasets/locomo/)** | Multi-session two-person conversations (~154 QA each after filtering) | Two-phase; binary CORRECT/WRONG judge (community-standard); QA **categories 1–4 only** (cat-5 adversarial excluded 2026-07-08 — the data carries no gold answers for them) | 6 conv search / 4 test |
+| **[LoCoMo](datasets/locomo/)** | Multi-session two-person conversations (~154 QA each after filtering) | Two-phase; binary CORRECT/WRONG judge (community-standard); QA **categories 1–4 only** (cat-5 adversarial excluded — the data carries no gold answers for them) | 6 conv search / 4 test |
 | **[LongMemEval](datasets/longmemeval/)** | 500 questions, each with its own haystack of chat sessions (`s` ~48, `m` ~476) | Two-phase, 1 QA per question; binary yes/no judge (paper) | 300 search / 200 test (stratified by question type) |
 
 Data files are **not** in the repo (DynamicMem `user_data/<user>/{app_log_large,task_packs}.json`,
@@ -100,7 +175,11 @@ Data files are **not** in the repo (DynamicMem `user_data/<user>/{app_log_large,
 place under `datasets/<bench>/`; DynamicMem honors a `DYNAMICMEM_DATA`
 env-var override.
 
-## Setup
+---
+
+## 4. Setup & quickstart
+
+### Setup
 
 **Requirements**: Python 3.12, an OpenAI API key, the host's `claude` CLI
 (subscription login), and Singularity.
@@ -138,107 +217,66 @@ PATH=$HOME/.local/bin:$PATH singularity build \
 ```
 
 (Image storage path is set in [`forge/paths.py`](forge/paths.py); the
-default points to `/export/scratch_large/ding/forge_images/` which is
-host-specific. Override there if needed.)
+default is host-specific — override there if needed.)
 
-## Quick start
+### Part A — run the main method (search)
+
+The search loop always runs on the **search split** (the held-out test
+split is physically invisible inside search containers).
 
 ```bash
-# Quick smoke: --smoke-test turns any config into a sanity-size single pass
-# (no gauntlet, no sanity gate) and forces steps=1 / k_per_step=1 (one
-# propose → eval → score round, ~1-2 min) unless --steps/--k-per-step are
-# given explicitly.
+# Smoke test: ONE propose → eval → score round at sanity sizes
+# (--smoke-test forces steps=1 / k_per_step=1 unless overridden; ~1-2 min)
 venv/bin/python -m forge.orchestrator --config configs/search_example.yaml --smoke-test
 
-# Search run (steps/datasets etc. as set in the config)
-venv/bin/python -m forge.orchestrator --config configs/search_example.yaml
+# Real search — copy the documented example config and edit it
+# (steps, benchmark, stage sizes, models), then:
+venv/bin/python -m forge.orchestrator --config configs/my_search.yaml --run-name my_search
 
 # CLI overrides (any YAML field has a matching CLI flag)
 venv/bin/python -m forge.orchestrator \
   --config configs/search_example.yaml \
-  --steps 3 --datasets dynamicmem,locomo --gpu
+  --steps 3 --datasets locomo --gpu
 ```
 
-**[`configs/search_example.yaml`](configs/search_example.yaml)** is both the
-fully documented schema (every field, default, and effect) and a runnable
-config — copy it to your own `configs/<name>.yaml` for real runs.
+Everything the run produces lands under `workspace/<run_name>/`:
+`harnesses/<int>_<hash8>/` (code + per-benchmark scores + traces),
+`frontier.json` (the population), `orchestrator.log`.
 
-## Run modes
+### Part B — held-out test of a discovered harness
 
-The orchestrator always runs the **search loop** on the search (training)
-split — the old `mode:` switch was removed 2026-07-14. Two entry points:
+Held-out evaluation is deliberately a **separate entry point**
+(`forge.heldout`): it runs frozen harnesses on the **test split**, whole
+split by default (`coverage: full`), with no proposer / sanity gate /
+frontier — running the search loop on test data would optimize against the
+held-out split.
 
-| Entry | Data split | Eval size | Sanity layer |
-|---|---|---|---|
-| `forge.orchestrator` (default) | search split | full staged gauntlet (`stages.stage1..3` with thresholds) | respected (`sanity.enabled`) |
-| `forge.orchestrator --smoke-test` | search split | one `stages.sanity_check`-sized run, no gauntlet | always skipped |
-| `python -m forge.heldout` | held-out **test** split | `coverage: full` (whole split) by default, or the sampled gauntlet | n/a (harnesses already passed sanity in their own run) |
+```bash
+# Config-first: list the harnesses in the YAML (see configs/test_example.yaml)
+venv/bin/python -m forge.heldout --config configs/test_example.yaml
 
-`--smoke-test` is the "did my harness even import / run" check. Held-out
-evaluation is deliberately a separate entry (frozen harnesses only — running
-the search loop on test data would optimize against the held-out split).
-Per-benchmark stage sizes/thresholds live in each `datasets.<ds>.stages`
-config block (see `configs/search_example.yaml`).
+# Or point at specific harness dir(s) from a finished search run
+venv/bin/python -m forge.heldout --config configs/test_example.yaml \
+  --harness workspace/my_search/harnesses/3_9f00aa11
 
-## Architecture
-
-```
-memevol/
-├── forge/                  Main method (Singularity-sandboxed CC proposer
-│                           + selective-bind evaluator + frontier)
-├── common/                 Cross-method utilities used by forge AND baselines
-│   ├── harness_base.py     MemoStructure ABC, Recorder (baseline contract;
-│   │                       forge harnesses inherit forge/harness_base.py)
-│   ├── workflow.py         BaseWorkflow scheduler (per-user concurrency,
-│   │                       Phase 1 chunking, Phase 2 QA loop, persistence)
-│   ├── memory_cache.py     cross-stage Phase-1 memory snapshots
-│   ├── llm.py              Agent / Embedding (shared client, unified retry
-│   │                       kernel, global concurrency gate, token tracking)
-│   ├── judge.py            LLM-as-judge with prompt template + score range
-│   ├── tokens.py           TokenTracker (used by Agent/Embedding/Judge)
-│   └── logger.py           rich-based logger
-├── datasets/<bench>/       Per-benchmark adapter
-│   ├── env.py              Recorder subclass + loaders + task list
-│   ├── workflow.py         BaseWorkflow subclass (dynamicmem overrides
-│   │                       run_single_user: checkpoint-interleaved TCE)
-│   └── prompts.py          QA agent prompt template
-│                           (dynamicmem: tce_prompts.py — official TCE
-│                           prompts + holistic judge, ported verbatim)
-├── containers/             Singularity .def files for both images
-├── configs/                YAML configs (search_example = documented + runnable; test_example = heldout flow)
-├── seeds/                  Project-level seed harness library (git-tracked)
-├── baselines/              Comparison methods — see baselines/README.md
-└── workspace/<run_id>/     Per-run runtime state (gitignored)
-    ├── harnesses/<int>_<hash8>/
-    │   └── <dataset>/         score.json + stages.json + <stage>/traces
-    │                          + memory_cache/ (cross-stage snapshots)
-    ├── frontier.json
-    ├── runs/                  transient evaluator output
-    └── orchestrator.log       host-side per-run log
+# → workspace/heldout_<ts>/heldout_results.json + per-benchmark artifacts
 ```
 
-## Logging
+To compare against baselines on the same test split, see
+**[baselines/README.md](baselines/README.md)** — baseline runs use the
+same split definitions, workflows, and judges (literally the same code
+path), so the numbers sit on the same axis.
 
-| Where | Scope |
-|---|---|
-| `forge/logs/orchestrator.log` | Global tape — every forge invocation appends; rotates at 5 MB × 3 |
-| `workspace/<run_id>/orchestrator.log` | Per-run host-side log (one file per `--run-name`) |
-| `workspace/<run_id>/runs/<id>_<ts>_<ds>/subprocess.log` | Per-eval-execution log inside the container |
-
-Proposer tool calls are forwarded to orchestrator.log at INFO level
-(`proposer·tool: #N <name> <input>`), with a per-call `proposer·info:
-finished turns=X tools=Y duration=Zms cost=$W` summary.
+---
 
 ## Method-design references
 
-- [`docs/meta hearness.pdf`](docs/) — Meta-Harness paper (the design we follow:
-  agent-driven parent selection, full filesystem feedback, no compressed
-  per-candidate summaries).
-- The mission framing inside the active template under
-  [`forge/prompts/templates/`](forge/prompts/templates/) (the stem listed in
-  `forge/prompts/templates/_default`) decomposes "biological memory" into a
-  12-axis taxonomy across three families (Functional Core / Performance &
-  Runtime / Learning & Adaptation) — these are the search dimensions the
+- [`docs/meta hearness.pdf`](docs/) — Meta-Harness paper (agent-driven
+  parent selection, full filesystem feedback, no compressed per-candidate
+  summaries).
+- The mission framing inside the active prompt template under
+  [`forge/prompts/templates/`](forge/prompts/templates/) decomposes
+  "biological memory" into a 12-axis taxonomy — the search dimensions the
   proposer is asked to advance.
 
 ## License
