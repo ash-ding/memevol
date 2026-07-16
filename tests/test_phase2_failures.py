@@ -1,5 +1,5 @@
 """Tests for Phase-2 failure visibility (audit M1) — a harness whose
-`general_retrieve` (or the QA agent) fails must repopulate
+`retrieve_memory_for_query` (or the QA agent) fails must repopulate
 `recorder.failure_info` so the orchestrator's sanity gate can see it,
 instead of silently scoring 0 and burning a full stage1 eval.
 
@@ -40,16 +40,16 @@ class FakeRecorder:
 
 
 class GoodMemo(MemoStructure):
-    async def general_update(self, recorder):
+    async def build_memory_from_data(self, recorder):
         pass
 
-    async def general_retrieve(self, recorder):
+    async def retrieve_memory_for_query(self, recorder):
         return {"context": "ok"}
-    # general_answer NOT overridden -> MemoStructure default None -> agent answers
+    # use_memory_to_answer NOT overridden -> MemoStructure default None -> agent answers
 
 
 class BadRetrieveMemo(GoodMemo):
-    async def general_retrieve(self, recorder):
+    async def retrieve_memory_for_query(self, recorder):
         raise NameError("name 'chroma_db' is not defined")  # classic LLM-written bug
 
 

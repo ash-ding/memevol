@@ -31,10 +31,10 @@ class FakeMemo:
         self.profile = {}
         self._private_index = {}
 
-    async def general_update(self, recorder):  # pragma: no cover - shape only
+    async def build_memory_from_data(self, recorder):  # pragma: no cover - shape only
         pass
 
-    async def general_retrieve(self, recorder):  # pragma: no cover
+    async def retrieve_memory_for_query(self, recorder):  # pragma: no cover
         return {}
 
 
@@ -69,18 +69,18 @@ INGESTED_BATCHES = []
 
 
 class CountingMemo(FakeMemo):
-    async def general_update(self, recorder):
+    async def build_memory_from_data(self, recorder):
         INGESTED_BATCHES.append(len(recorder.init.get("app_logs", [])))
 
-    async def general_retrieve(self, recorder):
+    async def retrieve_memory_for_query(self, recorder):
         return {}
 
 
 class CountingConvMemo(FakeMemo):
-    async def general_update(self, recorder):
+    async def build_memory_from_data(self, recorder):
         INGESTED_BATCHES.append(1)
 
-    async def general_retrieve(self, recorder):
+    async def retrieve_memory_for_query(self, recorder):
         return {}
 
 

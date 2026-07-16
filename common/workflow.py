@@ -489,7 +489,7 @@ class BaseWorkflow(ABC):
         # Phase-2 error tally → recorder.failure_info. The sanity gate
         # (forge/orchestrator.py::_collect_sanity_errors) fails a harness
         # whose per_user entries carry a non-empty failure_info, so a
-        # broken general_retrieve is caught at sanity size instead of
+        # broken retrieve_memory_for_query is caught at sanity size instead of
         # silently burning a full stage1 eval on all-zero steps.
         n_retrieve_err = 0
         n_answer_err = 0
@@ -500,7 +500,7 @@ class BaseWorkflow(ABC):
             retrieve_recorder.init = self.build_query_recorder_init(init_data, qa)
 
             try:
-                retrieved = await memo.general_retrieve(retrieve_recorder)
+                retrieved = await memo.retrieve_memory_for_query(retrieve_recorder)
             except Exception as exc:
                 # Per-QA failure isolation: log a score=0 step and continue
                 # to the next QA — a single bad query must not silently
@@ -509,7 +509,7 @@ class BaseWorkflow(ABC):
                 n_retrieve_err += 1
                 first_err = first_err or f"{type(exc).__name__}: {str(exc)[:200]}"
                 log.warning(
-                    f"general_retrieve failed for {user_tag} on QA "
+                    f"retrieve_memory_for_query failed for {user_tag} on QA "
                     f"{len(recorder.steps)+1}/{len(qa_pairs)} "
                     f"({type(exc).__name__}: {str(exc)[:120]}) "
                     f"— recording score=0 and continuing"
@@ -544,7 +544,7 @@ class BaseWorkflow(ABC):
 
             full_prompt = f"{system_msg}\n\n{user_msg}" if system_msg else user_msg
             try:
-                answer = await memo.general_answer(retrieve_recorder, retrieved, full_prompt)
+                answer = await memo.use_memory_to_answer(retrieve_recorder, retrieved, full_prompt)
                 if answer is None:
                     agent.messages = [{"role": "system", "content": system_msg}]
                     answer = await agent.ask(
@@ -613,7 +613,7 @@ class BaseWorkflow(ABC):
     # ---- Phase 1 dispatch ----
 
     async def _phase1_update(self, memo: MemoStructure, init_data: Any) -> None:
-        """Hand the whole visible `init_data` to the memo in ONE general_update
+        """Hand the whole visible `init_data` to the memo in ONE build_memory_from_data
         call. Ingestion granularity is the memo's own choice (it may use
         self.chunked(...)); the workflow no longer chunks."""
         if not isinstance(init_data, list):
@@ -623,13 +623,13 @@ class BaseWorkflow(ABC):
             )
         # NOTE: max_logs is NOT segment-aware — it trims THIS call's init_data, so for DynamicMem's per-checkpoint delta it would trim each delta, not the total visible pool (latent: defaults to None, unused in forge).
         items = init_data[-self.max_logs:] if self.max_logs else init_data
-        log.info(f"[Phase 1] general_update ({len(items)} {self._phase1_item_label})")
+        log.info(f"[Phase 1] build_memory_from_data ({len(items)} {self._phase1_item_label})")
         r = self.recorder_class()
         await self.phase1_log_init(r, items)
         try:
-            await memo.general_update(r)
+            await memo.build_memory_from_data(r)
         except Exception as exc:
-            log.warning(f"general_update failed: {exc}")
+            log.warning(f"build_memory_from_data failed: {exc}")
             raise RuntimeError(f"[Phase1_Update] {type(exc).__name__}: {exc}") from exc
 
     # ---- Full-trace persistence (no sampling) ----

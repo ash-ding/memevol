@@ -5,13 +5,13 @@ pipeline (OpenIE → NER + triples → knowledge graph + entity embeddings →
 personalized PageRank retrieval) as a `MemoStructure` — a fixed,
 non-evolved memory architecture:
 
-- **Phase 1 (`general_update`)**: converts the ingested unit's data into
+- **Phase 1 (`build_memory_from_data`)**: converts the ingested unit's data into
   text passages (dynamicmem: app_logs; locomo: conversation turns;
   longmemeval: session messages — dispatch on `recorder.init` keys) and
   indexes them into a per-user HippoRAG graph. `HippoRAG.index()` is
   additive/dedup-by-hash, so DynamicMem's per-checkpoint segments accumulate
   correctly across calls instead of re-indexing from scratch each time.
-- **Phase 2 (`general_retrieve`)**: fact retrieval → reranking →
+- **Phase 2 (`retrieve_memory_for_query`)**: fact retrieval → reranking →
   personalized PageRank → top-k passages, returned as `{"passages": [...]}`.
   The **shared QA agent** (not HippoRAG's own `rag_qa` reader) answers from
   those passages, and the per-dataset workflow judges/scores identically to
@@ -26,7 +26,7 @@ not a compat-shim script. The old single-dataset `eval_hipporag2.py` was
 replaced by `run.py` (2026-07); numbers from that script are NOT comparable
 to `run.py`'s DynamicMem output (different protocol).
 
-Per the standardized `MemoStructure` contract, `general_update` is called
+Per the standardized `MemoStructure` contract, `build_memory_from_data` is called
 ONCE per build call with the whole newly-visible data already in
 `recorder.init` — ingestion granularity is the memo's own choice
 (`self.chunked(...)` / `self._update_type` / `self._n_chunks`); `HippoRAGMemo`

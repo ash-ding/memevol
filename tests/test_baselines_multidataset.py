@@ -28,7 +28,7 @@ def test_alma_still_imports_shared_registry():
 
 
 def test_base_workflow_default_answer_call_signature():
-    """When memo.general_answer defers (returns None, the default), the
+    """When memo.use_memory_to_answer defers (returns None, the default), the
     answer step in run_single_user MUST set agent.messages=[{system}] then
     call agent.ask(user_msg, with_history=False, reasoning_effort=...) —
     exact byte-identity of the pre-refactor _answer_query default, now
@@ -47,8 +47,8 @@ def test_base_workflow_default_answer_call_signature():
         return "ANSWER"
 
     class _Memo(MemoStructure):
-        async def general_retrieve(self, r): return {}
-        # general_answer NOT overridden -> defaults to None (defers to agent)
+        async def retrieve_memory_for_query(self, r): return {}
+        # use_memory_to_answer NOT overridden -> defaults to None (defers to agent)
 
     class _Rec:
         def __init__(self):
@@ -93,7 +93,7 @@ def test_base_workflow_default_answer_call_signature():
 
 
 def test_dynamicmem_default_answer_call_signature():
-    """When memo.general_answer defers, DynamicMem's answer step in
+    """When memo.use_memory_to_answer defers, DynamicMem's answer step in
     _run_item MUST call agent.ask(prompt, reasoning_effort=...) with NO
     with_history kwarg and NO system message set — exact byte-identity of
     the pre-refactor _answer_query default, now inlined in _run_item."""
@@ -115,8 +115,8 @@ def test_dynamicmem_default_answer_call_signature():
         return 1.0, "fake-judge", raw_answer, {}
 
     class _Memo(MemoStructure):
-        async def general_retrieve(self, r): return {}
-        # general_answer NOT overridden -> defaults to None (defers to agent)
+        async def retrieve_memory_for_query(self, r): return {}
+        # use_memory_to_answer NOT overridden -> defaults to None (defers to agent)
 
     item = {
         "task_family": "apply_service",   # != TASK_FAMILY_STATE_COMPLETION -> Task C branch
@@ -192,8 +192,8 @@ def test_make_memo_class_no_arg_instantiable():
     from baselines.eval_common import make_memo_class
     from common.harness_base import MemoStructure
     class Base(MemoStructure):
-        async def general_update(self, r): return None
-        async def general_retrieve(self, r): return {"cfg": self._cfg}
+        async def build_memory_from_data(self, r): return None
+        async def retrieve_memory_for_query(self, r): return {"cfg": self._cfg}
     Cls = make_memo_class(Base, model="x", k=3)
     inst = Cls()  # workflow instantiates with NO args
     assert inst._cfg == {"model": "x", "k": 3}
@@ -220,7 +220,7 @@ def test_hipporag_memo_passage_conversion():
 
 
 def test_hipporag_memo_retrieve_returns_passages(monkeypatch=None):
-    """general_retrieve returns retrieved passages as the context dict; the
+    """retrieve_memory_for_query returns retrieved passages as the context dict; the
     shared QA agent (not HippoRAG's own reader) answers."""
     import asyncio
     from baselines.hipporag2.memo import HippoRAGMemo
@@ -241,9 +241,9 @@ def test_hipporag_memo_retrieve_returns_passages(monkeypatch=None):
                 "session_1": [{"speaker": "A", "dia_id": "D1:1", "text": "hi"}],
                 "session_1_date_time": "d"}}
     loop = asyncio.new_event_loop()
-    loop.run_until_complete(memo.general_update(_Rec()))
+    loop.run_until_complete(memo.build_memory_from_data(_Rec()))
     _Rec.init = {"conversation": _Rec.init["conversation"], "query": "what did A say?"}
-    out = loop.run_until_complete(memo.general_retrieve(_Rec()))
+    out = loop.run_until_complete(memo.retrieve_memory_for_query(_Rec()))
     assert "passages" in out and out["passages"]
 
 
@@ -262,8 +262,8 @@ def test_cc_general_answer_runs_cc():
         init = {"sessions": [{"session_id": "s", "date": "d",
                 "messages": [{"role": "user", "content": "hi"}]}], "query": "q?"}
     loop = asyncio.new_event_loop()
-    loop.run_until_complete(memo.general_update(_Rec()))   # writes context to tmp_dir
-    ans = loop.run_until_complete(memo.general_answer(_Rec(), {}, "FORMATTED PROMPT"))
+    loop.run_until_complete(memo.build_memory_from_data(_Rec()))   # writes context to tmp_dir
+    ans = loop.run_until_complete(memo.use_memory_to_answer(_Rec(), {}, "FORMATTED PROMPT"))
     assert ans == "CCANS:FORMATTED PROMPT"
 
 
@@ -280,8 +280,8 @@ def test_cc_memo_retrieve_empty_and_run_cc_answers():
         init = {"sessions": [{"session_id": "s", "date": "d",
                 "messages": [{"role": "user", "content": "hi"}]}], "query": "q?"}
     loop = asyncio.new_event_loop()
-    loop.run_until_complete(memo.general_update(_Rec()))
-    out = loop.run_until_complete(memo.general_retrieve(_Rec()))
+    loop.run_until_complete(memo.build_memory_from_data(_Rec()))
+    out = loop.run_until_complete(memo.retrieve_memory_for_query(_Rec()))
     assert out == {}                                   # cc injects no memory; answers via files
     ans, _u, _t = loop.run_until_complete(memo._run_cc("FORMATTED PROMPT"))
     assert ans == "STUB:FORMATTED PROMPT"
@@ -304,8 +304,8 @@ def test_run_baseline_locomo_end_to_end():
       - common.llm.Agent.ask (the shared QA agent) -> a canned answer
       - LoCoMoWorkflow.judge (the judge)           -> a forced score=1
 
-    A stub MemoStructure supplies general_retrieve's canned passages;
-    general_update is a no-op (Phase 1 ingestion still runs for real, it
+    A stub MemoStructure supplies retrieve_memory_for_query's canned passages;
+    build_memory_from_data is a no-op (Phase 1 ingestion still runs for real, it
     just has nothing to persist).
     """
     import asyncio
@@ -320,10 +320,10 @@ def test_run_baseline_locomo_end_to_end():
     from datasets.locomo.workflow import LoCoMoWorkflow
 
     class _StubMemo(MemoStructure):
-        async def general_update(self, r):
+        async def build_memory_from_data(self, r):
             return None
 
-        async def general_retrieve(self, r):
+        async def retrieve_memory_for_query(self, r):
             return {"passages": ["Amy told Bob she adopted a new puppy."]}
 
     async def _fake_ask(self, user_input, **kw):

@@ -1,7 +1,7 @@
 """Abstract base classes for DynamicMem-style memory harnesses.
 
 `Basic_Recorder` — per-user state container used by all benchmarks and
-passed into `general_update` / `general_retrieve`. Benchmark-specific
+passed into `build_memory_from_data` / `retrieve_memory_for_query`. Benchmark-specific
 recorders (e.g. `DynamicMemRecorder`, `LoCoMoRecorder`) inherit from it.
 
 `MemoStructure` / `Sub_memo_layer` — the two-phase contract every harness
@@ -68,21 +68,21 @@ class MemoStructure(ABC):
 
     # -------- Standardized eval hooks (all OPTIONAL overrides) --------
 
-    async def general_update(self, recorder: Basic_Recorder) -> None:
+    async def build_memory_from_data(self, recorder: Basic_Recorder) -> None:
         """BUILD (Phase 1). `recorder.init` holds the data newly visible for
         THIS call; accumulate state across calls and choose your own ingestion
         granularity (e.g. `for chunk in self.chunked(recorder.init[...]): ...`).
         Default: no-op (build no memory)."""
         return None
 
-    async def general_retrieve(self, recorder: Basic_Recorder) -> Dict:
+    async def retrieve_memory_for_query(self, recorder: Basic_Recorder) -> Dict:
         """RETRIEVE (Phase 2). `recorder.init` holds the query (+ context).
         Return retrieved context; `{"inline_memory_blocks": [str,...]}` controls
         inline rendering. MUST be read-only w.r.t. memory. Default: `{}`."""
         return {}
 
-    async def general_answer(self, recorder: Basic_Recorder, retrieved: Dict,
-                             prompt: str) -> Optional[str]:
+    async def use_memory_to_answer(self, recorder: Basic_Recorder, retrieved: Dict,
+                                    prompt: str) -> Optional[str]:
         """ANSWER (optional). Return the answer string, or None to defer to the
         benchmark's standard QA agent (the default). `prompt` is the workflow's
         fully-formatted answer prompt. Default: None."""

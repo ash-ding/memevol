@@ -70,7 +70,7 @@ llm:
     region: us-east5
     credentials: null
 
-# Phase-1 chunking for general_update (all_at_once | chunked | sequential).
+# Phase-1 chunking for build_memory_from_data (all_at_once | chunked | sequential).
 # Use the SAME value as the search run that produced the harness — it is part
 # of the memory-cache identity and of what the harness was selected under.
 update_type: all_at_once

@@ -14,7 +14,7 @@ historical harnesses in old workspaces that still import
 
 The contract (unchanged from common):
 
-  Phase 1 — `general_update(recorder)` is called ONCE per build call with
+  Phase 1 — `build_memory_from_data(recorder)` is called ONCE per build call with
   `recorder.init` holding the data newly visible for that call (see the
   per-dataset shapes in the proposer system prompt). Build/extend your memory;
   choose your own ingestion granularity (use `self.chunked(...)` for chunking).
@@ -22,7 +22,7 @@ The contract (unchanged from common):
   per checkpoint with that checkpoint's new app-log segment, interleaved with
   Phase-2 queries — accumulate across calls; never assume you have the full stream.
 
-  Phase 2 — `general_retrieve(recorder)` is called once per query with
+  Phase 2 — `retrieve_memory_for_query(recorder)` is called once per query with
   `recorder.init` holding the query (+ benchmark-specific context). Return a
   Dict of retrieved context for the QA agent. MUST be read-only with respect
   to memory state (queries must not pollute memory — checkpoint isolation
@@ -44,12 +44,12 @@ from common.harness_base import MemoStructure as _CommonMemoStructure
 class MemoStructure(_CommonMemoStructure):
     """Evolution-target base class for forge harnesses.
 
-    Inherit from this and implement build (`general_update`) and retrieve
-    (`general_retrieve`):
+    Inherit from this and implement build (`build_memory_from_data`) and retrieve
+    (`retrieve_memory_for_query`):
 
         class MyHarness(MemoStructure):
-            async def general_update(self, recorder) -> None: ...
-            async def general_retrieve(self, recorder) -> dict: ...
+            async def build_memory_from_data(self, recorder) -> None: ...
+            async def retrieve_memory_for_query(self, recorder) -> dict: ...
 
     MEMORY CACHING (staged evaluation): the evaluator snapshots your built
     memory after Phase 1 (per checkpoint for DynamicMem) and reuses it at

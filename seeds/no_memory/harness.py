@@ -12,8 +12,8 @@ from typing import Dict
 from forge.harness_base import MemoStructure
 
 class NoMemoryHarness(MemoStructure):
-    async def general_update(self, recorder) -> None:
+    async def build_memory_from_data(self, recorder) -> None:
         return None
 
-    async def general_retrieve(self, recorder) -> Dict:
+    async def retrieve_memory_for_query(self, recorder) -> Dict:
         return {}

@@ -6,7 +6,7 @@ checkpoints has an `as_of` cutoff; memory at cp_i reflects exactly
 app_logs[:log_index+1], and cp_i's task items are answered against that
 state before the next segment is ingested. `run_single_user` is overridden
 accordingly; each checkpoint's new app-log segment is handed to
-general_update in one call — the memo owns ingestion granularity.
+build_memory_from_data in one call — the memo owns ingestion granularity.
 
 Two task families per checkpoint (both scored 0.0-1.0 by the official
 holistic Core+Detail judge — see datasets/dynamicmem/tce_prompts.py):
@@ -209,10 +209,10 @@ class DynamicMemWorkflow(BaseWorkflow):
         retrieve_recorder = self.recorder_class()
         retrieve_recorder.init = self.build_query_recorder_init(visible_logs, item)
         try:
-            retrieved = await memo.general_retrieve(retrieve_recorder)
+            retrieved = await memo.retrieve_memory_for_query(retrieve_recorder)
         except Exception as exc:
             log.warning(
-                f"general_retrieve failed for {recorder.user_id} on "
+                f"retrieve_memory_for_query failed for {recorder.user_id} on "
                 f"{item['checkpoint_id']}/{item['state_key']} "
                 f"({type(exc).__name__}: {str(exc)[:120]}) — recording score=0"
             )
@@ -234,7 +234,7 @@ class DynamicMemWorkflow(BaseWorkflow):
         agent = Agent(system_prompt="", model=self.model)
         answer_err: Optional[Tuple[str, str]] = None
         try:
-            ans = await memo.general_answer(retrieve_recorder, retrieved, prompt)
+            ans = await memo.use_memory_to_answer(retrieve_recorder, retrieved, prompt)
             if ans is None:
                 ans = await agent.ask(prompt, reasoning_effort=self.reasoning_effort)
             raw_answer = ans

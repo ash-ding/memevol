@@ -4,7 +4,7 @@
 design entirely: Phase 1 stashes the currently-visible user data to a
 per-user temp directory; Phase 2 runs Claude Code with file tools
 (Read/Grep/Glob) against that directory and answers the question directly.
-`CCMemo.general_answer` (the shared workflow's standardized answer hook)
+`CCMemo.use_memory_to_answer` (the shared workflow's standardized answer hook)
 judges cc's own tool-using answer verbatim on the EXACT formatted prompt the
 main method would give its own QA agent — this is what makes cc emit each
 benchmark's required output format (e.g. DynamicMem TCE's "Return JSON
@@ -18,7 +18,7 @@ not a compat-shim script. The old single-dataset `eval_cc.py` was replaced
 by `run.py` (2026-07); numbers from that script are NOT comparable to
 `run.py`'s DynamicMem output (different protocol).
 
-Per the standardized `MemoStructure` contract, `general_update` is called
+Per the standardized `MemoStructure` contract, `build_memory_from_data` is called
 ONCE per build call with the whole newly-visible data already in
 `recorder.init` — ingestion granularity is the memo's own choice
 (`self.chunked(...)` / `self._update_type` / `self._n_chunks`); `CCMemo`
@@ -54,7 +54,7 @@ baselines/venv/bin/python baselines/cc/run.py \
   30).
 - `--judge_model` — the judge model. Also passed as `qa_model` to
   `run_baseline` for API-compatibility (`BaseWorkflow.__init__` requires
-  one), but it is never actually invoked to answer: `CCMemo.general_answer`
+  one), but it is never actually invoked to answer: `CCMemo.use_memory_to_answer`
   answers before the shared QA agent would be reached.
 - `--max_sample_concurrent` — per-eval user/sample concurrency (default 3).
 

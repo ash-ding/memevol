@@ -101,7 +101,7 @@ def _load_harness_class(harness_dir: Path) -> Type[MemoStructure]:
     raise ImportError(
         f"No MemoStructure subclass found in {harness_py}. Define a class "
         f"that inherits from `forge.harness_base.MemoStructure` and "
-        f"implements both `general_update` and `general_retrieve`."
+        f"implements both `build_memory_from_data` and `retrieve_memory_for_query`."
     )
 
 

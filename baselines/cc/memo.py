@@ -1,10 +1,10 @@
-"""cc as a native-answer MemoStructure: Phase 1 (`general_update`) stashes the
-currently-visible data into a per-user temp dir. Phase 2 (`general_retrieve`)
+"""cc as a native-answer MemoStructure: Phase 1 (`build_memory_from_data`) stashes the
+currently-visible data into a per-user temp dir. Phase 2 (`retrieve_memory_for_query`)
 re-stashes the CURRENT visible data (the workflow may have grown the visible
 prefix, e.g. DynamicMem checkpoints) and returns `{}` — cc injects NO memory
 into the QA prompt; it answers by reading the temp-dir file itself via tools.
 
-The actual answering happens in `CCMemo.general_answer`, which the workflow's
+The actual answering happens in `CCMemo.use_memory_to_answer`, which the workflow's
 shared answer step calls first (falling back to the standard QA agent only
 when a memo returns None) — cc runs Claude Code (with Read/Grep/Glob tool
 access to the memo's temp dir) on the EXACT formatted prompt the main method
@@ -207,28 +207,28 @@ class CCMemo(MemoStructure):
         with open(os.path.join(self._tmp_dir, fname), "w", encoding="utf-8") as f:
             _json.dump(payload, f, ensure_ascii=False)
 
-    async def general_update(self, recorder) -> None:
+    async def build_memory_from_data(self, recorder) -> None:
         # stash the visible data (accumulating prefix for DynamicMem checkpoints)
         self._write_context(recorder.init, getattr(recorder, "user_id", "u"))
 
-    async def general_retrieve(self, recorder) -> dict:
+    async def retrieve_memory_for_query(self, recorder) -> dict:
         # ensure the CURRENT visible data is on disk (Phase-2 init carries the
         # prefix); inject NO memory into the QA prompt — cc reads via file
-        # tools (see general_answer, which calls _run_cc with the workflow's
+        # tools (see use_memory_to_answer, which calls _run_cc with the workflow's
         # own formatted prompt).
         self._write_context(recorder.init, getattr(recorder, "user_id", "u"))
         return {}
 
-    async def general_answer(self, recorder, retrieved, prompt) -> str:
+    async def use_memory_to_answer(self, recorder, retrieved, prompt) -> str:
         """cc answers the workflow's formatted prompt via Claude Code (native
-        agentic answer). self._tmp_dir was written by general_update/retrieve."""
+        agentic answer). self._tmp_dir was written by build_memory_from_data/retrieve."""
         answer, _usage, _trace = await self._run_cc(prompt)
         return answer
 
     async def _run_cc(self, question: str) -> tuple:
         """Run Claude Code on `question` (the workflow's exact formatted
         prompt) with tool access to this user's temp dir. Requires
-        general_update/general_retrieve to have already run at least once
+        build_memory_from_data/retrieve_memory_for_query to have already run at least once
         (sets self._tmp_dir + self._key)."""
         ask = self._cfg.get("_ask_cc", ask_cc)
         return await ask(question, self._tmp_dir, self._cfg["model"],

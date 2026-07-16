@@ -79,7 +79,7 @@ class DynamicMemRecorder(Basic_Recorder):
     init:   set by the workflow.
         {
             'app_logs':     List[dict],   # entries from app_log_large.json
-            'query':        str,          # injected before each general_retrieve call
+            'query':        str,          # injected before each retrieve_memory_for_query call
         }
         Each app_log entry: app_log_id, timestamp, app_name, api_name, request, response.
 
@@ -105,7 +105,7 @@ class DynamicMemRecorder(Basic_Recorder):
             "description": (
                 "App logs visible to the memory system. "
                 "'app_logs' is a list of app-log dicts (app_log_large.json). "
-                "'query' is injected before each general_retrieve call."
+                "'query' is injected before each retrieve_memory_for_query call."
             ),
             "type": "Dict[str, Any]",
             "example": {

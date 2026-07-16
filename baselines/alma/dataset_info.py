@@ -30,15 +30,15 @@ Your memory structure aims to help a downstream QA agent accurately answer quest
     "recorder_class_name": "DynamicMemRecorder",
     "gen_protocol": """    == DynamicMem Two-Phase Protocol ==
 
-    Phase 1 — general_update(recorder):
+    Phase 1 — build_memory_from_data(recorder):
       Called N times to build user memory from app logs.
       recorder.init['app_logs']     = List[dict]  — current batch of app log entries
       Each app_log entry has: app_log_id, timestamp, app_name, api_name, request, response.
       Expected behaviour: extract and store user habits, preferences, and behavioural patterns into internal DB.
-      NOTE: general_update may be called multiple times (once per chunk of logs); your internal DB must be
+      NOTE: build_memory_from_data may be called multiple times (once per chunk of logs); your internal DB must be
       persistent across calls (store it as self.* attributes on the MemoStructure instance).
 
-    Phase 2 — general_retrieve(recorder):
+    Phase 2 — retrieve_memory_for_query(recorder):
       Called once per QA question (after Phase 1 is complete).
       recorder.init['query']        = str          — current natural-language question
       recorder.init['app_logs']     = List[dict]   — all app logs (reference only)
@@ -49,9 +49,9 @@ Your memory structure aims to help a downstream QA agent accurately answer quest
       It does NOT have access to app_logs.
     """,  # lines 423-441
     "code_usage": """Your memory structure will be used in the two-phase DynamicMem workflow:
-    - `general_update(recorder)`: called during Phase 1 (once or multiple times) to ingest app logs
+    - `build_memory_from_data(recorder)`: called during Phase 1 (once or multiple times) to ingest app logs
       and build a personalised user profile in the internal database.
-    - `general_retrieve(recorder)`: called during Phase 2 (once per QA question) to retrieve
+    - `retrieve_memory_for_query(recorder)`: called during Phase 2 (once per QA question) to retrieve
       relevant facts from the stored profile. The returned Dict is given directly to the answering agent.
     IMPORTANT: each user gets a fresh MemoStructure() instance — there is NO cross-user memory sharing.
     The same instance persists across all Phase 1 + Phase 2 calls for one user.""",  # lines 468-474
@@ -66,8 +66,8 @@ Modify or create code that fully satisfies the following design goals:
 
 2. **General Retrieve/Update Orchestration:**
    - Create a subclass of `MemoStructure` that orchestrates all layers.
-   - `general_update()` should propagate app-log information to relevant layers.
-   - `general_retrieve()` should chain layer outputs intelligently for the given query.
+   - `build_memory_from_data()` should propagate app-log information to relevant layers.
+   - `retrieve_memory_for_query()` should chain layer outputs intelligently for the given query.
      Output from one layer can become input to the next.
 
 3. **Personalisation and Temporal Precision:**
@@ -88,7 +88,7 @@ Modify or create code that fully satisfies the following design goals:
 
 6. **Code Quality:**
    - Output clean, runnable Python code following PEP8.
-   - `general_retrieve()` and `general_update()` accept a `Basic_Recorder` and orchestrate end-to-end.
+   - `retrieve_memory_for_query()` and `build_memory_from_data()` accept a `Basic_Recorder` and orchestrate end-to-end.
    - Initialize all layers in `MemoStructure.__init__`.
    - Avoid placeholders like `pass` or `# TODO`.
    - Do not overuse defensive programming; raise exceptions for unexpected conditions.
@@ -100,23 +100,23 @@ and retrieves the right facts for any personalisation question.
 - Think creatively about data flow — outputs of one layer can feed into the next.
 - Provide **only the final rewritten code**, no explanations.""",  # lines 490-533
     "reflection_protocol": """    == DynamicMem Two-Phase Protocol ==
-    Phase 1 — general_update(recorder):
+    Phase 1 — build_memory_from_data(recorder):
       recorder.init['app_logs']     = List[dict]  — current batch of app log entries
-    Phase 2 — general_retrieve(recorder):
+    Phase 2 — retrieve_memory_for_query(recorder):
       recorder.init['query']        = str          — current question
       recorder.init['app_logs']     = List[dict]   — all logs (reference)
       Must return a Dict for the downstream agent.
       NOTE: the QA agent only sees the returned Dict + question, NOT app_logs.
     """,  # lines 567-574
     "reflection_code_usage": """Your memory structure will be used in the DynamicMem two-phase workflow:
-    - `general_update(recorder)`: Phase 1 — ingest app logs and build user profile.
-    - `general_retrieve(recorder)`: Phase 2 — retrieve facts relevant to the query; return a Dict.
+    - `build_memory_from_data(recorder)`: Phase 1 — ingest app logs and build user profile.
+    - `retrieve_memory_for_query(recorder)`: Phase 2 — retrieve facts relevant to the query; return a Dict.
     IMPORTANT: each user gets a fresh MemoStructure() instance — no cross-user sharing.""",  # lines 590-593
     "analysis_protocol": """    - Two-phase protocol:
-        - `general_update(recorder)`: called during Phase 1 with chunks of app logs.
+        - `build_memory_from_data(recorder)`: called during Phase 1 with chunks of app logs.
           `recorder.init['app_logs']` = current batch of log entries.
           Expected behaviour: extract and store user habits, preferences, and behavioural patterns.
-        - `general_retrieve(recorder)`: called during Phase 2 before each QA question.
+        - `retrieve_memory_for_query(recorder)`: called during Phase 2 before each QA question.
           `recorder.init['query']` = current question; `recorder.init['app_logs']` = all logs (reference).
           Returns Dict passed to the answering agent.
           Expected behaviour: retrieve facts relevant to the query from the stored memory.
@@ -125,7 +125,7 @@ and retrieves the right facts for any personalisation question.
     "analysis_shape_a": """    **Shape A — sampled QA pair (the usual case):**
         - `user_id`: which user this QA pair belongs to (e.g. "user_001"). Examples are sampled from one randomly-chosen valid user, binned by judge score.
         - `query`: the natural-language question asked
-        - `retrieved_memory`: the dict returned by `general_retrieve` for this question
+        - `retrieved_memory`: the dict returned by `retrieve_memory_for_query` for this question
         - `predicted`: the agent's answer
         - `reference`: the ground-truth answer
         - `score`: float 0.0–1.0, rated by the official DynamicMem TCE holistic judge (per-field 0.8·core_correct + 0.2·detail_quality/2, averaged across the item's fields; missing fields score 0). Interpretation:
@@ -159,7 +159,7 @@ _LOCOMO = {
     "recorder_class_name": "LoCoMoRecorder",
     "gen_protocol": """    == LoCoMo Two-Phase Protocol ==
 
-    Phase 1 — general_update(recorder):
+    Phase 1 — build_memory_from_data(recorder):
       Called N times to build memory from the conversation.
       recorder.init['conversation'] = dict — a (subset of the) multi-session conversation. It has keys:
         speaker_a (str), speaker_b (str),
@@ -168,10 +168,10 @@ _LOCOMO = {
         Each turn_dict has: speaker (str), dia_id (str, e.g. "D1:3"), text (str).
       (Only `conversation` is provided — there are NO summaries, observations, or event_summary.)
       Expected behaviour: extract and store conversational facts, their speaker, and their session date into an internal DB.
-      NOTE: general_update may be called multiple times (once per chunk of sessions); your internal DB must be
+      NOTE: build_memory_from_data may be called multiple times (once per chunk of sessions); your internal DB must be
       persistent across calls (store it as self.* attributes on the MemoStructure instance).
 
-    Phase 2 — general_retrieve(recorder):
+    Phase 2 — retrieve_memory_for_query(recorder):
       Called once per QA question (after Phase 1 is complete).
       recorder.init['query']        = str   — current natural-language question
       recorder.init['conversation'] = dict  — the full conversation (reference only)
@@ -181,9 +181,9 @@ _LOCOMO = {
       IMPORTANT: the downstream QA agent ONLY sees the returned Dict and the question. It does NOT have access to the conversation.
     """,
     "code_usage": """Your memory structure will be used in the two-phase LoCoMo workflow:
-    - `general_update(recorder)`: called during Phase 1 (once or multiple times) to ingest conversation sessions
+    - `build_memory_from_data(recorder)`: called during Phase 1 (once or multiple times) to ingest conversation sessions
       and build a structured memory of the dialogue.
-    - `general_retrieve(recorder)`: called during Phase 2 (once per QA question) to retrieve
+    - `retrieve_memory_for_query(recorder)`: called during Phase 2 (once per QA question) to retrieve
       relevant turns/facts. The returned Dict is given directly to the answering agent.
     IMPORTANT: each conversation gets a fresh MemoStructure() instance — there is NO cross-conversation memory sharing.
     The same instance persists across all Phase 1 + Phase 2 calls for one conversation.""",
@@ -198,8 +198,8 @@ Modify or create code that fully satisfies the following design goals:
 
 2. **General Retrieve/Update Orchestration:**
    - Create a subclass of `MemoStructure` that orchestrates all layers.
-   - `general_update()` should propagate conversation-turn information to relevant layers.
-   - `general_retrieve()` should chain layer outputs intelligently for the given query.
+   - `build_memory_from_data()` should propagate conversation-turn information to relevant layers.
+   - `retrieve_memory_for_query()` should chain layer outputs intelligently for the given query.
      Output from one layer can become input to the next.
 
 3. **Temporal Grounding and Knowledge Updates:**
@@ -221,7 +221,7 @@ Modify or create code that fully satisfies the following design goals:
 
 6. **Code Quality:**
    - Output clean, runnable Python code following PEP8.
-   - `general_retrieve()` and `general_update()` accept a `Basic_Recorder` and orchestrate end-to-end.
+   - `retrieve_memory_for_query()` and `build_memory_from_data()` accept a `Basic_Recorder` and orchestrate end-to-end.
    - Initialize all layers in `MemoStructure.__init__`.
    - Avoid placeholders like `pass` or `# TODO`.
    - Do not overuse defensive programming; raise exceptions for unexpected conditions.
@@ -233,23 +233,23 @@ and retrieves the right turns for any question about it.
 - Think creatively about data flow — outputs of one layer can feed into the next.
 - Provide **only the final rewritten code**, no explanations.""",
     "reflection_protocol": """    == LoCoMo Two-Phase Protocol ==
-    Phase 1 — general_update(recorder):
+    Phase 1 — build_memory_from_data(recorder):
       recorder.init['conversation'] = dict  — a conversation subset (speaker_a/b, session_* turn lists, session_*_date_time)
-    Phase 2 — general_retrieve(recorder):
+    Phase 2 — retrieve_memory_for_query(recorder):
       recorder.init['query']        = str   — current question
       recorder.init['conversation'] = dict  — full conversation (reference)
       Must return a Dict for the downstream agent.
       NOTE: the QA agent only sees the returned Dict + question, NOT the conversation.
     """,
     "reflection_code_usage": """Your memory structure will be used in the LoCoMo two-phase workflow:
-    - `general_update(recorder)`: Phase 1 — ingest conversation sessions and build memory.
-    - `general_retrieve(recorder)`: Phase 2 — retrieve turns relevant to the query; return a Dict.
+    - `build_memory_from_data(recorder)`: Phase 1 — ingest conversation sessions and build memory.
+    - `retrieve_memory_for_query(recorder)`: Phase 2 — retrieve turns relevant to the query; return a Dict.
     IMPORTANT: each conversation gets a fresh MemoStructure() instance — no cross-conversation sharing.""",
     "analysis_protocol": """    - Two-phase protocol:
-        - `general_update(recorder)`: called during Phase 1 with chunks of conversation sessions.
+        - `build_memory_from_data(recorder)`: called during Phase 1 with chunks of conversation sessions.
           `recorder.init['conversation']` = current subset of the multi-session conversation.
           Expected behaviour: extract and store conversational facts, speakers, and session dates.
-        - `general_retrieve(recorder)`: called during Phase 2 before each QA question.
+        - `retrieve_memory_for_query(recorder)`: called during Phase 2 before each QA question.
           `recorder.init['query']` = current question; `recorder.init['conversation']` = full conversation (reference).
           Returns Dict passed to the answering agent.
           Expected behaviour: retrieve turns relevant to the query, preferring the latest state.
@@ -258,7 +258,7 @@ and retrieves the right turns for any question about it.
     "analysis_shape_a": """    **Shape A — sampled QA pair (the usual case):**
         - `user_id`: which conversation this QA pair belongs to. Examples are sampled from one randomly-chosen valid conversation, binned by judge score.
         - `query`: the natural-language question asked
-        - `retrieved_memory`: the dict returned by `general_retrieve` for this question
+        - `retrieved_memory`: the dict returned by `retrieve_memory_for_query` for this question
         - `predicted`: the agent's answer
         - `reference`: the ground-truth answer
         - `score`: 0 or 1, from the LoCoMo binary judge (1 = correct, 0 = incorrect).
@@ -288,17 +288,17 @@ _LONGMEMEVAL_COMMON = {
     "recorder_class_name": "LongMemEvalRecorder",
     "gen_protocol": """    == LongMemEval Two-Phase Protocol ==
 
-    Phase 1 — general_update(recorder):
+    Phase 1 — build_memory_from_data(recorder):
       Called N times to build memory from the session haystack.
       recorder.init['sessions'] = List[dict] — current batch of chat sessions. Each session dict has:
         session_id (str, e.g. "sharegpt_xxx" distractor or "answer_xxx" gold — do NOT key off this prefix),
         date (str, e.g. "2023/05/20 (Sat) 02:21"),
         messages (List[{"role": "user"|"assistant", "content": str}]).
       Expected behaviour: index the informative content of each session (with its date) into an internal DB.
-      NOTE: general_update may be called multiple times (once per chunk of sessions); your internal DB must be
+      NOTE: build_memory_from_data may be called multiple times (once per chunk of sessions); your internal DB must be
       persistent across calls (store it as self.* attributes on the MemoStructure instance).
 
-    Phase 2 — general_retrieve(recorder):
+    Phase 2 — retrieve_memory_for_query(recorder):
       Called once per QA question (after Phase 1 is complete).
       recorder.init['query']         = str   — current natural-language question
       recorder.init['sessions']      = List[dict] — all sessions (reference only)
@@ -309,9 +309,9 @@ _LONGMEMEVAL_COMMON = {
       IMPORTANT: the downstream QA agent ONLY sees the returned Dict and the question (plus its date). It does NOT have access to the sessions.
     """,
     "code_usage": """Your memory structure will be used in the two-phase LongMemEval workflow:
-    - `general_update(recorder)`: called during Phase 1 (once or multiple times) to ingest chat sessions
+    - `build_memory_from_data(recorder)`: called during Phase 1 (once or multiple times) to ingest chat sessions
       and build a searchable memory of the haystack.
-    - `general_retrieve(recorder)`: called during Phase 2 (once per question) to retrieve
+    - `retrieve_memory_for_query(recorder)`: called during Phase 2 (once per question) to retrieve
       the relevant sessions/messages. The returned Dict is given directly to the answering agent.
     IMPORTANT: each user gets a fresh MemoStructure() instance — there is NO cross-user memory sharing.
     The same instance persists across all Phase 1 + Phase 2 calls for one user.""",
@@ -326,8 +326,8 @@ Modify or create code that fully satisfies the following design goals:
 
 2. **General Retrieve/Update Orchestration:**
    - Create a subclass of `MemoStructure` that orchestrates all layers.
-   - `general_update()` should propagate session content to relevant layers.
-   - `general_retrieve()` should chain layer outputs intelligently for the given query.
+   - `build_memory_from_data()` should propagate session content to relevant layers.
+   - `retrieve_memory_for_query()` should chain layer outputs intelligently for the given query.
      Output from one layer can become input to the next.
 
 3. **Retrieval Precision and Temporal Grounding:**
@@ -349,7 +349,7 @@ Modify or create code that fully satisfies the following design goals:
 
 6. **Code Quality:**
    - Output clean, runnable Python code following PEP8.
-   - `general_retrieve()` and `general_update()` accept a `Basic_Recorder` and orchestrate end-to-end.
+   - `retrieve_memory_for_query()` and `build_memory_from_data()` accept a `Basic_Recorder` and orchestrate end-to-end.
    - Initialize all layers in `MemoStructure.__init__`.
    - Avoid placeholders like `pass` or `# TODO`.
    - Do not overuse defensive programming; raise exceptions for unexpected conditions.
@@ -361,9 +361,9 @@ from a large haystack for any question, grounded in time.
 - Think creatively about data flow — outputs of one layer can feed into the next.
 - Provide **only the final rewritten code**, no explanations.""",
     "reflection_protocol": """    == LongMemEval Two-Phase Protocol ==
-    Phase 1 — general_update(recorder):
+    Phase 1 — build_memory_from_data(recorder):
       recorder.init['sessions'] = List[dict]  — batch of chat sessions (session_id, date, messages[])
-    Phase 2 — general_retrieve(recorder):
+    Phase 2 — retrieve_memory_for_query(recorder):
       recorder.init['query']         = str   — current question
       recorder.init['sessions']      = List[dict]  — all sessions (reference)
       recorder.init['question_date'] = str   — user's reference time
@@ -371,14 +371,14 @@ from a large haystack for any question, grounded in time.
       NOTE: the QA agent only sees the returned Dict + question (+ date), NOT the sessions.
     """,
     "reflection_code_usage": """Your memory structure will be used in the LongMemEval two-phase workflow:
-    - `general_update(recorder)`: Phase 1 — ingest chat sessions and build memory.
-    - `general_retrieve(recorder)`: Phase 2 — retrieve sessions relevant to the query; return a Dict.
+    - `build_memory_from_data(recorder)`: Phase 1 — ingest chat sessions and build memory.
+    - `retrieve_memory_for_query(recorder)`: Phase 2 — retrieve sessions relevant to the query; return a Dict.
     IMPORTANT: each user gets a fresh MemoStructure() instance — no cross-user sharing.""",
     "analysis_protocol": """    - Two-phase protocol:
-        - `general_update(recorder)`: called during Phase 1 with chunks of chat sessions.
+        - `build_memory_from_data(recorder)`: called during Phase 1 with chunks of chat sessions.
           `recorder.init['sessions']` = current batch of sessions (session_id, date, messages).
           Expected behaviour: index each session's content and date into internal memory.
-        - `general_retrieve(recorder)`: called during Phase 2 before each QA question.
+        - `retrieve_memory_for_query(recorder)`: called during Phase 2 before each QA question.
           `recorder.init['query']` = current question; `recorder.init['sessions']` = all sessions (reference);
           `recorder.init['question_date']` = user's reference time.
           Returns Dict passed to the answering agent.
@@ -388,7 +388,7 @@ from a large haystack for any question, grounded in time.
     "analysis_shape_a": """    **Shape A — sampled QA pair (the usual case):**
         - `user_id`: which user (haystack) this QA pair belongs to. Examples are sampled from one randomly-chosen valid user, binned by judge score.
         - `query`: the natural-language question asked
-        - `retrieved_memory`: the dict returned by `general_retrieve` for this question
+        - `retrieved_memory`: the dict returned by `retrieve_memory_for_query` for this question
         - `predicted`: the agent's answer
         - `reference`: the ground-truth answer
         - `score`: 0 or 1, from the LongMemEval binary judge (1 = correct, 0 = incorrect).

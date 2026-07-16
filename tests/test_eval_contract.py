@@ -26,9 +26,9 @@ def test_three_hooks_optional_with_defaults():
     class _Rec:
         init = {"query": "q"}
 
-    assert loop.run_until_complete(m.general_update(_Rec())) is None
-    assert loop.run_until_complete(m.general_retrieve(_Rec())) == {}
-    assert loop.run_until_complete(m.general_answer(_Rec(), {}, "PROMPT")) is None
+    assert loop.run_until_complete(m.build_memory_from_data(_Rec())) is None
+    assert loop.run_until_complete(m.retrieve_memory_for_query(_Rec())) == {}
+    assert loop.run_until_complete(m.use_memory_to_answer(_Rec(), {}, "PROMPT")) is None
 
 
 def test_chunked_partitions():
@@ -70,14 +70,14 @@ def test_forge_loads_the_harness_class_not_the_base():
 
 
 def test_phase1_update_calls_general_update_once():
-    """The workflow hands the whole data in ONE general_update call."""
+    """The workflow hands the whole data in ONE build_memory_from_data call."""
     from common.workflow import BaseWorkflow
     from common.harness_base import MemoStructure
 
     calls = []
 
     class _Memo(MemoStructure):
-        async def general_update(self, recorder):
+        async def build_memory_from_data(self, recorder):
             calls.append(list(recorder.init.get("items", [])))
 
     # minimal BaseWorkflow with the 7 abstract hooks stubbed + a recorder that
@@ -101,27 +101,27 @@ def test_phase1_update_calls_general_update_once():
 
 
 def test_general_answer_used_else_agent():
-    """The answer step uses memo.general_answer; falls back to the agent on None."""
+    """The answer step uses memo.use_memory_to_answer; falls back to the agent on None."""
     import asyncio
     from common.workflow import BaseWorkflow  # noqa: F401 (import proves module loads post-refactor)
     from common.harness_base import MemoStructure
 
     class _Answering(MemoStructure):
-        async def general_answer(self, recorder, retrieved, prompt):
+        async def use_memory_to_answer(self, recorder, retrieved, prompt):
             return "MEMO:" + prompt
 
     class _Deferring(MemoStructure):
-        pass  # general_answer default None → agent answers
+        pass  # use_memory_to_answer default None → agent answers
 
     loop = asyncio.new_event_loop()
     a = _Answering()
-    assert loop.run_until_complete(a.general_answer(None, {}, "Q")) == "MEMO:Q"
+    assert loop.run_until_complete(a.use_memory_to_answer(None, {}, "Q")) == "MEMO:Q"
     d = _Deferring()
-    assert loop.run_until_complete(d.general_answer(None, {}, "Q")) is None
+    assert loop.run_until_complete(d.use_memory_to_answer(None, {}, "Q")) is None
 
 
 def test_general_answer_gets_query_scoped_recorder():
-    """Both answer sites pass the query-scoped retrieve_recorder to general_answer,
+    """Both answer sites pass the query-scoped retrieve_recorder to use_memory_to_answer,
     not the phase-1 recorder — so recorder.init means the same thing everywhere."""
     import inspect
     from common import workflow as bw
@@ -131,10 +131,10 @@ def test_general_answer_gets_query_scoped_recorder():
     dm_src = inspect.getsource(dw.DynamicMemWorkflow._run_item)
 
     # Both should pass retrieve_recorder (spaces removed for robustness)
-    assert "general_answer(retrieve_recorder" in base_src.replace(" ", ""), \
-        "BaseWorkflow.run_single_user must pass retrieve_recorder to general_answer"
-    assert "general_answer(retrieve_recorder" in dm_src.replace(" ", ""), \
-        "DynamicMemWorkflow._run_item must pass retrieve_recorder to general_answer"
+    assert "use_memory_to_answer(retrieve_recorder" in base_src.replace(" ", ""), \
+        "BaseWorkflow.run_single_user must pass retrieve_recorder to use_memory_to_answer"
+    assert "use_memory_to_answer(retrieve_recorder" in dm_src.replace(" ", ""), \
+        "DynamicMemWorkflow._run_item must pass retrieve_recorder to use_memory_to_answer"
 
 
 def main():

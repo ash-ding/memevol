@@ -63,11 +63,11 @@ Each generated **harness** is a Python class inheriting
 `forge.harness_base.MemoStructure` (a documented subclass of the common
 ABC), implementing the two-phase contract:
 
-- **Phase 1** — `general_update(recorder)`: ingest a stream of user data
+- **Phase 1** — `build_memory_from_data(recorder)`: ingest a stream of user data
   (app logs, conversation turns, chat sessions) into any internal structure
   (dict, vector store, graph, hierarchy, ...). Called multiple times per
   user when `update_type=chunked|sequential`.
-- **Phase 2** — `general_retrieve(recorder)`: given the current query in
+- **Phase 2** — `retrieve_memory_for_query(recorder)`: given the current query in
   `recorder.init["query"]`, return a dict that's fed to the QA agent as
   context. Must be read-only w.r.t. memory state (DynamicMem interleaves
   queries with ingestion at checkpoints — query pollution breaks

@@ -15,7 +15,7 @@ which resolves the SAME production per-dataset workflow the main method
 uses (`baselines.registry.resolve`), so their DynamicMem numbers get the
 official TCE protocol too, and both run on all four datasets
 (dynamicmem/locomo/longmemeval_s/longmemeval_m) via one `run.py --dataset
-...` entrypoint. `cc` bypasses the shared QA agent (`CCMemo.general_answer`,
+...` entrypoint. `cc` bypasses the shared QA agent (`CCMemo.use_memory_to_answer`,
 the standardized answer hook every `MemoStructure` may implement) — its own
 tool-using answer is judged verbatim instead of being relayed through a
 second LLM call.
@@ -69,14 +69,14 @@ Skips memory-architecture design entirely. `CCMemo` (`baselines/cc/memo.py`)
 is a `MemoStructure` run through the same `baselines.eval_common.run_baseline`
 shared runner as hipporag2, on any of the four datasets:
 
-- **Phase 1 (`general_update`)**: stashes the currently-visible data
+- **Phase 1 (`build_memory_from_data`)**: stashes the currently-visible data
   (dynamicmem: app_logs; locomo: conversation; longmemeval: sessions —
   dispatch on `recorder.init` keys) into a per-user temp directory as a
   single JSON file.
-- **Phase 2 (`general_retrieve`)**: runs Claude Code with tool access
+- **Phase 2 (`retrieve_memory_for_query`)**: runs Claude Code with tool access
   (Read, Grep, Glob) to that temp directory and asks it to answer the
   question directly — no separate retrieval step.
-- **Answer (`general_answer`)**: runs Claude Code on the workflow's exact
+- **Answer (`use_memory_to_answer`)**: runs Claude Code on the workflow's exact
   formatted prompt so the workflow judges cc's own answer verbatim,
   bypassing the shared QA agent entirely.
 
@@ -104,13 +104,13 @@ Artifacts: `baselines/cc/results/<dataset>/<split>/`.
 same `baselines.eval_common.run_baseline` shared runner as the rest of the
 baselines, on any of the four datasets:
 
-- **Phase 1 (`general_update`)**: converts the ingested unit's data into text
+- **Phase 1 (`build_memory_from_data`)**: converts the ingested unit's data into text
   passages (dynamicmem: app_logs; locomo: conversation turns; longmemeval:
   session messages — dispatch on `recorder.init` keys) and indexes them into a
   per-user HippoRAG graph (OpenIE → NER + triples → knowledge graph + entity
   embeddings). Indexing is additive across calls, so DynamicMem's per-
   checkpoint segments accumulate correctly.
-- **Phase 2 (`general_retrieve`)**: fact retrieval → reranking → personalized
+- **Phase 2 (`retrieve_memory_for_query`)**: fact retrieval → reranking → personalized
   PageRank → top-k passages, returned as `{"passages": [...]}`. The **shared
   QA agent** (not HippoRAG's own `rag_qa` reader) answers from those passages,
   and the per-dataset workflow judges/scores identically to the main method —

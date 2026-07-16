@@ -72,7 +72,7 @@ def render_inline_memory_section(inline_memory_blocks: Sequence[str]) -> str:
 
 
 def retrieved_to_memory_blocks(retrieved: Any) -> List[str]:
-    """memevol adapter: convert a harness's `general_retrieve` dict into the
+    """memevol adapter: convert a harness's `retrieve_memory_for_query` dict into the
     official inline-memory block list.
 
     Convention: if the dict carries `inline_memory_blocks: List[str]`, those

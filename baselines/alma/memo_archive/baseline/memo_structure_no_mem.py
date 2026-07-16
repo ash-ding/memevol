@@ -1,8 +1,8 @@
 """
 No-memory baseline for DynamicMem.
 
-general_update: no-op (nothing is stored).
-general_retrieve: returns empty dict (no memory context for the agent).
+build_memory_from_data: no-op (nothing is stored).
+retrieve_memory_for_query: returns empty dict (no memory context for the agent).
 
 This establishes the zero-memory baseline reward used to calibrate normalized scores.
 """
@@ -11,8 +11,8 @@ from common.harness_base import MemoStructure
 
 
 class NoMemMemoStructure(MemoStructure):
-    async def general_update(self, recorder) -> None:
+    async def build_memory_from_data(self, recorder) -> None:
         pass
 
-    async def general_retrieve(self, recorder) -> dict:
+    async def retrieve_memory_for_query(self, recorder) -> dict:
         return {}

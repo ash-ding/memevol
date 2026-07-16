@@ -10,7 +10,7 @@ at /export/scratch_large/ding/code/HippoRAG/src/hipporag/HippoRAG.py):
     `EmbeddingStore.insert_strings`, which dedups by content hash and upserts
     only the genuinely-new strings (see embedding_store.py:63-90); OpenIE is
     likewise only re-run for chunk ids not already indexed. So each
-    `general_update` call only needs to pass the NEW segment (already true for
+    `build_memory_from_data` call only needs to pass the NEW segment (already true for
     DynamicMem's per-checkpoint slices — `datasets/dynamicmem/workflow.py`
     passes `app_logs[prev_end:len(visible)]`, a non-overlapping suffix) rather
     than re-indexing the full accumulated `self._passages`.
@@ -71,7 +71,7 @@ class HippoRAGMemo(MemoStructure):
         super().__init__()
         self._hippo = None
         self._passages: List[str] = []
-        # NOTE: the recorders actually handed to general_update/general_retrieve
+        # NOTE: the recorders actually handed to build_memory_from_data/retrieve_memory_for_query
         # by common/workflow.py and datasets/*/workflow.py are throwaway
         # `self.recorder_class()` instances that are NEVER given `.user_id`
         # (only a separate bookkeeping recorder used for trace/step logging
@@ -106,7 +106,7 @@ class HippoRAGMemo(MemoStructure):
         )
         self._hippo = HippoRAG(global_config=conf)
 
-    async def general_update(self, recorder) -> None:
+    async def build_memory_from_data(self, recorder) -> None:
         # Called once (all_at_once) for locomo/longmemeval; per checkpoint for
         # DynamicMem TCE — accumulate + index each new segment.
         self._ensure_hippo()
@@ -115,8 +115,8 @@ class HippoRAGMemo(MemoStructure):
         if new:
             self._hippo.index(docs=new)   # HippoRAG.index is additive (verified: dedup-by-hash upsert)
 
-    async def general_retrieve(self, recorder) -> Dict:
-        self._ensure_hippo()   # defensive no-op if general_update already ran
+    async def retrieve_memory_for_query(self, recorder) -> Dict:
+        self._ensure_hippo()   # defensive no-op if build_memory_from_data already ran
         query = recorder.init.get("query", "")
         k = int(self._cfg.get("top_k", 5))
         # Prefer retrieve-only; fall back to rag_qa(...).docs if absent.

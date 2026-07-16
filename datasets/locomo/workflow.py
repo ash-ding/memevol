@@ -59,7 +59,7 @@ class LoCoMoWorkflow(BaseWorkflow):
     #
     # init_data is a conversation dict (not a list), so the base class's
     # list-shaped default doesn't fit. We override _phase1_update to hand
-    # the whole conversation dict to general_update in one call; the memo
+    # the whole conversation dict to build_memory_from_data in one call; the memo
     # chunks internally if it wants (self.chunked(...) inside the harness).
 
     async def phase1_log_init(
@@ -77,13 +77,13 @@ class LoCoMoWorkflow(BaseWorkflow):
                 f"LoCoMoWorkflow expects init_data to be a conversation dict; "
                 f"got {type(init_data).__name__}"
             )
-        log.info(f"[Phase 1] general_update (whole conversation)")
+        log.info(f"[Phase 1] build_memory_from_data (whole conversation)")
         r = self.recorder_class()
         await self.phase1_log_init(r, init_data)
         try:
-            await memo.general_update(r)
+            await memo.build_memory_from_data(r)
         except Exception as exc:
-            log.warning(f"general_update failed: {exc}")
+            log.warning(f"build_memory_from_data failed: {exc}")
             raise RuntimeError(f"[Phase1_Update] {type(exc).__name__}: {exc}") from exc
 
     # ------------------------------------------------------------------

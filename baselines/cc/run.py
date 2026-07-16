@@ -1,6 +1,6 @@
 """cc (Claude Code) baseline — evaluate on one benchmark's split, comparable
 to the main method (same split/judge/scoring via the per-dataset workflow).
-cc is a NATIVE-answer baseline: `CCMemo.general_answer` bypasses the shared
+cc is a NATIVE-answer baseline: `CCMemo.use_memory_to_answer` bypasses the shared
 QA agent so the workflow judges cc's own tool-using answer verbatim.
 
     python baselines/cc/run.py --dataset locomo
@@ -37,7 +37,7 @@ def main():
     memo_class = make_memo_class(CCMemo, model=model, max_turns=a.max_turns, judge_model=a.judge_model)
     out_dir = Path(__file__).resolve().parent / "results" / a.dataset / a.split
     # qa_model=a.judge_model: the shared QA agent is bypassed by
-    # CCMemo.general_answer (cc's own answer is judged verbatim), so its
+    # CCMemo.use_memory_to_answer (cc's own answer is judged verbatim), so its
     # model choice is irrelevant to scoring — but BaseWorkflow's constructor
     # still requires one.
     score = asyncio.run(run_baseline(

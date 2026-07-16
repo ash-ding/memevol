@@ -261,8 +261,8 @@ def build_analysis_prompt(memo_info, dataset="dynamicmem"):
       - **Retrieve**: fetches relevant memory elements from the database.
       - **Update**: writes or modifies entries in the database.
     - Final MemoStructure (inheriting `MemoStructure`) contains:
-        - **general_update**: Phase 1 — called to build a user profile from app logs.
-        - **general_retrieve**: Phase 2 — called once per QA question to retrieve relevant memory.
+        - **build_memory_from_data**: Phase 1 — called to build a user profile from app logs.
+        - **retrieve_memory_for_query**: Phase 2 — called once per QA question to retrieve relevant memory.
 {info['analysis_protocol']}
 
 2. **examples** — a mixed list of TWO shapes; inspect the keys on each entry to decide which shape you are looking at.
@@ -382,7 +382,7 @@ def build_generate_new_code_prompt(
         suggestion = {}
 
     interaction_prompt = f"""
-    Your `general_retrieve` and `general_update` will take `Basic_Recorder` as input.
+    Your `retrieve_memory_for_query` and `build_memory_from_data` will take `Basic_Recorder` as input.
     The {info['recorder_class_name']} (a subclass of Basic_Recorder) has these attributes:
     {json.dumps(interaction_recorder_info, indent=2, ensure_ascii=False)}
 
@@ -459,7 +459,7 @@ def build_reflection_prompt(code_str: str, recorder: Basic_Recorder, error_msg, 
 
     interaction_recorder_info = get_metadata_dict(recorder)
     interaction_prompt = f"""
-    Your `general_retrieve` and `general_update` will take `Basic_Recorder` as input:
+    Your `retrieve_memory_for_query` and `build_memory_from_data` will take `Basic_Recorder` as input:
     {json.dumps(interaction_recorder_info, indent=2, ensure_ascii=False)}
 
 {info['reflection_protocol']}"""
