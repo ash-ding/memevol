@@ -621,48 +621,23 @@ class BaseWorkflow(ABC):
     # ---- Phase 1 dispatch ----
 
     async def _phase1_update(self, memo: MemoStructure, init_data: Any) -> None:
-        """Dispatch general_update calls according to update_type.
-
-        Default impl assumes `init_data` is a list whose elements can be
-        passed to `phase1_log_init`. Subclasses may override entirely if
-        their init_data is not list-shaped.
-        """
-
-        async def _call_update(chunk: Any) -> None:
-            r = self.recorder_class()
-            await self.phase1_log_init(r, chunk)
-            try:
-                await memo.general_update(r)
-            except Exception as exc:
-                log.warning(f"general_update failed: {exc}")
-                raise RuntimeError(f"[Phase1_Update] {type(exc).__name__}: {exc}") from exc
-
+        """Hand the whole visible `init_data` to the memo in ONE general_update
+        call. Ingestion granularity is the memo's own choice (it may use
+        self.chunked(...)); the workflow no longer chunks."""
         if not isinstance(init_data, list):
             raise TypeError(
                 f"{type(self).__name__}: default _phase1_update expects init_data to be a list; "
                 f"got {type(init_data).__name__}. Override _phase1_update for non-list init."
             )
-
-        total = len(init_data)
-
-        if self.update_type == "sequential":
-            for idx, item in enumerate(init_data, 1):
-                if idx == 1 or idx % max(1, total // 10) == 0 or idx == total:
-                    log.info(f"[Phase 1] general_update progress: {idx}/{total} ({idx*100//total}%)")
-                await _call_update([item])
-
-        elif self.update_type == "chunked":
-            n = max(1, self.n_chunks)
-            chunk_size = max(1, (total + n - 1) // n)
-            chunks = list(range(0, total, chunk_size))
-            for chunk_idx, i in enumerate(chunks, 1):
-                log.info(f"[Phase 1] general_update progress: chunk {chunk_idx}/{len(chunks)}")
-                await _call_update(init_data[i: i + chunk_size])
-
-        else:  # all_at_once
-            items = init_data[-self.max_logs:] if self.max_logs else init_data
-            log.info(f"[Phase 1] general_update started ({len(items)} {self._phase1_item_label}, mode=all_at_once)")
-            await _call_update(items)
+        items = init_data[-self.max_logs:] if self.max_logs else init_data
+        log.info(f"[Phase 1] general_update ({len(items)} {self._phase1_item_label})")
+        r = self.recorder_class()
+        await self.phase1_log_init(r, items)
+        try:
+            await memo.general_update(r)
+        except Exception as exc:
+            log.warning(f"general_update failed: {exc}")
+            raise RuntimeError(f"[Phase1_Update] {type(exc).__name__}: {exc}") from exc
 
     # ---- Full-trace persistence (no sampling) ----
 

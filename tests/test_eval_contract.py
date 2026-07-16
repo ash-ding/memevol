@@ -69,6 +69,37 @@ def test_forge_loads_the_harness_class_not_the_base():
     assert load_harness_class(seed).__name__ == "NoMemoryHarness"
 
 
+def test_phase1_update_calls_general_update_once():
+    """The workflow hands the whole data in ONE general_update call."""
+    from common.workflow import BaseWorkflow
+    from common.harness_base import MemoStructure
+
+    calls = []
+
+    class _Memo(MemoStructure):
+        async def general_update(self, recorder):
+            calls.append(list(recorder.init.get("items", [])))
+
+    # minimal BaseWorkflow with the 7 abstract hooks stubbed + a recorder that
+    # stores init under "items" via phase1_log_init.
+    class _Rec:
+        def __init__(self): self.init = {}
+    class _W(BaseWorkflow):
+        recorder_class = _Rec
+        async def load_user_data(self, *a, **k): return None
+        async def phase1_log_init(self, r, chunk): r.init = {"items": chunk}
+        def build_query_recorder_init(self, *a, **k): return {}
+        def build_qa_prompt(self, *a, **k): return [{"content": ""}, {"content": ""}]
+        def extract_relevant_context(self, *a, **k): return None
+        def build_qa_metadata(self, *a, **k): return {}
+        async def log_qa_step(self, *a, **k): return None
+    import asyncio
+    w = _W(memo_class=_Memo, model="gpt-5-mini", update_type="chunked")
+    m = _Memo()
+    asyncio.new_event_loop().run_until_complete(w._phase1_update(m, [1, 2, 3, 4, 5]))
+    assert calls == [[1, 2, 3, 4, 5]]   # ONE call, whole data (not chunked by the workflow)
+
+
 def main():
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = []

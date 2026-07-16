@@ -10,7 +10,7 @@ in the pipeline; event_summary / observation / session_summary are ignored.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple, Type
+from typing import Dict, List, Optional, Tuple, Type
 
 from common.harness_base import Basic_Recorder, MemoStructure
 from common.logger import get_logger
@@ -58,8 +58,9 @@ class LoCoMoWorkflow(BaseWorkflow):
     # ------------------------------------------------------------------
     #
     # init_data is a conversation dict (not a list), so the base class's
-    # default list-chunker cannot iterate it. We override _phase1_update
-    # to extract a flat session list and dispatch per update_type.
+    # list-shaped default doesn't fit. We override _phase1_update to hand
+    # the whole conversation dict to general_update in one call; the memo
+    # chunks internally if it wants (self.chunked(...) inside the harness).
 
     async def phase1_log_init(
         self, recorder: Basic_Recorder, chunk: Dict
@@ -76,57 +77,14 @@ class LoCoMoWorkflow(BaseWorkflow):
                 f"LoCoMoWorkflow expects init_data to be a conversation dict; "
                 f"got {type(init_data).__name__}"
             )
-
-        speaker_a = init_data.get("speaker_a", "")
-        speaker_b = init_data.get("speaker_b", "")
-        sessions = extract_sessions(init_data)
-        total = len(sessions)
-
-        def _chunk_to_conversation(chunk_sessions) -> Dict:
-            """Build a minimal conversation-shaped dict from a subset of sessions."""
-            out: Dict[str, Any] = {"speaker_a": speaker_a, "speaker_b": speaker_b}
-            for idx, date_time, turns in chunk_sessions:
-                out[f"session_{idx}"] = turns
-                if date_time:
-                    out[f"session_{idx}_date_time"] = date_time
-            return out
-
-        async def _call_update(chunk_sessions) -> None:
-            r = self.recorder_class()
-            await self.phase1_log_init(r, _chunk_to_conversation(chunk_sessions))
-            try:
-                await memo.general_update(r)
-            except Exception as exc:
-                log.warning(f"general_update failed: {exc}")
-                raise RuntimeError(
-                    f"[Phase1_Update] {type(exc).__name__}: {exc}"
-                ) from exc
-
-        if self.update_type == "sequential":
-            for idx, (sess_idx, _dt, _turns) in enumerate(sessions, 1):
-                if idx == 1 or idx % max(1, total // 10) == 0 or idx == total:
-                    log.info(
-                        f"[Phase 1] general_update progress: {idx}/{total} ({idx*100//total}%)"
-                    )
-                await _call_update([sessions[idx - 1]])
-
-        elif self.update_type == "chunked":
-            n = max(1, self.n_chunks)
-            chunk_size = max(1, (total + n - 1) // n)
-            chunk_starts = list(range(0, total, chunk_size))
-            for chunk_idx, i in enumerate(chunk_starts, 1):
-                log.info(
-                    f"[Phase 1] general_update progress: chunk {chunk_idx}/{len(chunk_starts)}"
-                )
-                await _call_update(sessions[i: i + chunk_size])
-
-        else:  # all_at_once
-            items = sessions[-self.max_logs:] if self.max_logs else sessions
-            log.info(
-                f"[Phase 1] general_update started "
-                f"({len(items)} {self._phase1_item_label}, mode=all_at_once)"
-            )
-            await _call_update(items)
+        log.info(f"[Phase 1] general_update (whole conversation)")
+        r = self.recorder_class()
+        await self.phase1_log_init(r, init_data)
+        try:
+            await memo.general_update(r)
+        except Exception as exc:
+            log.warning(f"general_update failed: {exc}")
+            raise RuntimeError(f"[Phase1_Update] {type(exc).__name__}: {exc}") from exc
 
     # ------------------------------------------------------------------
     # Phase 2
