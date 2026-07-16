@@ -411,7 +411,7 @@ def test_smoke_test_flag():
 
 def test_search_configs_default_smoke_test_false():
     from forge.orchestrator import build_arg_parser, _resolve_config
-    for name in ("search.yaml", "search_mini.yaml", "search_example.yaml"):
+    for name in ("search_example.yaml",):
         cfg = _resolve_config(build_arg_parser().parse_args(
             ["--config", os.path.join(REPO, "configs", name)]))
         assert cfg["smoke_test"] is False and "mode" not in cfg

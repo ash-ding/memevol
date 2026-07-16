@@ -17,14 +17,14 @@ benchmark at `stages.sanity_check` sizes (dev IS the sanity-size verification).
 Two ways to launch:
 
     # (a) config-first (recommended for long runs / reproducibility)
-    python -m forge.orchestrator --config configs/search.yaml
+    python -m forge.orchestrator --config configs/search_example.yaml
 
     # (b) CLI-first (quick iteration; uniform params across all datasets)
     python -m forge.orchestrator --steps 3 --datasets dynamicmem,locomo \
         --smoke-test
 
 CLI flags always override the config file when both are given. See
-`configs/search_example.yaml` (exhaustive) and `configs/search.yaml` for the full config schema.
+`configs/search_example.yaml` (exhaustive, runnable) for the full config schema.
 
 Outputs (per-run, under workspace/<run_id>/):
     harnesses/<int>_<hash>/<dataset>/         full-eval score + traces

@@ -147,22 +147,20 @@ host-specific. Override there if needed.)
 # Quick smoke: --smoke-test turns any config into a sanity-size single pass
 # (no gauntlet, no sanity gate). With --steps 1 it exercises the whole
 # propose → eval → score pipeline cheaply (~1-2 min, a handful of LLM calls).
-venv/bin/python -m forge.orchestrator --config configs/search_mini.yaml --smoke-test --steps 1
+venv/bin/python -m forge.orchestrator --config configs/search_example.yaml --smoke-test --steps 1
 
-# Small multi-benchmark search (10 propose iterations × 2 candidates)
-venv/bin/python -m forge.orchestrator --config configs/search_mini.yaml
-
-# Full multi-benchmark search (production)
-venv/bin/python -m forge.orchestrator --config configs/search.yaml
+# Search run (steps/datasets etc. as set in the config)
+venv/bin/python -m forge.orchestrator --config configs/search_example.yaml
 
 # CLI overrides (any YAML field has a matching CLI flag)
 venv/bin/python -m forge.orchestrator \
-  --config configs/search.yaml \
+  --config configs/search_example.yaml \
   --steps 3 --datasets dynamicmem,locomo --gpu
 ```
 
-See **[`configs/search_example.yaml`](configs/search_example.yaml)** for the full
-documented schema (every field, default, and effect).
+**[`configs/search_example.yaml`](configs/search_example.yaml)** is both the
+fully documented schema (every field, default, and effect) and a runnable
+config — copy it to your own `configs/<name>.yaml` for real runs.
 
 ## Run modes
 
@@ -206,7 +204,7 @@ memevol/
 │                           (dynamicmem: tce_prompts.py — official TCE
 │                           prompts + holistic judge, ported verbatim)
 ├── containers/             Singularity .def files for both images
-├── configs/                YAML configs (smoke / search_mini / search / example)
+├── configs/                YAML configs (search_example = documented + runnable; test_example = heldout flow)
 ├── seeds/                  Project-level seed harness library (git-tracked)
 ├── baselines/              Comparison methods — see baselines/README.md
 └── workspace/<run_id>/     Per-run runtime state (gitignored)
