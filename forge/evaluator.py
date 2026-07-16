@@ -84,7 +84,6 @@ async def run_evaluation(
     stage_spec: Dict[str, Any],
     model: str = "gpt-5-mini",
     judge_model: str = "gpt-5-mini",
-    update_type: str = "all_at_once",
     max_sample_concurrent: int = 3,
     memcache_dir: Optional[Path] = None,
     gpu: bool = False,
@@ -189,7 +188,6 @@ async def run_evaluation(
         "--stage-spec", json.dumps(stage_spec),
         "--model", model,
         "--judge-model", judge_model,
-        "--update-type", update_type,
         "--max-sample-concurrent", str(max_sample_concurrent),
     ]
     if memcache_dir is not None:

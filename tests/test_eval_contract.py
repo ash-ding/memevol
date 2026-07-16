@@ -31,33 +31,6 @@ def test_three_hooks_optional_with_defaults():
     assert loop.run_until_complete(m.use_memory_to_answer(_Rec(), {}, "PROMPT")) is None
 
 
-def test_chunked_partitions():
-    from common.harness_base import MemoStructure
-
-    class M(MemoStructure):
-        pass
-
-    m = M()
-    data = list(range(10))
-    m._update_type = "all_at_once"
-    assert list(m.chunked(data)) == [data]
-    m._update_type = "sequential"
-    assert list(m.chunked(data)) == [[i] for i in range(10)]
-    m._update_type = "chunked"
-    m._n_chunks = 5
-    chunks = list(m.chunked(data))
-    assert len(chunks) == 5 and sum(len(c) for c in chunks) == 10
-    assert [x for c in chunks for x in c] == data  # order preserved, no loss
-
-    m._update_type = "chunked"
-    m._n_chunks = 5
-    chunks = list(m.chunked(list(range(11))))   # 11 not divisible by 5
-    assert len(chunks) == 5                       # exactly n_chunks partitions
-    assert sum(len(c) for c in chunks) == 11      # no loss
-    assert max(len(c) for c in chunks) - min(len(c) for c in chunks) <= 1  # near-equal
-    assert [x for c in chunks for x in c] == list(range(11))               # order preserved
-
-
 def test_forge_loads_the_harness_class_not_the_base():
     """De-abstracting the base must not make the class-discriminator pick the
     imported base instead of the harness's own class."""
@@ -94,7 +67,7 @@ def test_phase1_update_calls_build_memory_once():
         def build_qa_metadata(self, *a, **k): return {}
         async def log_qa_step(self, *a, **k): return None
     import asyncio
-    w = _W(memo_class=_Memo, model="gpt-5-mini", update_type="chunked")
+    w = _W(memo_class=_Memo, model="gpt-5-mini")
     m = _Memo()
     asyncio.new_event_loop().run_until_complete(w._phase1_update(m, [1, 2, 3, 4, 5]))
     assert calls == [[1, 2, 3, 4, 5]]   # ONE call, whole data (not chunked by the workflow)

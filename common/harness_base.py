@@ -57,12 +57,6 @@ class Sub_memo_layer(ABC):
 
 class MemoStructure(ABC):
 
-    # Ingestion granularity is the memory system's design choice. `chunked`
-    # is a convenience the build hook may use; a memo may override _update_type
-    # / _n_chunks (or ignore chunking entirely and ingest the whole data).
-    _update_type: str = "all_at_once"
-    _n_chunks: int = 5
-
     def __init__(self):
         self.database: Optional[Any] = None
 
@@ -71,8 +65,7 @@ class MemoStructure(ABC):
     async def build_memory_from_data(self, recorder: Basic_Recorder) -> None:
         """BUILD (Phase 1). `recorder.init` holds the data newly visible for
         THIS call; accumulate state across calls and choose your own ingestion
-        granularity (e.g. `for chunk in self.chunked(recorder.init[...]): ...`).
-        Default: no-op (build no memory)."""
+        granularity. Default: no-op (build no memory)."""
         return None
 
     async def retrieve_memory_for_query(self, recorder: Basic_Recorder) -> Dict:
@@ -87,23 +80,3 @@ class MemoStructure(ABC):
         benchmark's standard QA agent (the default). `prompt` is the workflow's
         fully-formatted answer prompt. Default: None."""
         return None
-
-    def chunked(self, data):
-        """Yield partitions of `data` per self._update_type / self._n_chunks:
-        all_at_once → [data]; sequential → one item each; chunked → _n_chunks
-        near-equal contiguous partitions. Order preserved, no loss."""
-        data = list(data)
-        if self._update_type == "sequential":
-            for item in data:
-                yield [item]
-        elif self._update_type == "chunked":
-            n = max(1, self._n_chunks)
-            n = min(n, len(data)) or 1
-            base, extra = divmod(len(data), n)
-            start = 0
-            for i in range(n):
-                size = base + (1 if i < extra else 0)
-                yield data[start:start + size]
-                start += size
-        else:  # all_at_once
-            yield data

@@ -1,5 +1,5 @@
-"""Prompt rendering: turn a (version, sanity_enabled, active_datasets,
-update_type) tuple into final system / task / fix prompt strings.
+"""Prompt rendering: turn a (version, sanity_enabled, active_datasets)
+tuple into final system / task / fix prompt strings.
 
 All the version-specific text lives in `forge/prompts/templates/<stem>.py` —
 this module only contains the version-agnostic helper logic for sentinel
@@ -94,7 +94,6 @@ def build_proposer_system(
     *,
     sanity_enabled: bool = True,
     active_datasets: Optional[Iterable[str]] = None,
-    update_type: str = "all_at_once",
     version: Optional[str] = None,
 ) -> str:
     """Render the proposer SYSTEM prompt for a given prompt-template version.
@@ -106,17 +105,10 @@ def build_proposer_system(
                         cfg["datasets"] keys (e.g. ["dynamicmem", "locomo",
                         "longmemeval_s"]). None / empty → render all known
                         shape groups (back-compat).
-      update_type     — Phase 1 dispatch mode: all_at_once | chunked | sequential.
       version         — prompt template version stem. None / "latest" /
                         "" → resolve via templates/_default.
     """
     mod = load_template_module(version)
-
-    if update_type not in mod.VALID_UPDATE_TYPES:
-        raise ValueError(
-            f"update_type must be one of {mod.VALID_UPDATE_TYPES}, "
-            f"got {update_type!r}"
-        )
 
     active = _normalize_active_datasets(
         active_datasets, mod.DATASET_INFO, mod.DATASET_RENDER_ORDER
@@ -124,7 +116,6 @@ def build_proposer_system(
     subs = {
         **(mod.SANITY_ON_SUBS if sanity_enabled else mod.SANITY_OFF_SUBS),
         **_build_dataset_subs(active, mod.DATASET_INFO),
-        "<<UPDATE_TYPE>>": update_type,
     }
     out = mod.SYSTEM_TEMPLATE
     for sentinel, replacement in subs.items():

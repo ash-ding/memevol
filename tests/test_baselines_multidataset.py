@@ -78,7 +78,7 @@ def test_base_workflow_default_answer_call_signature():
     orig_ask = llm_mod.Agent.ask
     llm_mod.Agent.ask = _fake_ask
     try:
-        w = _W(memo_class=_Memo, model="gpt-5-mini", update_type="all_at_once")
+        w = _W(memo_class=_Memo, model="gpt-5-mini")
         loop = asyncio.new_event_loop()
         rec = loop.run_until_complete(
             w.run_single_user("user1", stage="sanity", stage_spec={"n_qa": 1}))
@@ -132,7 +132,7 @@ def test_dynamicmem_default_answer_call_signature():
     llm_mod.Agent.ask = _fake_ask
     DynamicMemWorkflow._judge_item = _fake_judge_item
     try:
-        w = DynamicMemWorkflow(memo_class=_Memo, model="gpt-5-mini", update_type="all_at_once")
+        w = DynamicMemWorkflow(memo_class=_Memo, model="gpt-5-mini")
         memo = _Memo()
         recorder = DynamicMemRecorder()
         loop = asyncio.new_event_loop()

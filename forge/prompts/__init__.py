@@ -1,7 +1,7 @@
 """Versioned prompt templates for the forge proposer.
 
 Public API (back-compat with the pre-package `forge/prompts.py`):
-  - build_proposer_system(*, sanity_enabled, active_datasets, update_type, version)
+  - build_proposer_system(*, sanity_enabled, active_datasets, version)
   - proposer_task_prompt(new_dir_rel, *, version)
   - proposer_fix_prompt(new_dir_rel, error_trace, *, version)
   - PromptVersionError

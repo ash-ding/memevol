@@ -45,9 +45,6 @@ def parse_args():
     parser.add_argument("--memo_SHA", type=str, default=None)
     parser.add_argument("--history_ckpt_path", type=str, default=None)
 
-    parser.add_argument("--update_type", type=str, default="all_at_once",
-                        choices=["all_at_once", "chunked", "sequential"])
-    parser.add_argument("--n_chunks", type=int, default=5)
     parser.add_argument("--max_logs", type=int, default=None)
 
     # Default: 20 QA per user (deterministically seeded by user_dir) — ~6x faster than
@@ -83,8 +80,6 @@ async def main(args):
             max_sample_concurrent=args.max_sample_concurrent,
             result_dir=args.result_dir,
             eval_n_samples=args.eval_n_samples,
-            update_type=args.update_type,
-            n_chunks=args.n_chunks,
             max_logs=args.max_logs,
             eval_n_qa=args.eval_n_qa,
             n_score_bins=args.n_score_bins,
@@ -98,8 +93,6 @@ async def main(args):
             memo_SHA=args.memo_SHA,
             status=args.status,
             eval_n_samples=args.eval_n_samples,
-            update_type=args.update_type,
-            n_chunks=args.n_chunks,
             max_logs=args.max_logs,
             eval_n_qa=args.eval_n_qa,
             max_sample_concurrent=args.max_sample_concurrent,
@@ -116,10 +109,7 @@ if __name__ == "__main__":
     logs_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_tag = f"{args.status}_{args.dataset}_{args.update_type}"
-    if args.update_type == "chunked":
-        log_tag += f"_{args.n_chunks}"
-    log_tag += f"_{timestamp}"
+    log_tag = f"{args.status}_{args.dataset}_{timestamp}"
     os.environ["MEMEVOL_LOG_FILE"] = f"{log_tag}.log"
     # The alma logger honours EVALS_LOG_DIR for RotatingFileHandler output.
     os.environ.setdefault("EVALS_LOG_DIR", str(logs_dir))

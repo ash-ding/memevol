@@ -109,7 +109,7 @@ def test_run_wires_coverage_and_writes_results():
 
     cfg = {
         "coverage": "full", "model": "gpt-5-mini", "judge_model": "gpt-5-mini",
-        "update_type": "all_at_once", "max_sample_concurrent": 3,
+        "max_sample_concurrent": 3,
         "memory_cache": True, "gpu": {"enabled": False}, "llm": {},
         "datasets": {"locomo": {}},
     }
@@ -220,7 +220,7 @@ def test_evaluate_harness_full_single_pass():
                 hid, Path("/fake.sif"),
                 datasets_config={"locomo": {"stages": {}}},
                 split="test", model="gpt-5-mini", judge_model="gpt-5-mini",
-                update_type="all_at_once", max_sample_concurrent=1,
+                max_sample_concurrent=1,
                 memory_cache=False, coverage="full",
             ))
         finally:
@@ -261,7 +261,7 @@ def test_evaluate_harness_sample_unchanged():
                 hid, Path("/fake.sif"),
                 datasets_config=ds_cfg,
                 split="test", model="gpt-5-mini", judge_model="gpt-5-mini",
-                update_type="all_at_once", max_sample_concurrent=1,
+                max_sample_concurrent=1,
                 memory_cache=False,
             ))
         finally:
@@ -288,7 +288,7 @@ def test_evaluate_harness_smoke_single_sanity_pass():
                 datasets_config=ds_cfg,
                 split="search", smoke=True,
                 model="gpt-5-mini", judge_model="gpt-5-mini",
-                update_type="all_at_once", max_sample_concurrent=1,
+                max_sample_concurrent=1,
                 memory_cache=False,
             ))
         finally:
@@ -321,7 +321,7 @@ def test_evaluate_harness_stage3_null_full_final():
                 datasets_config=ds_cfg,
                 split="search", smoke=False,
                 model="gpt-5-mini", judge_model="gpt-5-mini",
-                update_type="all_at_once", max_sample_concurrent=1,
+                max_sample_concurrent=1,
                 memory_cache=False, coverage="sample",
             ))
         finally:

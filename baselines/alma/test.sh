@@ -14,8 +14,7 @@ python baselines/alma/run_main.py \
     --execution_model gpt-5-mini \
     --judge_model gpt-5-mini \
     --status test \
-    --memo_SHA <SHA> \
-    --update_type all_at_once
+    --memo_SHA <SHA>
 
 # --- Evaluate the no-memory baseline on held-out users ---
 # Establishes the floor reward; useful for comparing any learned memo.
@@ -24,28 +23,7 @@ python baselines/alma/run_main.py \
     --execution_model gpt-5-mini \
     --judge_model gpt-5-mini \
     --status test \
-    --memo_SHA no_mem \
-    --update_type all_at_once
-
-# --- Evaluate with chunked update (same memo, different Phase 1 batching) ---
-# Handy for ablations without retraining the memo.
-python baselines/alma/run_main.py \
-    --meta_model gpt-5 \
-    --execution_model gpt-5-mini \
-    --judge_model gpt-5-mini \
-    --status test \
-    --memo_SHA <SHA> \
-    --update_type chunked \
-    --n_chunks 10
-
-# --- Evaluate with sequential update (most expensive, most fine-grained) ---
-python baselines/alma/run_main.py \
-    --meta_model gpt-5 \
-    --execution_model gpt-5-mini \
-    --judge_model gpt-5-mini \
-    --status test \
-    --memo_SHA <SHA> \
-    --update_type sequential
+    --memo_SHA no_mem
 
 # --- Quick smoke eval (1 user, 3 QA) to verify plumbing ---
 python baselines/alma/run_main.py \

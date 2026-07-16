@@ -12,7 +12,7 @@ atomic writes; see Amem/simplemem in the upstream repo):
   concurrently inside one evaluator exec; per-file sidecars are race-free.
 - Both files are written atomically (`.tmp` → os.replace).
 - A load is a HIT only when every field the caller passes in `expect_meta`
-  matches the sidecar exactly (harness fingerprint, model, update_type, ...).
+  matches the sidecar exactly (harness fingerprint, model, ...).
   Anything else — missing files, corrupt pickle, meta drift, unpicklable
   state — degrades to a miss (rebuild); the cache must never break an eval.
 

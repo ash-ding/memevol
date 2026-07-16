@@ -123,8 +123,6 @@ async def main(
     memory_id: str,
     output_run_dir: str,
     dataset: str = "dynamicmem",
-    update_type: str = "all_at_once",
-    n_chunks: int = 5,
     max_logs: Optional[int] = None,
     model: str = "gpt-5-mini",
     eval_n_samples: int = 6,
@@ -170,8 +168,6 @@ async def main(
     workflow = workflow_cls(
         memo_class=memo_class,
         model=model,
-        update_type=update_type,
-        n_chunks=n_chunks,
         max_logs=max_logs,
         eval_n_qa=eval_n_qa,
         judge_model=judge_model,
@@ -225,9 +221,6 @@ if __name__ == "__main__":
     parser.add_argument("--output_run_dir", required=True,
                         help="Absolute path to the per-run output directory")
     parser.add_argument("--dataset", default="dynamicmem", choices=DATASETS)
-    parser.add_argument("--update_type", default="all_at_once",
-                        choices=["all_at_once", "chunked", "sequential"])
-    parser.add_argument("--n_chunks", type=int, default=5)
     parser.add_argument("--max_logs", type=int, default=None)
     parser.add_argument("--model", default="gpt-5-mini")
     parser.add_argument("--eval_n_samples", type=int, default=6)
@@ -245,8 +238,6 @@ if __name__ == "__main__":
         memory_id=args.memory_id,
         output_run_dir=args.output_run_dir,
         dataset=args.dataset,
-        update_type=args.update_type,
-        n_chunks=args.n_chunks,
         max_logs=args.max_logs,
         model=args.model,
         eval_n_samples=args.eval_n_samples,
