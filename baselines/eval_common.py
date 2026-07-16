@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Type
+from typing import Any, Dict, List, Optional, Type
 
 from common.harness_base import MemoStructure
 from baselines.registry import resolve
@@ -74,7 +74,6 @@ async def run_baseline(
     split: str,
     user_stage_spec: Optional[Dict[str, Any]],
     memo_class: Type[MemoStructure],
-    workflow_overrides: Tuple[type, ...] = (),
     qa_model: str,
     judge_model: str,
     out_dir: Path,
@@ -84,10 +83,6 @@ async def run_baseline(
     from common.tokens import init_global_tracker
     stage_spec = effective_stage_spec(dataset, user_stage_spec)   # family-full base + user overrides
     workflow_cls, env_module, _rec = resolve(dataset)
-    if workflow_overrides:
-        workflow_cls = type(
-            f"Baseline{workflow_cls.__name__}", (*workflow_overrides, workflow_cls), {}
-        )
     task_list = resolve_task_list(dataset, split, stage_spec)
 
     out_dir.mkdir(parents=True, exist_ok=True)

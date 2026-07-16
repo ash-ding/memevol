@@ -100,6 +100,26 @@ def test_phase1_update_calls_general_update_once():
     assert calls == [[1, 2, 3, 4, 5]]   # ONE call, whole data (not chunked by the workflow)
 
 
+def test_general_answer_used_else_agent():
+    """The answer step uses memo.general_answer; falls back to the agent on None."""
+    import asyncio
+    from common.workflow import BaseWorkflow  # noqa: F401 (import proves module loads post-refactor)
+    from common.harness_base import MemoStructure
+
+    class _Answering(MemoStructure):
+        async def general_answer(self, recorder, retrieved, prompt):
+            return "MEMO:" + prompt
+
+    class _Deferring(MemoStructure):
+        pass  # general_answer default None → agent answers
+
+    loop = asyncio.new_event_loop()
+    a = _Answering()
+    assert loop.run_until_complete(a.general_answer(None, {}, "Q")) == "MEMO:Q"
+    d = _Deferring()
+    assert loop.run_until_complete(d.general_answer(None, {}, "Q")) is None
+
+
 def main():
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = []

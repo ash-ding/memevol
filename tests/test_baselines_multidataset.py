@@ -27,125 +27,126 @@ def test_alma_still_imports_shared_registry():
     assert alma_resolve is shared_resolve
 
 
-def test_answer_query_hook_default_and_override():
-    from common.workflow import BaseWorkflow
-    from datasets.dynamicmem.workflow import DynamicMemWorkflow
-    # both classes expose the hook
-    assert hasattr(BaseWorkflow, "_answer_query")
-    assert hasattr(DynamicMemWorkflow, "_answer_query")
-
-    # a pass-through mixin overriding the hook returns the method's answer
+def test_base_workflow_default_answer_call_signature():
+    """When memo.general_answer defers (returns None, the default), the
+    answer step in run_single_user MUST set agent.messages=[{system}] then
+    call agent.ask(user_msg, with_history=False, reasoning_effort=...) —
+    exact byte-identity of the pre-refactor _answer_query default, now
+    inlined at the call site instead of a separate overridable hook."""
     import asyncio
-    class _PassThrough:
-        async def _answer_query(self, agent, system_msg, user_msg, retrieved):
-            return retrieved.get("cc_answer", "")
-    class _W(_PassThrough, BaseWorkflow):
-        # BaseWorkflow is an ABC with several other abstract hooks unrelated
-        # to _answer_query; stub them so the class can be instantiated (none
-        # of these are exercised by this test — only _answer_query is).
-        async def load_user_data(self, user_dir, eval_n_qa): return (None, [])
-        async def phase1_log_init(self, recorder, chunk): return None
-        def build_query_recorder_init(self, init_data, qa): return {}
-        def build_qa_prompt(self, query, retrieved, qa_metadata, reference=""): return [
-            {"role": "system", "content": ""}, {"role": "user", "content": ""}
-        ]
-        def extract_relevant_context(self, qa, init_data): return None
-        def build_qa_metadata(self, qa): return {}
-        async def log_qa_step(self, **kwargs): return None
-    # instantiate minimally: BaseWorkflow needs memo_class; use a dummy
-    from common.harness_base import MemoStructure
-    class _Memo(MemoStructure):
-        async def general_update(self, r): return None
-        async def general_retrieve(self, r): return {}
-    w = _W(memo_class=_Memo, model="gpt-5-mini", update_type="all_at_once")
-    loop = asyncio.new_event_loop()
-    try:
-        out = loop.run_until_complete(
-            w._answer_query(agent=None, system_msg="s", user_msg="u", retrieved={"cc_answer": "HELLO"})
-        )
-    finally:
-        loop.close()
-    assert out == "HELLO"
-
-
-def test_base_workflow_answer_query_default_call_signature():
-    """BaseWorkflow._answer_query default MUST set the system message and call
-    agent.ask(user_msg, with_history=False, reasoning_effort=...)."""
-    import asyncio
+    import common.llm as llm_mod
     from common.workflow import BaseWorkflow
     from common.harness_base import MemoStructure
-
-    class _Memo(MemoStructure):
-        async def general_update(self, r): return None
-        async def general_retrieve(self, r): return {}
 
     calls = {}
-    class _StubAgent:
-        def __init__(self): self.messages = None
-        async def ask(self, user_msg, **kwargs):
-            calls["user_msg"] = user_msg
-            calls["kwargs"] = kwargs
-            calls["messages"] = self.messages
-            return "ANSWER"
 
-    # minimal BaseWorkflow: implement the 7 abstract hooks as no-ops
+    async def _fake_ask(self, user_msg, **kwargs):
+        calls["user_msg"] = user_msg
+        calls["kwargs"] = kwargs
+        calls["messages"] = self.messages
+        return "ANSWER"
+
+    class _Memo(MemoStructure):
+        async def general_retrieve(self, r): return {}
+        # general_answer NOT overridden -> defaults to None (defers to agent)
+
+    class _Rec:
+        def __init__(self):
+            self.init = {}
+            self.steps = []
+            self.user_id = ""
+            self.failure_info = None
+        async def set_reward(self, r): self.reward = r
+
     class _W(BaseWorkflow):
-        async def load_user_data(self, *a, **k): return None, []
-        async def phase1_log_init(self, *a, **k): return None
-        def build_query_recorder_init(self, *a, **k): return {}
-        def build_qa_prompt(self, *a, **k): return [{"role": "system", "content": ""}, {"role": "user", "content": ""}]
-        def extract_relevant_context(self, *a, **k): return None
-        def build_qa_metadata(self, *a, **k): return {}
-        async def log_qa_step(self, *a, **k): return None
+        recorder_class = _Rec
+        judge_score_max = 1
+        async def load_user_data(self, user_dir, eval_n_qa):
+            return [], [{"query": "USR", "reference": "r", "metadata": {}}]
+        async def phase1_log_init(self, recorder, chunk): return None
+        def build_query_recorder_init(self, init_data, qa): return {}
+        def build_qa_prompt(self, query, retrieved, qa_metadata, reference=""):
+            return [{"role": "system", "content": "SYS"}, {"role": "user", "content": query}]
+        def extract_relevant_context(self, qa, init_data): return None
+        def build_qa_metadata(self, qa): return {}
+        async def log_qa_step(self, recorder, query, predicted, reference, score,
+                              judge_reason, qa_metadata, retrieved_memory, relevant_context):
+            recorder.steps.append({"query": query, "predicted": predicted, "score": score})
+        async def judge(self, query, predicted, reference, qa_metadata=None):
+            return 1, "fake-judge"
 
-    w = _W(memo_class=_Memo, model="gpt-5-mini", update_type="all_at_once")
-    agent = _StubAgent()
-    loop = asyncio.new_event_loop()
+    orig_ask = llm_mod.Agent.ask
+    llm_mod.Agent.ask = _fake_ask
     try:
-        out = loop.run_until_complete(
-            w._answer_query(agent, "SYS", "USR", {}))
+        w = _W(memo_class=_Memo, model="gpt-5-mini", update_type="all_at_once")
+        loop = asyncio.new_event_loop()
+        rec = loop.run_until_complete(
+            w.run_single_user("user1", stage="sanity", stage_spec={"n_qa": 1}))
     finally:
-        loop.close()
-    assert out == "ANSWER"
+        llm_mod.Agent.ask = orig_ask
+
     assert calls["messages"] == [{"role": "system", "content": "SYS"}]
     assert calls["user_msg"] == "USR"
     assert calls["kwargs"].get("with_history") is False
     assert "reasoning_effort" in calls["kwargs"]
+    assert rec.steps[0]["predicted"] == "ANSWER"
 
 
-def test_dynamicmem_answer_query_default_call_signature():
-    """DynamicMemWorkflow._answer_query default MUST call
-    agent.ask(user_msg, reasoning_effort=...) with NO system set and NO with_history."""
+def test_dynamicmem_default_answer_call_signature():
+    """When memo.general_answer defers, DynamicMem's answer step in
+    _run_item MUST call agent.ask(prompt, reasoning_effort=...) with NO
+    with_history kwarg and NO system message set — exact byte-identity of
+    the pre-refactor _answer_query default, now inlined in _run_item."""
     import asyncio
+    import common.llm as llm_mod
     from datasets.dynamicmem.workflow import DynamicMemWorkflow
+    from datasets.dynamicmem.env import DynamicMemRecorder
     from common.harness_base import MemoStructure
 
-    class _Memo(MemoStructure):
-        async def general_update(self, r): return None
-        async def general_retrieve(self, r): return {}
-
     calls = {}
-    class _StubAgent:
-        def __init__(self): self.messages = "UNSET"
-        async def ask(self, user_msg, **kwargs):
-            calls["user_msg"] = user_msg
-            calls["kwargs"] = kwargs
-            calls["messages"] = self.messages
-            return "ANSWER"
 
-    w = DynamicMemWorkflow(memo_class=_Memo, model="gpt-5-mini", update_type="all_at_once")
-    agent = _StubAgent()
-    loop = asyncio.new_event_loop()
+    async def _fake_ask(self, user_msg, **kwargs):
+        calls["user_msg"] = user_msg
+        calls["kwargs"] = kwargs
+        calls["messages"] = self.messages
+        return "ANSWER"
+
+    async def _fake_judge_item(self, item, raw_answer):
+        return 1.0, "fake-judge", raw_answer, {}
+
+    class _Memo(MemoStructure):
+        async def general_retrieve(self, r): return {}
+        # general_answer NOT overridden -> defaults to None (defers to agent)
+
+    item = {
+        "task_family": "apply_service",   # != TASK_FAMILY_STATE_COMPLETION -> Task C branch
+        "query": "PROMPT",
+        "service_family": "user_communication",
+        "output_template": None,
+        "checkpoint_id": "cp1",
+        "state_key": "",
+    }
+
+    orig_ask = llm_mod.Agent.ask
+    orig_judge_item = DynamicMemWorkflow._judge_item
+    llm_mod.Agent.ask = _fake_ask
+    DynamicMemWorkflow._judge_item = _fake_judge_item
     try:
-        out = loop.run_until_complete(
-            w._answer_query(agent, "", "PROMPT", {}))
+        w = DynamicMemWorkflow(memo_class=_Memo, model="gpt-5-mini", update_type="all_at_once")
+        memo = _Memo()
+        recorder = DynamicMemRecorder()
+        loop = asyncio.new_event_loop()
+        err = loop.run_until_complete(w._run_item(memo, recorder, item, []))
     finally:
-        loop.close()
-    assert out == "ANSWER"
-    assert calls["user_msg"] == "PROMPT"
+        llm_mod.Agent.ask = orig_ask
+        DynamicMemWorkflow._judge_item = orig_judge_item
+
+    assert err is None
+    assert "PROMPT" in calls["user_msg"]   # item["query"] (task_body) embedded in the built TCE prompt
     assert "reasoning_effort" in calls["kwargs"]
     assert "with_history" not in calls["kwargs"]      # DynamicMem default does NOT pass with_history
-    assert calls["messages"] == "UNSET"               # DynamicMem default does NOT set agent.messages
+    assert calls["messages"] == [{"role": "system", "content": ""}]  # untouched — no system override
+    assert recorder.steps[0]["predicted"] == "ANSWER"
 
 
 # -------------------- eval_common (shared runner + data-alignment) --------------------
@@ -248,30 +249,22 @@ def test_hipporag_memo_retrieve_returns_passages(monkeypatch=None):
 
 # -------------------- cc (native-answer MemoStructure) --------------------
 
-def test_cc_passthrough_answers_user_msg_via_cc():
+def test_cc_general_answer_runs_cc():
     import asyncio
-    from baselines.cc.memo import CCPassThroughMixin
-    from common.workflow import BaseWorkflow
-    from common.harness_base import MemoStructure
-    class _Memo(MemoStructure):
-        async def general_update(self, r): return None
-        async def general_retrieve(self, r): return {}
-        async def _run_cc(self, question):
-            self.seen = question
-            return ("NATIVE:" + question, {}, [])
-    class _W(CCPassThroughMixin, BaseWorkflow):
-        async def load_user_data(self, *a, **k): return None
-        def phase1_log_init(self, *a, **k): return None
-        def build_query_recorder_init(self, *a, **k): return {}
-        def build_qa_prompt(self, *a, **k): return [{"content": ""}, {"content": ""}]
-        def extract_relevant_context(self, *a, **k): return None
-        def build_qa_metadata(self, *a, **k): return {}
-        async def log_qa_step(self, *a, **k): return None
-    w = _W(memo_class=_Memo, model="gpt-5-mini", update_type="all_at_once")
-    memo = _Memo()
-    out = asyncio.new_event_loop().run_until_complete(
-        w._answer_query(agent=None, system_msg="SYS", user_msg="Q?", retrieved={}, memo=memo))
-    assert out == "NATIVE:SYS\n\nQ?"   # system_msg prepended to user_msg
+    from baselines.cc.memo import CCMemo
+    from baselines.eval_common import make_memo_class
+    async def _fake_ask(question, tmp_dir, model, max_turns, system_prompt=None):
+        return ("CCANS:" + question, {}, [])
+    Cls = make_memo_class(CCMemo, model="sonnet", max_turns=5, _ask_cc=_fake_ask)
+    memo = Cls()
+    class _Rec:
+        user_id = ""
+        init = {"sessions": [{"session_id": "s", "date": "d",
+                "messages": [{"role": "user", "content": "hi"}]}], "query": "q?"}
+    loop = asyncio.new_event_loop()
+    loop.run_until_complete(memo.general_update(_Rec()))   # writes context to tmp_dir
+    ans = loop.run_until_complete(memo.general_answer(_Rec(), {}, "FORMATTED PROMPT"))
+    assert ans == "CCANS:FORMATTED PROMPT"
 
 
 def test_cc_memo_retrieve_empty_and_run_cc_answers():

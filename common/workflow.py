@@ -335,20 +335,6 @@ class BaseWorkflow(ABC):
             self._judge_instance = self._make_judge()
         return await self._judge_instance.score(query, predicted, reference)
 
-    async def _answer_query(self, agent, system_msg, user_msg, retrieved, memo=None) -> str:
-        """Produce the final answer from the retrieved context. Default =
-        the standard QA agent. Overridable so a baseline whose method answers
-        natively (e.g. Claude Code) can return its own answer verbatim.
-
-        `memo` (optional, default None) is the per-user MemoStructure instance
-        for this QA step — unused by the default impl, but available to
-        overrides that need to reach the harness/memo's own state (e.g. a
-        pass-through baseline that answers via its own tool-using agent)."""
-        agent.messages = [{"role": "system", "content": system_msg}]
-        return await agent.ask(
-            user_msg, with_history=False, reasoning_effort=self.reasoning_effort
-        )
-
     # ---- Main entry point: run all users ----
 
     async def run_all_users(
@@ -556,8 +542,14 @@ class BaseWorkflow(ABC):
             system_msg = prompt[0]["content"]
             user_msg = prompt[1]["content"]
 
+            full_prompt = f"{system_msg}\n\n{user_msg}" if system_msg else user_msg
             try:
-                answer = await self._answer_query(agent, system_msg, user_msg, retrieved, memo=memo)
+                answer = await memo.general_answer(retrieve_recorder, retrieved, full_prompt)
+                if answer is None:
+                    agent.messages = [{"role": "system", "content": system_msg}]
+                    answer = await agent.ask(
+                        user_msg, with_history=False, reasoning_effort=self.reasoning_effort
+                    )
             except Exception as exc:
                 # QA-agent transport failure (retries already exhausted in
                 # common.llm). Mirror the retrieve-error path: record a

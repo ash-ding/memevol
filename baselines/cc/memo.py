@@ -4,11 +4,11 @@ re-stashes the CURRENT visible data (the workflow may have grown the visible
 prefix, e.g. DynamicMem checkpoints) and returns `{}` — cc injects NO memory
 into the QA prompt; it answers by reading the temp-dir file itself via tools.
 
-The actual answering happens in `CCPassThroughMixin._answer_query`, which
-overrides `BaseWorkflow._answer_query` so the workflow's shared Phase-2 step
-runs Claude Code (with Read/Grep/Glob tool access to the memo's temp dir) on
-the EXACT formatted prompt (`system_msg` + `user_msg`) the main method would
-pose to its own QA agent — this is what makes cc emit the benchmark's
+The actual answering happens in `CCMemo.general_answer`, which the workflow's
+shared answer step calls first (falling back to the standard QA agent only
+when a memo returns None) — cc runs Claude Code (with Read/Grep/Glob tool
+access to the memo's temp dir) on the EXACT formatted prompt the main method
+would pose to its own QA agent, which is what makes cc emit the benchmark's
 required output format (e.g. DynamicMem TCE's "Return JSON only" + skeleton)
 instead of free prose that the judge can't parse.
 
@@ -214,10 +214,16 @@ class CCMemo(MemoStructure):
     async def general_retrieve(self, recorder) -> dict:
         # ensure the CURRENT visible data is on disk (Phase-2 init carries the
         # prefix); inject NO memory into the QA prompt — cc reads via file
-        # tools (see CCPassThroughMixin._answer_query, which calls _run_cc
-        # with the workflow's own formatted prompt).
+        # tools (see general_answer, which calls _run_cc with the workflow's
+        # own formatted prompt).
         self._write_context(recorder.init, getattr(recorder, "user_id", "u"))
         return {}
+
+    async def general_answer(self, recorder, retrieved, prompt) -> str:
+        """cc answers the workflow's formatted prompt via Claude Code (native
+        agentic answer). self._tmp_dir was written by general_update/retrieve."""
+        answer, _usage, _trace = await self._run_cc(prompt)
+        return answer
 
     async def _run_cc(self, question: str) -> tuple:
         """Run Claude Code on `question` (the workflow's exact formatted
@@ -238,22 +244,3 @@ class CCMemo(MemoStructure):
         if tmp_dir:
             import shutil
             shutil.rmtree(tmp_dir, ignore_errors=True)
-
-
-class CCPassThroughMixin:
-    """Make the workflow's answer step run Claude Code on the EXACT formatted
-    prompt (`system_msg` + `user_msg`) the main method would pose to its own
-    QA agent, instead of relaying a pre-computed answer — see
-    BaseWorkflow._answer_query. This is what makes cc emit the benchmark's
-    required output format (e.g. DynamicMem TCE JSON) rather than free prose."""
-    async def _answer_query(self, agent, system_msg, user_msg, retrieved, memo=None) -> str:
-        if memo is None:
-            raise RuntimeError(
-                "CCPassThroughMixin._answer_query requires `memo` (the CCMemo "
-                "instance) to reach _run_cc — the workflow call site must "
-                "pass memo=memo (see common/workflow.py / "
-                "datasets/dynamicmem/workflow.py)."
-            )
-        question = f"{system_msg}\n\n{user_msg}" if system_msg else user_msg
-        answer, _usage, _trace = await memo._run_cc(question)
-        return answer

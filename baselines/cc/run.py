@@ -1,7 +1,7 @@
 """cc (Claude Code) baseline — evaluate on one benchmark's split, comparable
 to the main method (same split/judge/scoring via the per-dataset workflow).
-cc is a NATIVE-answer baseline: `CCPassThroughMixin` bypasses the shared QA
-agent so the workflow judges cc's own tool-using answer verbatim.
+cc is a NATIVE-answer baseline: `CCMemo.general_answer` bypasses the shared
+QA agent so the workflow judges cc's own tool-using answer verbatim.
 
     python baselines/cc/run.py --dataset locomo
     python baselines/cc/run.py --dataset dynamicmem --stage-spec '{"n_samples": 2}'
@@ -18,7 +18,7 @@ except ImportError:
     pass
 from baselines.registry import DATASETS
 from baselines.eval_common import make_memo_class, run_baseline, parse_stage_spec
-from baselines.cc.memo import CCMemo, CCPassThroughMixin, MODEL_ALIASES
+from baselines.cc.memo import CCMemo, MODEL_ALIASES
 
 
 def main():
@@ -37,12 +37,12 @@ def main():
     memo_class = make_memo_class(CCMemo, model=model, max_turns=a.max_turns, judge_model=a.judge_model)
     out_dir = Path(__file__).resolve().parent / "results" / a.dataset / a.split
     # qa_model=a.judge_model: the shared QA agent is bypassed by
-    # CCPassThroughMixin (cc's own answer is judged verbatim), so its model
-    # choice is irrelevant to scoring — but BaseWorkflow's constructor still
-    # requires one.
+    # CCMemo.general_answer (cc's own answer is judged verbatim), so its
+    # model choice is irrelevant to scoring — but BaseWorkflow's constructor
+    # still requires one.
     score = asyncio.run(run_baseline(
         dataset=a.dataset, split=a.split, user_stage_spec=parse_stage_spec(a.stage_spec),
-        memo_class=memo_class, workflow_overrides=(CCPassThroughMixin,),
+        memo_class=memo_class,
         qa_model=a.judge_model, judge_model=a.judge_model,
         out_dir=out_dir, max_sample_concurrent=a.max_sample_concurrent,
     ))

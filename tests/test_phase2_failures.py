@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Optional
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("OPENAI_API_KEY", "test-dummy-key")
 
+from common.harness_base import MemoStructure
 from common.workflow import BaseWorkflow
 from forge.orchestrator import _collect_sanity_errors
 
@@ -38,12 +39,13 @@ class FakeRecorder:
         self.reward = r
 
 
-class GoodMemo:
+class GoodMemo(MemoStructure):
     async def general_update(self, recorder):
         pass
 
     async def general_retrieve(self, recorder):
         return {"context": "ok"}
+    # general_answer NOT overridden -> MemoStructure default None -> agent answers
 
 
 class BadRetrieveMemo(GoodMemo):

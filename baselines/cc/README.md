@@ -4,7 +4,7 @@
 design entirely: Phase 1 stashes the currently-visible user data to a
 per-user temp directory; Phase 2 runs Claude Code with file tools
 (Read/Grep/Glob) against that directory and answers the question directly.
-`CCPassThroughMixin` overrides `BaseWorkflow._answer_query` so the workflow
+`CCMemo.general_answer` (the shared workflow's standardized answer hook)
 judges cc's own tool-using answer verbatim on the EXACT formatted prompt the
 main method would give its own QA agent — this is what makes cc emit each
 benchmark's required output format (e.g. DynamicMem TCE's "Return JSON
@@ -48,8 +48,8 @@ baselines/venv/bin/python baselines/cc/run.py \
   30).
 - `--judge_model` — the judge model. Also passed as `qa_model` to
   `run_baseline` for API-compatibility (`BaseWorkflow.__init__` requires
-  one), but it is never actually invoked to answer: `CCPassThroughMixin`
-  intercepts `_answer_query` before the shared QA agent is called.
+  one), but it is never actually invoked to answer: `CCMemo.general_answer`
+  answers before the shared QA agent would be reached.
 - `--max_sample_concurrent` — per-eval user/sample concurrency (default 3).
 
 Examples:

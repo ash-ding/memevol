@@ -5,7 +5,8 @@ official DynamicMem evaluation is CHECKPOINT-INTERLEAVED: each of the 5
 checkpoints has an `as_of` cutoff; memory at cp_i reflects exactly
 app_logs[:log_index+1], and cp_i's task items are answered against that
 state before the next segment is ingested. `run_single_user` is overridden
-accordingly; Phase-1 chunking (`update_type`) applies within each segment.
+accordingly; each checkpoint's new app-log segment is handed to
+general_update in one call — the memo owns ingestion granularity.
 
 Two task families per checkpoint (both scored 0.0-1.0 by the official
 holistic Core+Detail judge — see datasets/dynamicmem/tce_prompts.py):
@@ -233,7 +234,10 @@ class DynamicMemWorkflow(BaseWorkflow):
         agent = Agent(system_prompt="", model=self.model)
         answer_err: Optional[Tuple[str, str]] = None
         try:
-            raw_answer = await self._answer_query(agent, "", prompt, retrieved, memo=memo)
+            ans = await memo.general_answer(recorder, retrieved, prompt)
+            if ans is None:
+                ans = await agent.ask(prompt, reasoning_effort=self.reasoning_effort)
+            raw_answer = ans
         except Exception as exc:
             # Keep the official empty-answer semantics (parse failure → 0)
             # but surface the transport error to the failure_info tally.
@@ -252,13 +256,6 @@ class DynamicMemWorkflow(BaseWorkflow):
             retrieved_memory=retrieved, relevant_context=relevant_context,
         )
         return answer_err
-
-    async def _answer_query(self, agent, system_msg, user_msg, retrieved, memo=None) -> str:
-        """Default TCE answer path (unchanged). `system_msg` is unused here —
-        the TCE prompt is a single string. Overridable for pass-through
-        baselines. `memo` (optional, default None) is unused by the default
-        impl — see BaseWorkflow._answer_query for the rationale."""
-        return await agent.ask(user_msg, reasoning_effort=self.reasoning_effort)
 
     def _build_answer_prompt(self, item: Dict, memory_blocks: List[str]) -> str:
         if item["task_family"] == TASK_FAMILY_STATE_COMPLETION:

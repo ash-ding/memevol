@@ -15,9 +15,10 @@ which resolves the SAME production per-dataset workflow the main method
 uses (`baselines.registry.resolve`), so their DynamicMem numbers get the
 official TCE protocol too, and both run on all four datasets
 (dynamicmem/locomo/longmemeval_s/longmemeval_m) via one `run.py --dataset
-...` entrypoint. `cc` bypasses the shared QA agent (`CCPassThroughMixin`
-overrides `_answer_query`) — its own tool-using answer is judged verbatim
-instead of being relayed through a second LLM call.
+...` entrypoint. `cc` bypasses the shared QA agent (`CCMemo.general_answer`,
+the standardized answer hook every `MemoStructure` may implement) — its own
+tool-using answer is judged verbatim instead of being relayed through a
+second LLM call.
 
 All baselines share **`baselines/venv/`** (full ML install:
 `pip install -r baselines/requirements.txt`) and write artifacts under
@@ -74,9 +75,10 @@ shared runner as hipporag2, on any of the four datasets:
   single JSON file.
 - **Phase 2 (`general_retrieve`)**: runs Claude Code with tool access
   (Read, Grep, Glob) to that temp directory and asks it to answer the
-  question directly — no separate retrieval step. `CCPassThroughMixin`
-  overrides `_answer_query` so the workflow judges cc's own answer
-  verbatim, bypassing the shared QA agent entirely.
+  question directly — no separate retrieval step.
+- **Answer (`general_answer`)**: runs Claude Code on the workflow's exact
+  formatted prompt so the workflow judges cc's own answer verbatim,
+  bypassing the shared QA agent entirely.
 
 ```bash
 # Full eval on one dataset
