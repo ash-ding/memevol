@@ -43,7 +43,8 @@ from common.harness_base import MemoStructure as _CommonMemoStructure
 class MemoStructure(_CommonMemoStructure):
     """Evolution-target base class for forge harnesses.
 
-    Inherit from this and implement both abstract methods:
+    Inherit from this and implement build (`general_update`) and retrieve
+    (`general_retrieve`):
 
         class MyHarness(MemoStructure):
             async def general_update(self, recorder) -> None: ...

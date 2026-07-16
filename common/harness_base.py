@@ -98,8 +98,12 @@ class MemoStructure(ABC):
                 yield [item]
         elif self._update_type == "chunked":
             n = max(1, self._n_chunks)
-            size = max(1, (len(data) + n - 1) // n)
-            for i in range(0, len(data), size):
-                yield data[i:i + size]
+            n = min(n, len(data)) or 1
+            base, extra = divmod(len(data), n)
+            start = 0
+            for i in range(n):
+                size = base + (1 if i < extra else 0)
+                yield data[start:start + size]
+                start += size
         else:  # all_at_once
             yield data

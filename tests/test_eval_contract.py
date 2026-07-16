@@ -49,6 +49,25 @@ def test_chunked_partitions():
     assert len(chunks) == 5 and sum(len(c) for c in chunks) == 10
     assert [x for c in chunks for x in c] == data  # order preserved, no loss
 
+    m._update_type = "chunked"
+    m._n_chunks = 5
+    chunks = list(m.chunked(list(range(11))))   # 11 not divisible by 5
+    assert len(chunks) == 5                       # exactly n_chunks partitions
+    assert sum(len(c) for c in chunks) == 11      # no loss
+    assert max(len(c) for c in chunks) - min(len(c) for c in chunks) <= 1  # near-equal
+    assert [x for c in chunks for x in c] == list(range(11))               # order preserved
+
+
+def test_forge_loads_the_harness_class_not_the_base():
+    """De-abstracting the base must not make the class-discriminator pick the
+    imported base instead of the harness's own class."""
+    from pathlib import Path
+    from forge.launch import _load_harness_class
+    from forge.contract import load_harness_class
+    seed = Path(__file__).resolve().parents[1] / "seeds" / "no_memory"
+    assert _load_harness_class(seed).__name__ == "NoMemoryHarness"
+    assert load_harness_class(seed).__name__ == "NoMemoryHarness"
+
 
 def main():
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
