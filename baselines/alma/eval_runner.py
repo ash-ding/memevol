@@ -57,8 +57,6 @@ async def run_evaluation(
     model: str = "gpt-5-mini",
     eval_n_samples: int = 6,
     status: str = "search",
-    update_type: str = "all_at_once",
-    n_chunks: int = 5,
     max_logs: Optional[int] = None,
     eval_n_qa: Optional[int] = None,
     max_sample_concurrent: int = 6,
@@ -137,8 +135,6 @@ async def run_evaluation(
         "--module_path", str(dest),
         "--memory_id", memory_SHA,
         "--output_run_dir", str(output_run_dir),
-        "--update_type", update_type,
-        "--n_chunks", str(n_chunks),
         "--model", model,
         "--eval_n_samples", str(eval_n_samples),
         "--status", status,
@@ -165,7 +161,7 @@ async def run_evaluation(
         "PYTHONPATH": str(PROJECT_ROOT) + os.pathsep + os.environ.get("PYTHONPATH", ""),
     }
 
-    log.info(f"Running evaluation: SHA={memory_SHA} mode={mode} update_type={update_type}")
+    log.info(f"Running evaluation: SHA={memory_SHA} mode={mode}")
 
     process = await asyncio.create_subprocess_exec(
         *launch_args,

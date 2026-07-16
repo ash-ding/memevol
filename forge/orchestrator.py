@@ -110,7 +110,6 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "smoke_test": False,
     "model": "gpt-5-mini",
     "judge_model": "gpt-5-mini",
-    "update_type": "all_at_once",
     "max_sample_concurrent": 3,
     # Evaluation coverage (search loop AND forge.heldout):
     #   sample — the staged gauntlet (stage1→2→3 nested sampling + thresholds)
@@ -481,7 +480,7 @@ def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
     # Top-level CLI overrides (each applied only if explicitly provided)
     for key in (
         "steps", "model", "judge_model",
-        "update_type", "max_sample_concurrent",
+        "max_sample_concurrent",
     ):
         val = getattr(args, key, None)
         if val is not None:
@@ -1150,7 +1149,6 @@ async def sanity_check_harness(
     datasets_config: Dict[str, Dict[str, Any]],
     model: str,
     judge_model: str,
-    update_type: str,
     max_sample_concurrent: int,
     gpu: bool = False,
     llm_cfg: Optional[Dict[str, Any]] = None,
@@ -1180,7 +1178,6 @@ async def sanity_check_harness(
                 stage_spec=stage_wire_spec(ds, params["stages"]["sanity_check"]),
                 model=model,
                 judge_model=params.get("judge_model", judge_model),
-                update_type=update_type,
                 max_sample_concurrent=max_sample_concurrent,
                 gpu=gpu,
                 anthropic_transport=_llm_cfg.get("anthropic_transport", "api"),
@@ -1212,7 +1209,6 @@ async def evaluate_harness(
     smoke: bool = False,          # True = one sanity_check-sized pass, no gauntlet
     model: str,
     judge_model: str,
-    update_type: str,
     max_sample_concurrent: int,
     memory_cache: bool = True,
     gpu: bool = False,
@@ -1268,7 +1264,6 @@ async def evaluate_harness(
                     stage_spec=spec,
                     model=model,
                     judge_model=ds_judge,
-                    update_type=update_type,
                     max_sample_concurrent=max_sample_concurrent,
                     memcache_dir=memcache_dir,
                     gpu=gpu,
@@ -1427,7 +1422,6 @@ async def propose_eval_one(
                 timeout_s=cfg["proposer"]["timeout_s"],
                 sanity_enabled=sanity_enabled,
                 active_datasets=list(cfg.get("datasets", {}).keys()),
-                update_type=cfg["update_type"],
                 agent=agent,
                 agent_opts=agent_opts,
                 prompts_version=cfg["prompts"]["version"],
@@ -1476,7 +1470,6 @@ async def propose_eval_one(
                 new_id, image_path,
                 datasets_config=datasets_config,
                 model=cfg["model"], judge_model=cfg["judge_model"],
-                update_type=cfg["update_type"],
                 max_sample_concurrent=cfg["max_sample_concurrent"],
                 gpu=cfg["gpu"]["enabled"],
                 llm_cfg=cfg.get("llm"),
@@ -1505,7 +1498,6 @@ async def propose_eval_one(
                     timeout_s=cfg["proposer"]["timeout_s"],
                     sanity_enabled=sanity_enabled,
                     active_datasets=list(cfg.get("datasets", {}).keys()),
-                    update_type=cfg["update_type"],
                     agent=agent,
                     agent_opts=agent_opts,
                     prompts_version=cfg["prompts"]["version"],
@@ -1552,7 +1544,6 @@ async def propose_eval_one(
         split="search",
         smoke=cfg["smoke_test"],
         model=cfg["model"], judge_model=cfg["judge_model"],
-        update_type=cfg["update_type"],
         max_sample_concurrent=cfg["max_sample_concurrent"],
         memory_cache=cfg.get("memory_cache", True),
         gpu=cfg["gpu"]["enabled"],
@@ -1912,7 +1903,6 @@ async def _adopt_orphan(
         split="search",
         smoke=cfg["smoke_test"],
         model=cfg["model"], judge_model=cfg["judge_model"],
-        update_type=cfg["update_type"],
         max_sample_concurrent=cfg["max_sample_concurrent"],
         memory_cache=cfg.get("memory_cache", True),
         gpu=cfg["gpu"]["enabled"],
@@ -2085,8 +2075,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     parser.add_argument("--model", default=None)
     parser.add_argument("--judge-model", default=None)
-    parser.add_argument("--update-type", default=None,
-                        choices=["all_at_once", "chunked", "sequential"])
     parser.add_argument("--max-sample-concurrent", type=int, default=None)
 
     parser.add_argument("--proposer-model", default=None)

@@ -6,7 +6,6 @@ max_sample_concurrent: 3
 
 model: gpt-5-mini/low   # "/low" pins reasoning effort — cuts generation latency (timeout-storm fix)
 judge_model: gpt-5-mini
-update_type: all_at_once
 
 # Default proposer agent is claude_code; override with `agent: codex` here
 # or `--agent codex` on CLI. Each agent has its own model + opts.

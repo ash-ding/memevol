@@ -107,7 +107,6 @@ async def _run(cfg: Dict[str, Any], harness_paths: List[str]) -> None:
             datasets_config=cfg["datasets"],
             split="test",
             model=cfg["model"], judge_model=cfg["judge_model"],
-            update_type=cfg["update_type"],
             max_sample_concurrent=cfg["max_sample_concurrent"],
             memory_cache=cfg.get("memory_cache", True),
             gpu=cfg["gpu"]["enabled"],

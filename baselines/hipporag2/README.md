@@ -28,9 +28,8 @@ to `run.py`'s DynamicMem output (different protocol).
 
 Per the standardized `MemoStructure` contract, `build_memory_from_data` is called
 ONCE per build call with the whole newly-visible data already in
-`recorder.init` — ingestion granularity is the memo's own choice
-(`self.chunked(...)` / `self._update_type` / `self._n_chunks`); `HippoRAGMemo`
-indexes the whole call's passages in one shot (no chunking) and relies on
+`recorder.init` — the memo ingests the handed data however it chooses;
+`HippoRAGMemo` indexes the whole call's passages in one shot and relies on
 `HippoRAG.index()`'s additive/dedup-by-hash behavior for correctness across
 calls.
 

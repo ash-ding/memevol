@@ -17,7 +17,8 @@ The contract (unchanged from common):
   Phase 1 — `build_memory_from_data(recorder)` is called ONCE per build call with
   `recorder.init` holding the data newly visible for that call (see the
   per-dataset shapes in the proposer system prompt). Build/extend your memory;
-  choose your own ingestion granularity (use `self.chunked(...)` for chunking).
+  choose your own ingestion granularity (write your own loop if you want to
+  ingest in pieces).
   For DynamicMem the calls follow the official TCE checkpoint protocol: one call
   per checkpoint with that checkpoint's new app-log segment, interleaved with
   Phase-2 queries — accumulate across calls; never assume you have the full stream.

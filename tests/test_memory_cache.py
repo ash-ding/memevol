@@ -85,7 +85,7 @@ class CountingConvMemo(FakeMemo):
 
 
 def _meta(**over):
-    m = {"model": "gpt-5-mini", "update_type": "all_at_once", "n_chunks": 5,
+    m = {"model": "gpt-5-mini",
          "max_logs": None, "harness_fingerprint": "abc123def456"}
     m.update(over)
     return m
@@ -121,8 +121,7 @@ def test_meta_mismatch_is_miss():
         memo = FakeMemo()
         mc.save_memo(memo, Path(d), "u__final", _meta())
         # each guarded field mismatching → miss
-        for key, bad in [("model", "gpt-4.1"), ("update_type", "sequential"),
-                         ("n_chunks", 9), ("max_logs", 100),
+        for key, bad in [("model", "gpt-4.1"), ("max_logs", 100),
                          ("harness_fingerprint", "ffffffffffffffff")]:
             assert mc.load_memo(Path(d), "u__final", _meta(**{key: bad})) is None, \
                 f"mismatched {key} must be a miss"

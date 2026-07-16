@@ -192,8 +192,6 @@ async def _async_main(args: argparse.Namespace) -> None:
     workflow = workflow_cls(
         memo_class=memo_class,
         model=args.model,
-        update_type=args.update_type,
-        n_chunks=args.n_chunks,
         max_logs=args.max_logs,
         judge_model=args.judge_model,
     )
@@ -251,9 +249,6 @@ if __name__ == "__main__":
                              "(omit to disable caching)")
     parser.add_argument("--model", default="gpt-5-mini")
     parser.add_argument("--judge-model", default="gpt-5-mini")
-    parser.add_argument("--update-type", default="all_at_once",
-                        choices=["all_at_once", "chunked", "sequential"])
-    parser.add_argument("--n-chunks", type=int, default=5)
     parser.add_argument("--max-logs", type=int, default=None)
     parser.add_argument("--max-sample-concurrent", type=int, default=3)
     args = parser.parse_args()

@@ -20,9 +20,9 @@ by `run.py` (2026-07); numbers from that script are NOT comparable to
 
 Per the standardized `MemoStructure` contract, `build_memory_from_data` is called
 ONCE per build call with the whole newly-visible data already in
-`recorder.init` — ingestion granularity is the memo's own choice
-(`self.chunked(...)` / `self._update_type` / `self._n_chunks`); `CCMemo`
-doesn't chunk at all, it just stashes the whole payload to disk each call.
+`recorder.init` — the memo ingests the handed data however it chooses;
+`CCMemo` doesn't split it at all, it just stashes the whole payload to disk
+each call.
 
 ## Usage
 

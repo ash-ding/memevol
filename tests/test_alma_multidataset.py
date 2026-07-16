@@ -316,10 +316,9 @@ def test_locomo_end_to_end_fake():
 def test_history_ckpt_filename_includes_dataset():
     from baselines.alma.meta_agent import MetaAgent
     ma = MetaAgent(dataset="locomo")
-    fn = ma._history_ckpt_filename("check", "all_at_once", 10, "TS")
-    assert "locomo" in fn and fn == "check_locomo_all_at_once_10_TS.json"
-    # default preserves the historical dynamicmem filename byte-for-byte
-    assert MetaAgent()._history_ckpt_filename("check", "all_at_once", 10, "TS") == "check_dynamicmem_all_at_once_10_TS.json"
+    fn = ma._history_ckpt_filename("check", 10, "TS")
+    assert "locomo" in fn and fn == "check_locomo_10_TS.json"
+    assert MetaAgent()._history_ckpt_filename("check", 10, "TS") == "check_dynamicmem_10_TS.json"
 
 
 # ---------------- runner ----------------

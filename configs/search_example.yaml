@@ -73,12 +73,6 @@ llm:
     region: us-east5
     credentials: null
 
-# How Phase 1 chunks app_logs / sessions before calling build_memory_from_data():
-#   all_at_once — one call with everything (default; cheapest, most context)
-#   chunked     — split into N equal chunks (uses an internal n_chunks=5)
-#   sequential  — one update per item (most fine-grained, most calls)
-update_type: all_at_once
-
 # Evaluation coverage — applies to mode=search AND mode=test (CLI: --coverage):
 #   sample — staged gauntlet (stage1→2→3 nested sampling + threshold gates)
 #   full   — ONE whole-split evaluation per benchmark: no stage1/2, no

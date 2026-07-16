@@ -658,7 +658,6 @@ def _render_and_stage_prompts(
     prompts_version: Optional[str],
     sanity_enabled: bool,
     active_datasets: Optional[List[str]],
-    update_type: str,
     error_trace: Optional[str] = None,
 ) -> Dict[str, str]:
     """Render system + task prompts HOST-SIDE for the chosen version and
@@ -678,7 +677,6 @@ def _render_and_stage_prompts(
     system_text = build_proposer_system(
         sanity_enabled=sanity_enabled,
         active_datasets=active_datasets or None,
-        update_type=update_type,
         version=prompts_version,
     )
     new_dir_rel = f"harnesses/{new_id}"
@@ -716,7 +714,6 @@ async def propose(
     timeout_s: int = 25 * 60,
     sanity_enabled: bool = True,
     active_datasets: Optional[List[str]] = None,
-    update_type: str = "all_at_once",
     agent: str = "claude_code",
     agent_opts: Optional[Dict[str, Any]] = None,
     prompts_version: Optional[str] = None,
@@ -761,7 +758,6 @@ async def propose(
         prompts_version=prompts_version,
         sanity_enabled=sanity_enabled,
         active_datasets=active_datasets,
-        update_type=update_type,
     )
 
     proposer_home, auth_binds, extra_env = _prepare_agent_auth(
@@ -811,7 +807,6 @@ async def propose_with_fix(
     timeout_s: int = 25 * 60,
     sanity_enabled: bool = True,
     active_datasets: Optional[List[str]] = None,
-    update_type: str = "all_at_once",
     agent: str = "claude_code",
     agent_opts: Optional[Dict[str, Any]] = None,
     prompts_version: Optional[str] = None,
@@ -842,7 +837,6 @@ async def propose_with_fix(
         prompts_version=prompts_version,
         sanity_enabled=sanity_enabled,
         active_datasets=active_datasets,
-        update_type=update_type,
         error_trace=error_trace,
     )
 

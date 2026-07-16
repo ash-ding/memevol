@@ -78,7 +78,6 @@ async def run_baseline(
     judge_model: str,
     out_dir: Path,
     max_sample_concurrent: int = 3,
-    update_type: str = "all_at_once",
 ) -> Dict[str, Any]:
     from common.tokens import init_global_tracker
     stage_spec = effective_stage_spec(dataset, user_stage_spec)   # family-full base + user overrides
@@ -89,7 +88,6 @@ async def run_baseline(
     tracker = init_global_tracker()
     workflow = workflow_cls(
         memo_class=memo_class, model=qa_model, judge_model=judge_model,
-        update_type=update_type,
     )
     workflow.status = split
     workflow.output_run_dir = out_dir

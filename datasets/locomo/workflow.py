@@ -60,7 +60,7 @@ class LoCoMoWorkflow(BaseWorkflow):
     # init_data is a conversation dict (not a list), so the base class's
     # list-shaped default doesn't fit. We override _phase1_update to hand
     # the whole conversation dict to build_memory_from_data in one call; the memo
-    # chunks internally if it wants (self.chunked(...) inside the harness).
+    # chooses its own ingestion granularity internally.
 
     async def phase1_log_init(
         self, recorder: Basic_Recorder, chunk: Dict

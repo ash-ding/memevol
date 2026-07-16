@@ -44,8 +44,8 @@ class MetaAgent:
         from baselines.registry import resolve
         return resolve(self.dataset)[2]
 
-    def _history_ckpt_filename(self, result_dir: str, update_type: str, steps: int, timestamp: str) -> str:
-        return f"{result_dir}_{self.dataset}_{update_type}_{steps}_{timestamp}.json"
+    def _history_ckpt_filename(self, result_dir: str, steps: int, timestamp: str) -> str:
+        return f"{result_dir}_{self.dataset}_{steps}_{timestamp}.json"
 
     def read_memo_info(
         self,
@@ -116,8 +116,6 @@ class MetaAgent:
         self,
         code_str: str,
         eval_n_samples: int = 6,
-        update_type: str = 'all_at_once',
-        n_chunks: int = 5,
         max_logs: Optional[int] = None,
         eval_n_qa: Optional[int] = None,
         max_sample_concurrent: int = 6,
@@ -142,8 +140,6 @@ class MetaAgent:
                     model=self.execution_model,
                     eval_n_samples=eval_n_samples,
                     status='search',
-                    update_type=update_type,
-                    n_chunks=n_chunks,
                     max_logs=max_logs,
                     eval_n_qa=eval_n_qa,
                     max_sample_concurrent=max_sample_concurrent,
@@ -185,8 +181,6 @@ class MetaAgent:
         memo_SHA: str,
         eval_n_samples: int = 6,
         status: str = 'search',
-        update_type: str = 'all_at_once',
-        n_chunks: int = 5,
         max_logs: Optional[int] = None,
         eval_n_qa: Optional[int] = None,
         max_sample_concurrent: int = 6,
@@ -217,8 +211,6 @@ class MetaAgent:
             new_memo_SHA, new_code = await self.examine_new_code(
                 code_str=new_code,
                 eval_n_samples=eval_n_samples,
-                update_type=update_type,
-                n_chunks=n_chunks,
                 max_logs=max_logs,
                 eval_n_qa=eval_n_qa,
                 max_sample_concurrent=max_sample_concurrent,
@@ -241,8 +233,6 @@ class MetaAgent:
             model=self.execution_model,
             eval_n_samples=eval_n_samples,
             status=status,
-            update_type=update_type,
-            n_chunks=n_chunks,
             max_logs=max_logs,
             eval_n_qa=eval_n_qa,
             max_sample_concurrent=max_sample_concurrent,
@@ -269,8 +259,6 @@ class MetaAgent:
         max_sample_concurrent: int = 6,
         result_dir: str = "check",
         eval_n_samples: int = 6,
-        update_type: str = 'all_at_once',
-        n_chunks: int = 5,
         max_logs: Optional[int] = None,
         eval_n_qa: Optional[int] = None,
         n_score_bins: int = 3,
@@ -289,8 +277,6 @@ class MetaAgent:
                 model=self.execution_model,
                 eval_n_samples=eval_n_samples,
                 status='search',
-                update_type=update_type,
-                n_chunks=n_chunks,
                 max_logs=max_logs,
                 eval_n_qa=eval_n_qa,
                 max_sample_concurrent=max_sample_concurrent,
@@ -314,8 +300,6 @@ class MetaAgent:
             new_memo_SHA, new_code = await self.examine_new_code(
                 code_str=new_code,
                 eval_n_samples=eval_n_samples,
-                update_type=update_type,
-                n_chunks=n_chunks,
                 max_logs=max_logs,
                 eval_n_qa=eval_n_qa,
                 max_sample_concurrent=max_sample_concurrent,
@@ -334,8 +318,6 @@ class MetaAgent:
                 model=self.execution_model,
                 eval_n_samples=eval_n_samples,
                 status='search',
-                update_type=update_type,
-                n_chunks=n_chunks,
                 max_logs=max_logs,
                 eval_n_qa=eval_n_qa,
                 max_sample_concurrent=max_sample_concurrent,
@@ -357,7 +339,7 @@ class MetaAgent:
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         if not self.history_ckpt_path:
-            file_name = self._history_ckpt_filename(result_dir, update_type, steps, timestamp)
+            file_name = self._history_ckpt_filename(result_dir, steps, timestamp)
         else:
             file_name = self.history_ckpt_path
 
@@ -417,8 +399,6 @@ class MetaAgent:
                             await self.run_single_memo(
                                 memo_SHA,
                                 eval_n_samples=eval_n_samples,
-                                update_type=update_type,
-                                n_chunks=n_chunks,
                                 max_logs=max_logs,
                                 eval_n_qa=eval_n_qa,
                                 max_sample_concurrent=max_sample_concurrent,

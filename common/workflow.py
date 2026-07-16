@@ -5,7 +5,7 @@ The base class handles (all unchanged from the prior DynamicMem_Workflow):
 
   - concurrency over users (semaphore) + per-user Exception capture
   - QA progress tracking (`_QAProgressTracker`)
-  - Phase 1 dispatch: `all_at_once` / `chunked` / `sequential`
+  - Phase 1 dispatch: single build_memory_from_data call per visible-data batch
   - Phase 2 QA loop with per-QA failure isolation (a retrieve/answer error
     records a score=0 step with a `[Phase2_*_ERROR]` marker and continues;
     the per-user error tally lands in `recorder.failure_info`, which the
@@ -149,8 +149,6 @@ class BaseWorkflow(ABC):
         different ingest config or harness code ⇒ different memory."""
         return {
             "model": self.model,
-            "update_type": self.update_type,
-            "n_chunks": self.n_chunks,
             "max_logs": self.max_logs,
             "harness_fingerprint": self.harness_fingerprint,
         }
@@ -195,8 +193,6 @@ class BaseWorkflow(ABC):
         self,
         memo_class: Type[MemoStructure],
         model: str,
-        update_type: str = "all_at_once",
-        n_chunks: int = 5,
         max_logs: Optional[int] = None,
         eval_n_qa: Optional[int] = None,
         judge_model: str = "gpt-5-mini",
@@ -204,8 +200,6 @@ class BaseWorkflow(ABC):
         self.memo_class = memo_class
         self.memo_sha = ""                  # set by caller (for logging only)
         self.status = "search"
-        self.update_type = update_type
-        self.n_chunks = n_chunks
         self.max_logs = max_logs
         self.eval_n_qa = eval_n_qa
         self.judge_model = judge_model
@@ -614,8 +608,8 @@ class BaseWorkflow(ABC):
 
     async def _phase1_update(self, memo: MemoStructure, init_data: Any) -> None:
         """Hand the whole visible `init_data` to the memo in ONE build_memory_from_data
-        call. Ingestion granularity is the memo's own choice (it may use
-        self.chunked(...)); the workflow no longer chunks."""
+        call. Ingestion granularity is the memo's own choice; the workflow
+        does not chunk."""
         if not isinstance(init_data, list):
             raise TypeError(
                 f"{type(self).__name__}: default _phase1_update expects init_data to be a list; "
