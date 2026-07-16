@@ -12,7 +12,9 @@ Per-harness flow (search loop):
                                  enter frontier with sanity_failed + score=0
 
 For `smoke_test: true`: skip sanity entirely and run the evaluator once per
-benchmark at `stages.sanity_check` sizes (dev IS the sanity-size verification).
+benchmark at `stages.sanity_check` sizes (the run IS the sanity-size
+verification). steps/k_per_step are forced to 1 unless explicitly given on
+the CLI — a smoke run is a single propose→eval pipeline check by default.
 
 Two ways to launch:
 
@@ -517,6 +519,23 @@ def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
         cfg["data_isolation"] = False
     if getattr(args, "smoke_test", False):
         cfg["smoke_test"] = True
+    # Smoke test = a single-candidate pipeline check (2026-07-16): force
+    # steps=1 / k_per_step=1 unless the CLI EXPLICITLY asks for more. YAML
+    # values are deliberately overridden — a search config's steps must not
+    # silently multiply a smoke run into steps*k proposer calls.
+    if cfg["smoke_test"]:
+        forced = []
+        if getattr(args, "steps", None) is None and cfg["steps"] != 1:
+            cfg["steps"] = 1
+            forced.append("steps=1")
+        if args.k_per_step is None and cfg["propose"]["k_per_step"] != 1:
+            cfg["propose"]["k_per_step"] = 1
+            forced.append("k_per_step=1")
+        if forced:
+            log.info(
+                "smoke test: forcing %s (pass --steps / --k-per-step to override)",
+                ", ".join(forced),
+            )
     if args.no_sanity:
         cfg["sanity"]["enabled"] = False
     if args.sanity_max_retries is not None:

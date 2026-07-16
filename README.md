@@ -145,9 +145,10 @@ host-specific. Override there if needed.)
 
 ```bash
 # Quick smoke: --smoke-test turns any config into a sanity-size single pass
-# (no gauntlet, no sanity gate). With --steps 1 it exercises the whole
-# propose → eval → score pipeline cheaply (~1-2 min, a handful of LLM calls).
-venv/bin/python -m forge.orchestrator --config configs/search_example.yaml --smoke-test --steps 1
+# (no gauntlet, no sanity gate) and forces steps=1 / k_per_step=1 (one
+# propose → eval → score round, ~1-2 min) unless --steps/--k-per-step are
+# given explicitly.
+venv/bin/python -m forge.orchestrator --config configs/search_example.yaml --smoke-test
 
 # Search run (steps/datasets etc. as set in the config)
 venv/bin/python -m forge.orchestrator --config configs/search_example.yaml
