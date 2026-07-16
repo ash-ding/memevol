@@ -57,16 +57,49 @@ class Sub_memo_layer(ABC):
 
 class MemoStructure(ABC):
 
+    # Ingestion granularity is the memory system's design choice. `chunked`
+    # is a convenience the build hook may use; a memo may override _update_type
+    # / _n_chunks (or ignore chunking entirely and ingest the whole data).
+    _update_type: str = "all_at_once"
+    _n_chunks: int = 5
+
     def __init__(self):
         self.database: Optional[Any] = None
 
-    # -------- Pipeline Runner --------
-    @abstractmethod
-    async def general_retrieve(self, recorder: Basic_Recorder) -> Dict:
-        """General retrieve method — orders and chains per-layer retrieves."""
-        pass
+    # -------- Standardized eval hooks (all OPTIONAL overrides) --------
 
-    @abstractmethod
     async def general_update(self, recorder: Basic_Recorder) -> None:
-        """General update method — orders and chains per-layer updates."""
-        pass
+        """BUILD (Phase 1). `recorder.init` holds the data newly visible for
+        THIS call; accumulate state across calls and choose your own ingestion
+        granularity (e.g. `for chunk in self.chunked(recorder.init[...]): ...`).
+        Default: no-op (build no memory)."""
+        return None
+
+    async def general_retrieve(self, recorder: Basic_Recorder) -> Dict:
+        """RETRIEVE (Phase 2). `recorder.init` holds the query (+ context).
+        Return retrieved context; `{"inline_memory_blocks": [str,...]}` controls
+        inline rendering. MUST be read-only w.r.t. memory. Default: `{}`."""
+        return {}
+
+    async def general_answer(self, recorder: Basic_Recorder, retrieved: Dict,
+                             prompt: str) -> Optional[str]:
+        """ANSWER (optional). Return the answer string, or None to defer to the
+        benchmark's standard QA agent (the default). `prompt` is the workflow's
+        fully-formatted answer prompt. Default: None."""
+        return None
+
+    def chunked(self, data):
+        """Yield partitions of `data` per self._update_type / self._n_chunks:
+        all_at_once → [data]; sequential → one item each; chunked → _n_chunks
+        near-equal contiguous partitions. Order preserved, no loss."""
+        data = list(data)
+        if self._update_type == "sequential":
+            for item in data:
+                yield [item]
+        elif self._update_type == "chunked":
+            n = max(1, self._n_chunks)
+            size = max(1, (len(data) + n - 1) // n)
+            for i in range(0, len(data), size):
+                yield data[i:i + size]
+        else:  # all_at_once
+            yield data
