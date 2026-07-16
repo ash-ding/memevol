@@ -26,31 +26,31 @@ PROGRESS.zh.md
 
 # --- alma baseline runtime artifacts ---
 # Checkpoints, rotating log files, archived eval logs
-baselines/alma/logs/*
-!baselines/alma/logs/.gitkeep
+baselines/evolve/alma/logs/*
+!baselines/evolve/alma/logs/.gitkeep
 
 # Generated (LLM-written) memo code is not checked in
-baselines/alma/memo_archive/dynamicmem/*
-!baselines/alma/memo_archive/dynamicmem/.gitkeep
-baselines/alma/memo_archive/locomo/*
-!baselines/alma/memo_archive/locomo/.gitkeep
-baselines/alma/memo_archive/longmemeval_s/*
-!baselines/alma/memo_archive/longmemeval_s/.gitkeep
-baselines/alma/memo_archive/longmemeval_m/*
-!baselines/alma/memo_archive/longmemeval_m/.gitkeep
+baselines/evolve/alma/memo_archive/dynamicmem/*
+!baselines/evolve/alma/memo_archive/dynamicmem/.gitkeep
+baselines/evolve/alma/memo_archive/locomo/*
+!baselines/evolve/alma/memo_archive/locomo/.gitkeep
+baselines/evolve/alma/memo_archive/longmemeval_s/*
+!baselines/evolve/alma/memo_archive/longmemeval_s/.gitkeep
+baselines/evolve/alma/memo_archive/longmemeval_m/*
+!baselines/evolve/alma/memo_archive/longmemeval_m/.gitkeep
 
 # Runtime staging for the eval subprocess (per-SHA to avoid concurrent-run races)
-baselines/alma/memo_test/memo_test_*.py
+baselines/evolve/alma/memo_test/memo_test_*.py
 
 # Per-run eval outputs (score.json + traces + memory dumps)
-baselines/alma/results/
-baselines/cc/results/
-baselines/hipporag2/results/
+baselines/evolve/alma/results/
+baselines/harness/cc/results/
+baselines/harness/hipporag2/results/
 
-# --- Other baselines' runtime artifacts ---
-baselines/*/outputs/
-baselines/*/logs/
-baselines/*/results/*_dryrun.json
+# --- Other baselines' runtime artifacts (evolve/<name>/ + harness/<name>/) ---
+baselines/*/*/outputs/
+baselines/*/*/logs/
+baselines/*/*/results/*_dryrun.json
 
 # --- meta-harness runtime artifacts ---
 baselines/meta-harness/archive/

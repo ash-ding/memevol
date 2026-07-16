@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from common.harness_base import Basic_Recorder
+from common.recorder import Basic_Recorder
 
 
 # ---------------------------------------------------------------------------

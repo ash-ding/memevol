@@ -36,6 +36,9 @@ steps: 5
 # 2026-07-14. Held-out evaluation is a separate entry point:
 #   venv/bin/python -m forge.heldout --config configs/test_example.yaml
 #
+# smoke_test: true also forces steps=1 / propose.k_per_step=1 (single
+# candidate) unless --steps / --k-per-step are given EXPLICITLY on the CLI
+# — YAML steps never multiply a smoke run.
 # smoke_test: true runs the whole pipeline ONCE per benchmark at
 # `stages.sanity_check` sizes (search split; no gauntlet, no thresholds, and
 # the sanity gate is skipped — the run IS the sanity-size check). A cheap
@@ -172,10 +175,6 @@ propose:
   # Meta-Harness paper. Each is an independent CC SDK call; runs serially.
   # Total proposals per run = steps * k_per_step.
   k_per_step: 2
-
-# -----------------------------------------------------------------------------
-# Frontier selection (currently single-axis, see PROGRESS.md)
-# -----------------------------------------------------------------------------
 
 # -----------------------------------------------------------------------------
 # Pre-eval sanity check (stages.sanity_check-sized run before the gauntlet)

@@ -4,7 +4,7 @@
 #
 # Usage: tools/watchdog_run.sh <run_name> <config_path> [target_steps] [max_resumes]
 # Example:
-#   tools/watchdog_run.sh bm25_ablation configs/search.yaml 10 10
+#   tools/watchdog_run.sh bm25_ablation configs/search_example.yaml 10 10
 
 set -u
 

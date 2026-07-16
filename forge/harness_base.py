@@ -3,7 +3,7 @@
 This is forge's own evolution surface, split from `common.harness_base` so
 the forge contract can gain documentation / optional hooks without touching
 the frozen baseline contract that alma's meta-agent reads
-(`baselines/alma/meta_agent_prompt.py::_read_harness_base`).
+(`baselines/evolve/alma/meta_agent_prompt.py::_read_contract_files`).
 
 `MemoStructure` here SUBCLASSES `common.harness_base.MemoStructure`, so
 everything downstream that type-checks against the common ABC
@@ -38,7 +38,7 @@ state is possible.
 
 from __future__ import annotations
 
-from common.harness_base import Basic_Recorder  # noqa: F401  (re-export)
+from common.recorder import Basic_Recorder  # noqa: F401  (re-export)
 from common.harness_base import MemoStructure as _CommonMemoStructure
 
 

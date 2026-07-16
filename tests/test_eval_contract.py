@@ -93,6 +93,30 @@ def test_use_memory_to_answer_used_else_agent():
     assert loop.run_until_complete(d.use_memory_to_answer(None, {}, "Q")) is None
 
 
+def test_harness_base_is_pure_contract():
+    """common/ purification guard (2026-07-16): Sub_memo_layer must not flow
+    back into common.harness_base (it is alma-owned design vocabulary, at
+    baselines/evolve/alma/memo_layers.py), and Basic_Recorder is DEFINED in
+    common/recorder.py while the legacy import path keeps working."""
+    import common.harness_base as hb
+    import common.recorder as rec
+
+    # Sub_memo_layer is gone from harness_base (not defined, not re-exported)
+    assert not hasattr(hb, "Sub_memo_layer"), \
+        "Sub_memo_layer leaked back into common.harness_base"
+
+    # legacy path still importable, and it is the SAME object as common.recorder's
+    from common.harness_base import Basic_Recorder as legacy_recorder
+    assert rec.Basic_Recorder is legacy_recorder
+    assert rec.Basic_Recorder is hb.Basic_Recorder
+    # ... and it is defined in common.recorder, only re-exported by harness_base
+    assert rec.Basic_Recorder.__module__ == "common.recorder"
+
+    # alma's memo_layers owns Sub_memo_layer now
+    from baselines.evolve.alma.memo_layers import Sub_memo_layer
+    assert Sub_memo_layer.__module__ == "baselines.evolve.alma.memo_layers"
+
+
 def test_use_memory_to_answer_gets_query_scoped_recorder():
     """Both answer sites pass the query-scoped retrieve_recorder to use_memory_to_answer,
     not the phase-1 recorder — so recorder.init means the same thing everywhere."""

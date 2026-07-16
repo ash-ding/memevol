@@ -22,7 +22,7 @@ def test_shared_registry_resolves_all_four():
 
 def test_alma_still_imports_shared_registry():
     # ALMA re-points to the shared registry; its own module still exposes resolve.
-    from baselines.alma.registry import resolve as alma_resolve
+    from baselines.evolve.alma.registry import resolve as alma_resolve
     from baselines.registry import resolve as shared_resolve
     assert alma_resolve is shared_resolve
 
@@ -152,7 +152,7 @@ def test_dynamicmem_default_answer_call_signature():
 # -------------------- eval_common (shared runner + data-alignment) --------------------
 
 def test_parse_stage_spec_raw_user_overrides():
-    from baselines.eval_common import parse_stage_spec
+    from baselines.harness.eval_common import parse_stage_spec
     assert parse_stage_spec(None) == {}
     assert parse_stage_spec('{"n_samples": 3, "n_qa": 5}') == {"n_samples": 3, "n_qa": 5}
 
@@ -161,7 +161,7 @@ def test_family_full_spec_matches_main_method():
     """The default (no --stage-spec) effective spec MUST equal the main
     method's coverage=full wire spec — otherwise DynamicMem silently drops out
     of the TCE checkpoint path (its branch keys on the n_checkpoints KEY)."""
-    from baselines.eval_common import family_full_spec, effective_stage_spec
+    from baselines.harness.eval_common import family_full_spec, effective_stage_spec
     from forge.orchestrator import full_wire_spec   # test-only import (baselines never import forge)
     for ds in ("dynamicmem", "locomo", "longmemeval_s", "longmemeval_m"):
         assert family_full_spec(ds) == full_wire_spec(ds), ds
@@ -176,7 +176,7 @@ def test_family_full_spec_matches_main_method():
 def test_task_list_identical_to_main_method():
     """The baseline's split derivation MUST equal the main method's
     (forge/launch.py:185-189 calls the SAME env.get_task_list)."""
-    from baselines.eval_common import resolve_task_list, effective_stage_spec
+    from baselines.harness.eval_common import resolve_task_list, effective_stage_spec
     from datasets.locomo import env as locomo_env
     from datasets.longmemeval import env as lme_env
     from datasets.dynamicmem import env as dm_env
@@ -189,7 +189,7 @@ def test_task_list_identical_to_main_method():
 
 
 def test_make_memo_class_no_arg_instantiable():
-    from baselines.eval_common import make_memo_class
+    from baselines.harness.eval_common import make_memo_class
     from common.harness_base import MemoStructure
     class Base(MemoStructure):
         async def build_memory_from_data(self, r): return None
@@ -203,7 +203,7 @@ def test_make_memo_class_no_arg_instantiable():
 # -------------------- hipporag2 (retrieval MemoStructure) --------------------
 
 def test_hipporag_memo_passage_conversion():
-    from baselines.hipporag2.memo import _init_to_passages
+    from baselines.harness.hipporag2.memo import _init_to_passages
     # dynamicmem
     ap = _init_to_passages({"app_logs": [{"timestamp": "T", "app_name": "A",
           "api_name": "x", "request": {}, "response": {}, "metadata": {"domain": "d"}}]})
@@ -223,8 +223,8 @@ def test_hipporag_memo_retrieve_returns_passages(monkeypatch=None):
     """retrieve_memory_for_query returns retrieved passages as the context dict; the
     shared QA agent (not HippoRAG's own reader) answers."""
     import asyncio
-    from baselines.hipporag2.memo import HippoRAGMemo
-    from baselines.eval_common import make_memo_class
+    from baselines.harness.hipporag2.memo import HippoRAGMemo
+    from baselines.harness.eval_common import make_memo_class
 
     class _FakeHippo:
         def __init__(self, **kw): pass
@@ -251,8 +251,8 @@ def test_hipporag_memo_retrieve_returns_passages(monkeypatch=None):
 
 def test_cc_use_memory_to_answer_runs_cc():
     import asyncio
-    from baselines.cc.memo import CCMemo
-    from baselines.eval_common import make_memo_class
+    from baselines.harness.cc.memo import CCMemo
+    from baselines.harness.eval_common import make_memo_class
     async def _fake_ask(question, tmp_dir, model, max_turns, system_prompt=None):
         return ("CCANS:" + question, {}, [])
     Cls = make_memo_class(CCMemo, model="sonnet", max_turns=5, _ask_cc=_fake_ask)
@@ -269,8 +269,8 @@ def test_cc_use_memory_to_answer_runs_cc():
 
 def test_cc_memo_retrieve_empty_and_run_cc_answers():
     import asyncio
-    from baselines.cc.memo import CCMemo
-    from baselines.eval_common import make_memo_class
+    from baselines.harness.cc.memo import CCMemo
+    from baselines.harness.eval_common import make_memo_class
     async def _fake_ask(question, tmp_dir, model, max_turns, system_prompt=None):
         return ("STUB:" + question, {}, [])
     Cls = make_memo_class(CCMemo, model="sonnet", max_turns=5, _ask_cc=_fake_ask)
@@ -290,7 +290,7 @@ def test_cc_memo_retrieve_empty_and_run_cc_answers():
 # -------------------- integration: run_baseline end-to-end (locomo) --------------------
 
 def test_run_baseline_locomo_end_to_end():
-    """Deterministic full drive of baselines.eval_common.run_baseline on ONE
+    """Deterministic full drive of baselines.harness.eval_common.run_baseline on ONE
     real locomo test-split unit — not a scoped-down slice. This exercises:
     registry.resolve -> resolve_task_list (real locomo10.json split) ->
     LoCoMoWorkflow construction -> run_all_users -> run_single_user (REAL
@@ -315,7 +315,7 @@ def test_run_baseline_locomo_end_to_end():
     from pathlib import Path
 
     import common.llm as llm_mod
-    from baselines.eval_common import effective_stage_spec, resolve_task_list, run_baseline
+    from baselines.harness.eval_common import effective_stage_spec, resolve_task_list, run_baseline
     from common.harness_base import MemoStructure
     from datasets.locomo.workflow import LoCoMoWorkflow
 

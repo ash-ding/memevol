@@ -18,6 +18,9 @@ History:
                    /seeds bind dropped (selected seed already copied into
                    /workspace/harnesses/0/ at startup). PROPOSER_SYSTEM made
                    sanity-conditional via build_proposer_system(...).
+  2026-07-16       common/recorder.py added to the bind list (Basic_Recorder
+                   moved out of harness_base — the in-container
+                   `import common.harness_base` chain needs it).
 
 In-container runtime (set by propose_in_container.py from CLI args):
   cwd                        /workspace = workspace/<run_id>/
@@ -483,6 +486,8 @@ def _build_singularity_cmd(
         the files that contribute to writing a correct harness are bound:
           forge/harness_base.py    the MemoStructure base CC must inherit from
           common/harness_base.py   the underlying ABC (forge's subclasses it)
+          common/recorder.py       Basic_Recorder data envelope
+                                   (harness_base imports it)
           common/llm.py            Agent + Embedding helpers (token-tracked)
           common/logger.py         transitive dep of common.llm
           common/__init__.py       package marker
@@ -515,6 +520,7 @@ def _build_singularity_cmd(
         f"{PROJECT_ROOT}/forge/harness_base.py:/app/forge/harness_base.py:ro",
         f"{PROJECT_ROOT}/common/__init__.py:/app/common/__init__.py:ro",
         f"{PROJECT_ROOT}/common/harness_base.py:/app/common/harness_base.py:ro",
+        f"{PROJECT_ROOT}/common/recorder.py:/app/common/recorder.py:ro",
         f"{PROJECT_ROOT}/common/llm.py:/app/common/llm.py:ro",
         f"{PROJECT_ROOT}/common/logger.py:/app/common/logger.py:ro",
         f"{PROJECT_ROOT}/datasets:/app/datasets:ro",

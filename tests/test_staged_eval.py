@@ -409,9 +409,42 @@ def test_smoke_test_flag():
         assert cfg["smoke_test"] is True
 
 
+def test_smoke_test_forces_single_step():
+    """smoke_test (2026-07-16): steps/k_per_step forced to 1 unless the CLI
+    explicitly overrides — YAML values must not multiply a smoke run."""
+    import yaml
+    from forge.orchestrator import build_arg_parser, _resolve_config
+    with tempfile.TemporaryDirectory() as td:
+        p = os.path.join(td, "c.yaml")
+        with open(p, "w") as f:
+            yaml.safe_dump({"steps": 5, "propose": {"k_per_step": 2},
+                            "datasets": {"locomo": {}}}, f)
+        # --smoke-test overrides YAML steps/k
+        cfg = _resolve_config(build_arg_parser().parse_args(
+            ["--config", p, "--smoke-test"]))
+        assert cfg["steps"] == 1 and cfg["propose"]["k_per_step"] == 1
+        # explicit CLI values are respected (each independently)
+        cfg = _resolve_config(build_arg_parser().parse_args(
+            ["--config", p, "--smoke-test", "--steps", "3"]))
+        assert cfg["steps"] == 3 and cfg["propose"]["k_per_step"] == 1
+        cfg = _resolve_config(build_arg_parser().parse_args(
+            ["--config", p, "--smoke-test", "--k-per-step", "2"]))
+        assert cfg["steps"] == 1 and cfg["propose"]["k_per_step"] == 2
+        # smoke_test set via YAML forces the same way
+        p2 = os.path.join(td, "c2.yaml")
+        with open(p2, "w") as f:
+            yaml.safe_dump({"steps": 5, "smoke_test": True,
+                            "datasets": {"locomo": {}}}, f)
+        cfg = _resolve_config(build_arg_parser().parse_args(["--config", p2]))
+        assert cfg["steps"] == 1 and cfg["propose"]["k_per_step"] == 1
+        # non-smoke runs keep YAML values untouched
+        cfg = _resolve_config(build_arg_parser().parse_args(["--config", p]))
+        assert cfg["steps"] == 5 and cfg["propose"]["k_per_step"] == 2
+
+
 def test_search_configs_default_smoke_test_false():
     from forge.orchestrator import build_arg_parser, _resolve_config
-    for name in ("search.yaml", "search_mini.yaml", "search_example.yaml"):
+    for name in ("search_example.yaml",):
         cfg = _resolve_config(build_arg_parser().parse_args(
             ["--config", os.path.join(REPO, "configs", name)]))
         assert cfg["smoke_test"] is False and "mode" not in cfg

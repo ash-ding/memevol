@@ -30,8 +30,9 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Type
 
-from common.harness_base import Basic_Recorder, MemoStructure
+from common.harness_base import MemoStructure
 from common.logger import get_logger
+from common.recorder import Basic_Recorder
 
 log = get_logger("main")
 

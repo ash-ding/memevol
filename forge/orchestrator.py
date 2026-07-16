@@ -12,19 +12,21 @@ Per-harness flow (search loop):
                                  enter frontier with sanity_failed + score=0
 
 For `smoke_test: true`: skip sanity entirely and run the evaluator once per
-benchmark at `stages.sanity_check` sizes (dev IS the sanity-size verification).
+benchmark at `stages.sanity_check` sizes (the run IS the sanity-size
+verification). steps/k_per_step are forced to 1 unless explicitly given on
+the CLI — a smoke run is a single propose→eval pipeline check by default.
 
 Two ways to launch:
 
     # (a) config-first (recommended for long runs / reproducibility)
-    python -m forge.orchestrator --config configs/search.yaml
+    python -m forge.orchestrator --config configs/search_example.yaml
 
     # (b) CLI-first (quick iteration; uniform params across all datasets)
     python -m forge.orchestrator --steps 3 --datasets dynamicmem,locomo \
         --smoke-test
 
 CLI flags always override the config file when both are given. See
-`configs/search_example.yaml` (exhaustive) and `configs/search.yaml` for the full config schema.
+`configs/search_example.yaml` (exhaustive, runnable) for the full config schema.
 
 Outputs (per-run, under workspace/<run_id>/):
     harnesses/<int>_<hash>/<dataset>/         full-eval score + traces
@@ -288,9 +290,9 @@ DEFAULT_STAGES: Dict[str, Dict[str, Dict[str, Any]]] = {
 }
 
 # stage_<ds> objective value for a coverage=full evaluation. Numerically above
-# the last gauntlet tier (3) so selection's fully-staged filter accepts full
-# entries; scores at stage 3 vs 4 are still NOT mutually comparable — coverage
-# is uniform within a run.
+# the last gauntlet tier (3) so full-coverage entries are distinguishable in
+# frontier telemetry; scores at stage 3 vs 4 are still NOT mutually comparable —
+# coverage is uniform within a run.
 FULL_STAGE = 4.0
 
 _OLD_SIZE_FIELDS = ("eval_n_samples", "eval_n_qa", "check_n_samples", "check_n_qa")
@@ -517,6 +519,23 @@ def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
         cfg["data_isolation"] = False
     if getattr(args, "smoke_test", False):
         cfg["smoke_test"] = True
+    # Smoke test = a single-candidate pipeline check (2026-07-16): force
+    # steps=1 / k_per_step=1 unless the CLI EXPLICITLY asks for more. YAML
+    # values are deliberately overridden — a search config's steps must not
+    # silently multiply a smoke run into steps*k proposer calls.
+    if cfg["smoke_test"]:
+        forced = []
+        if getattr(args, "steps", None) is None and cfg["steps"] != 1:
+            cfg["steps"] = 1
+            forced.append("steps=1")
+        if args.k_per_step is None and cfg["propose"]["k_per_step"] != 1:
+            cfg["propose"]["k_per_step"] = 1
+            forced.append("k_per_step=1")
+        if forced:
+            log.info(
+                "smoke test: forcing %s (pass --steps / --k-per-step to override)",
+                ", ".join(forced),
+            )
     if args.no_sanity:
         cfg["sanity"]["enabled"] = False
     if args.sanity_max_retries is not None:
