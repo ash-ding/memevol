@@ -23,3 +23,4 @@ tiktoken
 scipy           # common/llm.py::Embedding uses scipy.spatial.distance.cosine
 rich            # common/logger.py uses rich.RichHandler for colored console
 anthropic[vertex]
+huggingface-hub
