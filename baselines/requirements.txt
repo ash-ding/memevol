@@ -10,3 +10,5 @@ finch-clust
 networkx
 claude-code-sdk
 anthropic[vertex]
+nltk
+rank_bm25
