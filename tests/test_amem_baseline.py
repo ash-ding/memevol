@@ -138,6 +138,31 @@ def test_retrieve_empty_store_returns_empty_dict():
     assert out == {}
 
 
+def test_hf_datasets_active_fixes_calltime_datasets_collision():
+    # Reproduces the exact call-time failure the shim's context manager fixes:
+    # sentence-transformers' get_versions() does `from datasets import
+    # __version__` at SentenceTransformer construction, which raises when
+    # memevol's `datasets` package (no __version__) is the ambient view.
+    from baselines.harness.amem._st_shim import (
+        ensure_sentence_transformers, hf_datasets_active,
+    )
+    ensure_sentence_transformers()
+    # Outside the context, memevol's datasets shadows HF -> the failing call raises:
+    raised = False
+    try:
+        from datasets import __version__ as _v  # noqa: F401
+    except ImportError:
+        raised = True
+    assert raised, "expected memevol `datasets` (no __version__) to shadow HF outside the context"
+    # Inside the context, the same import resolves to HF datasets:
+    with hf_datasets_active():
+        import datasets as hf_ds
+        assert isinstance(hf_ds.__version__, str) and hf_ds.__version__
+    # After exit, memevol's benchmark package is restored:
+    from datasets.locomo.env import extract_sessions
+    assert callable(extract_sessions)
+
+
 # -------------------- runner --------------------
 
 def main():

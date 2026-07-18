@@ -32,7 +32,7 @@ from typing import Dict, List, Tuple
 
 from common.harness_base import MemoStructure
 from baselines.harness.hipporag2.memo import app_log_to_passage
-from baselines.harness.amem._st_shim import ensure_sentence_transformers
+from baselines.harness.amem._st_shim import ensure_sentence_transformers, hf_datasets_active
 
 ensure_sentence_transformers()   # MUST precede the memory_layer import (it imports ST)
 from baselines.harness.amem.memory_layer import AgenticMemorySystem, LLMController  # noqa: E402
@@ -96,9 +96,14 @@ class AMemMemo(MemoStructure):
         model = self._cfg.get("amem_llm_model", "gpt-4o-mini")
         # Mirrors test_advanced.py::advancedMemAgent.__init__ (openai backend):
         # one AgenticMemorySystem + a separate retriever_llm, same model.
-        self._system = AgenticMemorySystem(
-            model_name="all-MiniLM-L6-v2", llm_backend="openai", llm_model=model,
-        )
+        # Constructing AgenticMemorySystem builds a SentenceTransformer, whose
+        # __init__ -> model_card.get_versions() lazily runs `from datasets
+        # import __version__`; hf_datasets_active() makes `datasets` resolve to
+        # HF (not memevol's benchmark package) for that construction.
+        with hf_datasets_active():
+            self._system = AgenticMemorySystem(
+                model_name="all-MiniLM-L6-v2", llm_backend="openai", llm_model=model,
+            )
         self._retriever_llm = LLMController(backend="openai", model=model, api_key=None)
 
     async def build_memory_from_data(self, recorder) -> None:
