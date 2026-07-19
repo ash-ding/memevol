@@ -163,6 +163,59 @@ def test_hf_datasets_active_fixes_calltime_datasets_collision():
     assert callable(extract_sessions)
 
 
+class _HFAssertingSystem:
+    """Fake AgenticMemorySystem asserting HF `datasets` is active whenever an
+    A-mem op runs — i.e. the memo wrapped the op in hf_datasets_active(), which
+    is what lets A-mem's internal SentenceTransformer (re)constructions resolve
+    `from datasets import __version__`."""
+    def __init__(self):
+        self.calls = []
+    @staticmethod
+    def _assert_hf_active():
+        import datasets
+        assert hasattr(datasets, "__version__"), \
+            "A-mem op ran OUTSIDE hf_datasets_active() (memevol datasets is active)"
+    def add_note(self, content, time=None, **kw):
+        self._assert_hf_active(); self.calls.append((content, time))
+    def find_related_memories_raw(self, query, k=5):
+        self._assert_hf_active(); return "MEM"
+
+
+def _memo_with_asserting_system():
+    from baselines.harness.amem.memo import AMemMemo
+    m = AMemMemo()
+    m._system = _HFAssertingSystem()
+    m._retriever_llm = _FakeLLMController()
+    return m
+
+
+def test_build_runs_add_note_under_hf_datasets_active():
+    # Precondition: memevol `datasets` (no __version__) is the ambient view, so
+    # the fake's assert would FAIL if build didn't wrap the loop.
+    from baselines.harness.amem._st_shim import ensure_sentence_transformers
+    ensure_sentence_transformers()
+    m = _memo_with_asserting_system()
+    rec = SimpleNamespace(init={"sessions": [
+        {"date": "d1", "messages": [{"role": "user", "content": "a"},
+                                    {"role": "assistant", "content": "b"}]}]})
+    asyncio.run(m.build_memory_from_data(rec))   # asserts HF-active inside add_note
+    assert m._system.calls == [("user: a", "d1"), ("assistant: b", "d1")]
+    # memevol datasets view restored after the hook returns:
+    from datasets.locomo.env import extract_sessions
+    assert callable(extract_sessions)
+
+
+def test_retrieve_runs_find_related_under_hf_datasets_active():
+    from baselines.harness.amem._st_shim import ensure_sentence_transformers
+    ensure_sentence_transformers()
+    m = _memo_with_asserting_system()
+    out = asyncio.run(m.retrieve_memory_for_query(SimpleNamespace(init={"query": "who?"})))
+    assert out == {"memories": "MEM"}       # asserts HF-active inside find_related_memories_raw
+    assert m._retriever_llm.llm  # sanity: rewrite path used the fake LLM controller
+    from datasets.locomo.env import extract_sessions
+    assert callable(extract_sessions)       # memevol view restored after the hook
+
+
 # -------------------- runner --------------------
 
 def main():

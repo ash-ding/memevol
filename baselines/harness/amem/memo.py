@@ -108,13 +108,19 @@ class AMemMemo(MemoStructure):
 
     async def build_memory_from_data(self, recorder) -> None:
         self._ensure_system()
-        units = _init_to_note_units(recorder.init)
+        units = _init_to_note_units(recorder.init)   # memevol `datasets` (locomo branch) — OUTSIDE the hf window
         # A-mem prints every analysis + evolution prompt; silence the flood
         # (console-output-only adaptation — the algorithm is untouched). The
         # block contains no awaits, so redirect_stdout can't leak across tasks.
+        # add_note re-constructs a SentenceTransformer inside consolidate_memories()
+        # every evo_threshold evolutions; that (re)construction lazily runs
+        # `from datasets import __version__`, so keep HF `datasets` active for the
+        # whole loop (no memevol-`datasets` import happens inside it). No await in
+        # the block, so the global sys.modules swap can't interleave across tasks.
         with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
-            for content, t in units:
-                self._system.add_note(content, time=t)
+            with hf_datasets_active():
+                for content, t in units:
+                    self._system.add_note(content, time=t)
 
     def _rewrite_query(self, question: str) -> str:
         # VERBATIM logic of test_advanced.py::generate_query_llm (@ 0c8039f).
@@ -131,8 +137,13 @@ class AMemMemo(MemoStructure):
         query = recorder.init.get("query", "")
         k = int(self._cfg.get("retrieve_k", 10))
         with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
-            keywords = self._rewrite_query(query)
-            memory_str = self._system.find_related_memories_raw(keywords, k=k)
+            keywords = self._rewrite_query(query)   # LLM call; no ST construction
+            # Uniform invariant: every self._system.* call runs under HF `datasets`
+            # (find_related_memories_raw does not construct today, but this keeps
+            # the "A-mem system ops run with HF datasets active" rule uniform and
+            # future-proof). No await inside; no memevol-`datasets` import inside.
+            with hf_datasets_active():
+                memory_str = self._system.find_related_memories_raw(keywords, k=k)
         if not memory_str:   # upstream returns [] when the store is empty
             return {}
         return {"memories": memory_str}
