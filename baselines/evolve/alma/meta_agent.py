@@ -91,6 +91,7 @@ class MetaAgent:
             output_schema=output_schema,
             model=self.meta_model,
             timeout=600,
+            max_completion_tokens=65536
         )
         result = await analysis_agent.ask(user_msg, reasoning_effort='medium')
         return result, memo_info
@@ -108,7 +109,7 @@ class MetaAgent:
             recorder=recorder,
             dataset=self.dataset,
         )
-        gen_code_agent = Agent(system_prompt=sys_msg, model=self.meta_model, timeout=600)
+        gen_code_agent = Agent(system_prompt=sys_msg, model=self.meta_model, timeout=600, max_completion_tokens=65536)
         code_str = await gen_code_agent.ask(user_msg, reasoning_effort='medium')
         return code_str
 
@@ -162,7 +163,7 @@ class MetaAgent:
                     error_msg=examine_log,
                     dataset=self.dataset,
                 )
-                reflect_fix_agent = Agent(system_prompt=sys_msg, model=self.meta_model, timeout=600)
+                reflect_fix_agent = Agent(system_prompt=sys_msg, model=self.meta_model, timeout=600, max_completion_tokens=65536)
                 # Surface the reflection LLM call — without this, the main log
                 # has a multi-minute silent gap between "Fail examination" and
                 # "Retry finished" while gpt-5 is reasoning over the fix.
