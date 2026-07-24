@@ -48,6 +48,17 @@ baselines/harness/cc/results/
 baselines/harness/hipporag2/results/
 baselines/harness/amem/results/
 
+# --- evolvemem baseline runtime artifacts ---
+baselines/evolve/evolvemem/results/
+baselines/evolve/evolvemem/config_archive/*
+!baselines/evolve/evolvemem/config_archive/.gitkeep
+
+# --- memevolve baseline runtime artifacts ---
+# Generated (LLM-designed) genotypes + population checkpoints are not checked in
+baselines/evolve/memevolve/results/
+baselines/evolve/memevolve/memo_archive/*
+!baselines/evolve/memevolve/memo_archive/.gitkeep
+
 # --- Other baselines' runtime artifacts (evolve/<name>/ + harness/<name>/) ---
 baselines/*/*/outputs/
 baselines/*/*/logs/

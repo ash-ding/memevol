@@ -27,8 +27,8 @@ baselines/
 ├── venv/                # shared Python 3.12 venv (gitignored)
 ├── evolve/              # SEARCH-METHOD baselines — compared against forge ITSELF
 │   ├── alma/            #   LLM-meta-agent search loop (memevol's original method)
-│   ├── evolvemem/       #   (paper PDF; to be implemented under the conventions below)
-│   └── memevolve/       #   (paper PDF; to be implemented under the conventions below)
+│   ├── evolvemem/       #   EvolveMem — self-evolving retrieval configuration
+│   └── memevolve/       #   MemEvolve — meta-evolution over a 4-operator design space
 └── harness/             # READY-MADE MEMORY SYSTEMS — compared against forge's
     ├── eval_common.py   #   EVOLVED HARNESSES. Shared runner: run_baseline()
     ├── cc/              #   Claude Code as direct QA agent (native answer)
@@ -208,6 +208,8 @@ baselines/venv/bin/python baselines/harness/hipporag2/run.py \
 | Baseline | Kind | Approach | Optimization | Best for |
 |---|---|---|---|---|
 | **[evolve/alma](evolve/alma/)** | search method | LLM-meta-agent search loop | Yes — propose / select / evolve over harness code | Established baseline; the framework's "v1" memory-architecture search |
+| **[evolve/evolvemem](evolve/evolvemem/)** | search method | Fixed multi-view memory; retrieval CONFIG θ is the search space | Yes — LLM diagnosis loop with revert/explore guards over θ | Published config-space self-evolution point (EvolveMem paper) |
+| **[evolve/memevolve](evolve/memevolve/)** | search method | (encode, store, retrieve, manage) operator code is the search space | Yes — Pareto-selected diagnose-and-design over operator implementations | Published architecture meta-evolution point (MemEvolve paper) |
 | **[harness/cc](harness/cc/)** | ready-made harness | Claude Code as direct QA agent (native answer, multi-dataset) | None (zero-shot) | What-if: just give CC the raw user data + tools and let it answer |
 | **[harness/hipporag2](harness/hipporag2/)** | ready-made harness | Graph-based RAG pipeline as retrieval memory (OpenIE → KG → PPR retrieval → passages; shared QA agent answers) | None (fixed pipeline) | Hand-designed memory architecture comparison point, multi-dataset |
 
@@ -244,6 +246,66 @@ prior code, traces, and scores. alma runs the shared per-dataset workflows
 (including the official DynamicMem TCE v2 checkpoint protocol) AND the same
 `common.staged_eval.run_gauntlet` driver forge uses, so its numbers ARE
 comparable with forge.
+
+### evolve/evolvemem — self-evolving retrieval configuration
+
+Native implementation of the EvolveMem paper (`evolve/evolvemem/evolvemem.pdf`).
+A FIXED multi-view memory (typed store + BM25/dense/metadata retrieval)
+whose full retrieval configuration θ (view top-ks, fusion mode/weights,
+context budget, augmentation toggles, per-category overrides) is optimized
+by an LLM diagnosis loop: EVALUATE (search split) → DIAGNOSE (per-question
+failure log + rubric → Δθ) → GUARD (revert-on-regression /
+explore-on-stagnation / apply clamped Δθ). The evolved θ* is frozen for the
+single test run.
+
+```bash
+# Evolution on the search split (resumable)
+baselines/venv/bin/python baselines/evolve/evolvemem/run_main.py \
+    --status search --dataset dynamicmem --rounds 8
+
+# Held-out test with the best evolved θ*
+baselines/venv/bin/python baselines/evolve/evolvemem/run_main.py \
+    --status test --dataset dynamicmem
+```
+
+Artifacts: `baselines/evolve/evolvemem/{config_archive/, results/, logs/}`.
+See [evolve/evolvemem/README.md](evolve/evolvemem/README.md) for the θ
+schema and faithfulness notes.
+
+**Key contrast**: alma/forge/memevolve rewrite memory-system CODE;
+evolvemem searches only the retrieval-parameter space of one fixed
+architecture — it isolates how much of the evolve-family gain is reachable
+by configuration adaptation alone.
+
+### evolve/memevolve — meta-evolution of memory architectures
+
+Native implementation of the MemEvolve paper (`evolve/memevolve/memevolve.pdf`).
+A memory architecture is a genotype of four operator implementations
+(encode / store / retrieve / manage) assembled onto an immutable skeleton.
+Dual loop per iteration: INNER — each candidate runs the benchmark from an
+empty memory, yielding F = (perf, −tokens, −latency); OUTER — Pareto
+non-dominated top-K parents → LLM DIAGNOSE (trace evidence → per-component
+defect profile) → DESIGN S constrained operator redesigns each, sanity-
+checked with repair retries.
+
+```bash
+# Meta-evolution on the search split (paper default K_max=3; resumable)
+baselines/venv/bin/python baselines/evolve/memevolve/run_main.py \
+    --status search --dataset dynamicmem --iterations 3
+
+# Held-out test of the frozen best genotype
+baselines/venv/bin/python baselines/evolve/memevolve/run_main.py \
+    --status test --dataset dynamicmem
+```
+
+Artifacts: `baselines/evolve/memevolve/{memo_archive/, results/, logs/}`.
+See [evolve/memevolve/README.md](evolve/memevolve/README.md) for the
+operator contract and faithfulness notes.
+
+**Key contrast with alma/forge**: the proposer may rewrite ONLY the four
+operator bodies (structurally constrained design space, multi-objective
+Pareto selection over score/cost/latency), whereas alma/forge propose whole
+unconstrained harness files ranked on score alone.
 
 ### harness/cc — Claude Code as direct QA agent
 
@@ -488,7 +550,8 @@ once per reported number; tuning happens in Step 4.
 ## Adding an evolve baseline
 
 Evolve-framework baselines (a search loop that *produces* memory systems —
-e.g. the EvolveMem / MemEvolve papers staged under `evolve/`) differ too
+e.g. the implemented [evolve/evolvemem](evolve/evolvemem/) and
+[evolve/memevolve](evolve/memevolve/)) differ too
 much internally for a step-by-step recipe: each has its own proposer,
 feedback signal, and population management. What binds them is the
 convention set above, concretely:
