@@ -186,10 +186,16 @@ async def sanity_check_with_repair(
     run_check,                    # async (sha, module_path) -> feedback dict
     meta_model: str = "gpt-5",
     max_repairs: int = 2,
+    max_check_wall_s: Optional[float] = None,
 ) -> Optional[str]:
     """Archive + sanity-gate a designed genotype; on failure, ask the LLM to
     repair and retry (alma's examine loop, design-space flavored). Returns
-    the surviving sha, or None if the variant never passes."""
+    the surviving sha, or None if the variant never passes.
+
+    `max_check_wall_s` — COST GUARD (operational): a check pass whose
+    wall-clock (feedback["delay"]) exceeds this budget fails the gate with
+    an actionable message, so LLM-heavy Phase-1 designs are repaired into
+    cheaper ones BEFORE the full inner-loop eval pays for them."""
     from common.llm import Agent
 
     current = dict(operators)
@@ -205,12 +211,26 @@ async def sanity_check_with_repair(
             feedback = await run_check(sha, archive.assembled_path(sha))
             bad = feedback["invalid_users"] or any(
                 (u.get("failure_info") or "") for u in feedback["per_user"].values())
-            if not bad:
+            too_slow = (max_check_wall_s is not None
+                        and feedback.get("delay", 0.0) > max_check_wall_s)
+            if not bad and not too_slow:
                 return sha
-            err = json.dumps(feedback["invalid_users"][:3]
-                             or [u.get("failure_info") for u in feedback["per_user"].values()
-                                 if u.get("failure_info")][:3],
-                             ensure_ascii=False, default=str)
+            if too_slow and not bad:
+                err = (
+                    f"COST GUARD TRIPPED: the sanity check took "
+                    f"{feedback['delay']:.0f}s wall-clock (budget: "
+                    f"{max_check_wall_s:.0f}s) for {len(feedback['per_user'])} "
+                    f"users. encode/store are far too slow/expensive — usually "
+                    f"per-item or per-session LLM calls during ingestion. "
+                    f"Redesign so ingestion uses NO per-item LLM calls (batch "
+                    f"or purely programmatic indexing); keep quality via "
+                    f"indexing + query-time selection instead."
+                )
+            else:
+                err = json.dumps(feedback["invalid_users"][:3]
+                                 or [u.get("failure_info") for u in feedback["per_user"].values()
+                                     if u.get("failure_info")][:3],
+                                 ensure_ascii=False, default=str)
             log.warning(f"sanity[{attempt}] failed for {sha}: {err[:300]}")
 
         if attempt == max_repairs:

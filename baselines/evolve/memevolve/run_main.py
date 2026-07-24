@@ -66,6 +66,11 @@ def parse_args():
     parser.add_argument("--max_sample_concurrent", type=int, default=3)
     parser.add_argument("--check_n_samples", type=int, default=2)
     parser.add_argument("--check_n_qa", type=int, default=3)
+    parser.add_argument("--max_check_wall_s", type=float, default=600.0,
+                        help="Cost guard: fail the sanity gate if the check "
+                             "pass exceeds this wall-clock (seconds) — catches "
+                             "LLM-heavy encode/store designs before the full "
+                             "inner-loop eval pays for them. 0 disables.")
 
     # Test-time genotype source
     parser.add_argument("--memo_SHA", type=str, default=None,
@@ -142,15 +147,29 @@ async def search(args) -> None:
         parent_shas = [p["sha"] for p in parents]
 
         async def _run_check(sha: str, module_path: Path):
-            run_dir = await run_evaluation(
-                sha=sha, module_path=module_path, dataset=args.dataset,
-                mode="check", status="search",
-                model=args.execution_model, judge_model=args.judge_model,
-                eval_n_samples=args.eval_n_samples,
-                max_logs=args.max_logs,
-                max_sample_concurrent=args.max_sample_concurrent,
-                check_n_samples=args.check_n_samples, check_n_qa=args.check_n_qa,
-            )
+            guard_s = args.max_check_wall_s or None
+            try:
+                run_dir = await run_evaluation(
+                    sha=sha, module_path=module_path, dataset=args.dataset,
+                    mode="check", status="search",
+                    model=args.execution_model, judge_model=args.judge_model,
+                    eval_n_samples=args.eval_n_samples,
+                    max_logs=args.max_logs,
+                    max_sample_concurrent=args.max_sample_concurrent,
+                    check_n_samples=args.check_n_samples, check_n_qa=args.check_n_qa,
+                    timeout_s=(guard_s + 60) if guard_s else None,
+                )
+            except RuntimeError as exc:
+                # Hard-abort by the cost guard: synthesize failure feedback so
+                # sanity_check_with_repair feeds an actionable message to the
+                # repair LLM instead of crashing the search loop.
+                return {
+                    "perf": 0.0, "cost": 0.0,
+                    "delay": float(guard_s or 0) + 61,
+                    "invalid_users": [{"user_id": "cost_guard",
+                                       "error": f"check killed at wall-clock budget: {exc}"}],
+                    "per_user": {}, "run_dir": "",
+                }
             return read_feedback(run_dir)
 
         next_candidates = list(parent_shas)  # elitism
@@ -180,7 +199,8 @@ async def search(args) -> None:
                         meta={"parent": parent["sha"], "iteration": k + 1,
                               "design_rationale": rationale,
                               "defect_profile": profile},
-                        run_check=_run_check, meta_model=args.meta_model)
+                        run_check=_run_check, meta_model=args.meta_model,
+                        max_check_wall_s=args.max_check_wall_s or None)
                     if sha and sha not in next_candidates:
                         next_candidates.append(sha)
                         log.info(f"[k={k}] variant accepted: {parent['sha']} → {sha}")

@@ -68,8 +68,13 @@ async def run_evaluation(
     max_sample_concurrent: int = 3,
     check_n_samples: int = 2,
     check_n_qa: int = 3,
+    timeout_s: Optional[float] = None,
 ) -> Path:
-    """Run one eval subprocess for an assembled genotype. Returns run dir."""
+    """Run one eval subprocess for an assembled genotype. Returns run dir.
+
+    `timeout_s` overrides the mode-default subprocess timeout — the cost
+    guard uses it to hard-abort an over-budget check instead of letting it
+    burn LLM spend up to the 2h mode timeout."""
     output_run_dir = get_output_run_dir(sha, status, mode, dataset)
     output_run_dir.mkdir(parents=True, exist_ok=True)
 
@@ -122,7 +127,7 @@ async def run_evaluation(
         stderr=asyncio.subprocess.PIPE,
     )
 
-    timeout_s = SUBPROCESS_TIMEOUT.get(mode, 8 * 3600)
+    timeout_s = timeout_s or SUBPROCESS_TIMEOUT.get(mode, 8 * 3600)
     score_path = output_run_dir / "score.json"
 
     # Dual-signal wait carried over from alma — see that file for the
