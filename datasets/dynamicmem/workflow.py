@@ -412,8 +412,13 @@ class DynamicMemWorkflow(BaseWorkflow):
     # ------------------------------------------------------------------
 
     async def load_user_data(
-        self, user_dir: str, eval_n_qa: Optional[int]
+        self, user_dir: str, eval_n_qa: Optional[int], sample_seed: Optional[str] = None
     ) -> Tuple[List[Dict], List[Dict]]:
+        # DynamicMemWorkflow overrides run_single_user wholesale (checkpoint
+        # interleaving) and never calls this hook — it exists only to keep
+        # the BaseWorkflow ABC satisfied. Real sampling happens via
+        # run_single_user / sample_items_staged; `sample_seed` is accepted
+        # (matching the base signature) but unused here.
         app_logs, checkpoints = load_user_checkpoints(user_dir)
         return app_logs, sample_items(checkpoints, eval_n_qa, seed=user_dir)
 

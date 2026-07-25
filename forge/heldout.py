@@ -152,21 +152,36 @@ def _apply_heldout_coverage_default(
     cfg: Dict[str, Any], args, raw_yaml: Dict[str, Any]
 ) -> None:
     """Held-out evaluation is a final-numbers flow — default to FULL coverage
-    when `coverage` isn't given anywhere. Precedence: --coverage CLI (already
-    applied by `_resolve_config`) > explicit `coverage:` in the YAML > "full"
-    (DEFAULT_CONFIG's "sample" is a search-loop default, not a heldout one).
+    when NEITHER `coverage` NOR `progressive` is given anywhere (CLI or
+    YAML). `progressive` is the canonical knob (`coverage` is only a
+    back-compat alias), so an explicit `progressive:` in the YAML must win
+    over the "default to full" override even when the YAML omits
+    `coverage:` — forcing `coverage="full"` in that case used to silently
+    flip `progressive` back to False, discarding the user's explicit intent
+    (`progressive: true` + no `coverage:` was resolved to `progressive=False,
+    coverage="full"` instead of `progressive=True, coverage="sample"`).
 
-    Mutates `cfg` in place. ALWAYS re-syncs `cfg["progressive"]` from the
-    (possibly just-overridden) `cfg["coverage"]` afterward — `_resolve_config`
-    already settled `progressive`/`coverage` consistently, but this function
-    can override `coverage` again (to "full") AFTER that, and skipping the
-    re-sync would persist a self-contradictory config.yaml snapshot (e.g.
-    `progressive: true` + `coverage: full` when a heldout YAML omits
-    `coverage:` entirely — Task 6 fix-round finding 1).
+    Mutates `cfg` in place. Precedence:
+      1. Neither `coverage` nor `progressive` given anywhere → heldout's own
+         default: `coverage="full"` (DEFAULT_CONFIG's `progressive=True` /
+         `coverage="sample"` is a search-loop default, not a heldout one).
+      2. `progressive` given explicitly (YAML key or --progressive/
+         --no-progressive) → respect it as authoritative and (re-)derive
+         `coverage` from it, matching `_resolve_config`'s own precedence
+         (progressive wins over the coverage alias) — regardless of whether
+         `coverage:` also happens to be present.
+      3. Otherwise (`coverage` given, `progressive` not) → `_resolve_config`
+         already derived `progressive` from `coverage` consistently; re-sync
+         here is idempotent (safety net, not a behavior change).
     """
-    if getattr(args, "coverage", None) is None:
-        cfg["coverage"] = raw_yaml.get("coverage") or "full"
-    _sync_coverage_progressive(cfg, source="coverage")
+    coverage_given = getattr(args, "coverage", None) is not None or "coverage" in raw_yaml
+    progressive_given = getattr(args, "progressive", None) is not None or "progressive" in raw_yaml
+    if not coverage_given and not progressive_given:
+        cfg["coverage"] = "full"
+    if progressive_given:
+        _sync_coverage_progressive(cfg, source="progressive")
+    else:
+        _sync_coverage_progressive(cfg, source="coverage")
 
 
 def _resolve_harnesses(args, raw_yaml: Dict[str, Any]) -> List[str]:

@@ -1226,6 +1226,26 @@ async def evaluate_harness(
     def _stages_writer(ds: str, summary: Dict[str, Any]) -> None:
         dst_root = _dataset_dir(harness_dir, ds)
         reached = summary["reached"]
+        # Narrate each gated stage's promote/eliminate decision (run_gauntlet
+        # itself stays logger-free — this closure is the only place forge
+        # logs it). Only stages with a threshold gate anything; a crashed
+        # stage already got a log.error from _run_stage_fn above, so it's
+        # skipped here to avoid a redundant/misleading ELIMINATED-by-score line.
+        for stage_name, info in summary["stages"].items():
+            threshold = info.get("threshold")
+            if threshold is None or "crashed" in info:
+                continue
+            normalized = info["normalized"]
+            if stage_name == reached and summary["eliminated"]:
+                log.info(
+                    f"{harness_id} [{ds}] ELIMINATED at {stage_name}: "
+                    f"{normalized:.3f} < threshold {threshold}"
+                )
+            else:
+                log.info(
+                    f"{harness_id} [{ds}] promoted past {stage_name}: "
+                    f"{normalized:.3f} >= {threshold}"
+                )
         # Final (highest-reached) stage artifacts to the dataset root (CC
         # browsing + the frontier reader default path).
         for fname in ("score.json", "token_usage.json"):

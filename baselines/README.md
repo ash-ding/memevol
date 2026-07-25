@@ -90,17 +90,22 @@ literal same `common/` modules forge uses:
   `stages.json` shape, and cost accounting are IDENTICAL to forge's — only
   the stage-execution callback differs (forge: `singularity exec`; baselines:
   an in-process `run_all_users` runner).
-- **`--random_sample`** / **`--random-sample`** (alma only — harness
-  baselines have no step loop, so this flag isn't exposed there; default
-  `false`): whether each search STEP evaluates a different, reproducibly
-  seeded task subset (via `common.sampling.derive_sample_seed`) instead of
-  the same fixed subset every step.
+- **`--random_sample`** (alma only — underscore,
+  `argparse.BooleanOptionalAction` so the negation is
+  `--no-random_sample`; harness baselines have no step loop, so this flag
+  isn't exposed there; default `false`): whether each search STEP
+  evaluates a different, reproducibly seeded task subset (via
+  `common.sampling.derive_sample_seed`) instead of the same fixed subset
+  every step.
 - **`--sampling_seed`** / **`--sampling-seed`** (default `42`): the base
   seed. alma combines it with `(step_index, dataset)` when `random_sample`
   is on; harness baselines (no steps) use it directly as a single fixed
   seed for their one-shot sample.
-- **Memory cache** (`--memory_cache` / `--no-memory-cache`, default on):
-  when `--progressive` is set, the SAME `common/memory_cache.py` mechanism
+- **Memory cache** (default on): alma uses `--memory_cache` /
+  `--no-memory_cache` (underscore, `BooleanOptionalAction`); `harness/*`
+  runners expose only `--no-memory-cache` (hyphen, `store_false` — the
+  positive form needs no flag since the default is already on). When
+  `--progressive` is set, the SAME `common/memory_cache.py` mechanism
   forge's evaluator uses is mounted in the baseline's in-process stage
   runner too, so stage2/stage3 reuse stage1's built Phase-1 memory instead
   of re-ingesting from scratch — a real win for expensive builders (e.g.
@@ -109,7 +114,7 @@ literal same `common/` modules forge uses:
 CLI surface per side:
 
 ```bash
-# harness (cc / hipporag2 / amem run.py) — no --random-sample (no step loop)
+# harness (cc / hipporag2 / amem run.py) — no --random_sample (no step loop)
 baselines/venv/bin/python baselines/harness/hipporag2/run.py \
     --dataset locomo --progressive --sampling-seed 42 \
     --stages '{"stage1": {"n_conversations": 2, "n_qa": 10, "threshold": 0.2}}'
@@ -119,10 +124,12 @@ baselines/venv/bin/python baselines/evolve/alma/run_main.py \
     --status search --progressive --random_sample --sampling_seed 42 --steps 10
 ```
 
-See [CLAUDE.md](../CLAUDE.md) ("Shared progressive sampling") for the full
+See `common/sampling.py` ("Shared progressive sampling") for the full
 seed-derivation contract (`derive_sample_seed` / `combine_seed` /
 `shuffle_prefix`, nesting guarantees, and the accepted overfitting-vs-
-comparability tradeoff of `random_sample`).
+comparability tradeoff of `random_sample`) — not a link, since the
+design docs under `docs/` are gitignored local scratch notes and never
+committed (a link from a tracked file would be dead on a fresh clone).
 
 ## Existing baselines
 
