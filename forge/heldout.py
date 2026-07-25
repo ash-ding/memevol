@@ -6,17 +6,22 @@ test split, WITHOUT the search loop's proposer / sanity gate / frontier.
     venv/bin/python -m forge.heldout --config configs/test_example.yaml
 
     # CLI overrides: --harness (repeatable) REPLACES the YAML `harnesses:`
-    # list; every orchestrator flag (--datasets, --coverage, ...) works too.
+    # list; every orchestrator flag (--datasets, ...) works too.
     venv/bin/python -m forge.heldout --config configs/test_example.yaml \\
-        --harness workspace/<run>/harnesses/3_9f00aa11 [--coverage sample]
+        --harness workspace/<run>/harnesses/3_9f00aa11
 
 Flow per harness:
   1. Copy the harness dir into this run's workspace (source stays untouched;
      per-run isolation, same principle as the search loop).
   2. ensure_image (per-harness delta resolved from its requirements.txt).
-  3. evaluate_harness(split="test", coverage=...) — coverage="full" (the
-     default here) runs ONE whole-test-split pass per benchmark; "sample"
-     runs the staged gauntlet at the configured stage sizes.
+  3. evaluate_harness(split="test", coverage="full") — held-out evaluation
+     is ALWAYS ONE whole-test-split pass per benchmark (coverage="full",
+     equivalently progressive=false). Requesting the staged gauntlet
+     (progressive=true / coverage="sample") is REJECTED with an error
+     (exit 2, before any harness runs) — see
+     `_reject_progressive_on_heldout` — because held-out numbers must come
+     from a uniform full evaluation, not a subset that can eliminate
+     candidates early.
 
 Outputs under workspace/<run_name>/:
   heldout_results.json   {harness_id: {objectives (accuracy_<ds>,
