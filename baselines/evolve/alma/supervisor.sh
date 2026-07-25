@@ -47,13 +47,14 @@ find_latest_ckpt() {
   ls -t "$CKPT_DIR"/check_dynamicmem_*.json 2>/dev/null | head -1
 }
 
+# Evaluation SIZES no longer live on flat --eval_n_*/--check_n_* flags (removed).
+# Each candidate is scored through the shared staged gauntlet (--progressive);
+# sizes come from the family DEFAULT_STAGES (override with --stages '<json>').
 COMMON_ARGS=(
   --status search
+  --dataset dynamicmem
+  --progressive
   --steps "$TARGET_STEPS"
-  --eval_n_samples 6
-  --eval_n_qa 20
-  --check_n_samples 6
-  --check_n_qa 3
 )
 
 log "=== Supervisor start | target_steps=$TARGET_STEPS | max_reattempts=$MAX_REATTEMPTS ==="
