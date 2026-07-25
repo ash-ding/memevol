@@ -41,29 +41,43 @@ def parse_args():
     parser.add_argument("--status", type=str, default='search', choices=['search', 'test'])
     parser.add_argument("--dataset", type=str, default="dynamicmem", choices=DATASETS,
                         help="Which benchmark to evolve on (one per run).")
-    parser.add_argument("--eval_n_samples", type=int, default=6)
     parser.add_argument("--memo_SHA", type=str, default=None)
     parser.add_argument("--history_ckpt_path", type=str, default=None)
 
     parser.add_argument("--max_logs", type=int, default=None)
 
-    # Default: 20 QA per user (deterministically seeded by user_dir) — ~6x faster than
-    # the full 178 QA, trades a bit of reward stability for throughput during search.
-    # Pass an explicit large value (or a flag like `--eval_n_qa 178`) for full eval.
-    parser.add_argument("--eval_n_qa", type=int, default=20)
     parser.add_argument("--max_sample_concurrent", type=int, default=3)
     parser.add_argument("--n_score_bins", type=int, default=3)
     parser.add_argument("--samples_per_bin", type=int, default=3)
     parser.add_argument("--judge_model", type=str, default="gpt-5-mini")
-    # Default: 6 users × 3 QA — full user coverage for Phase 1 bugs + minimal Phase 2 probe
-    parser.add_argument("--check_n_samples", type=int, default=6)
-    parser.add_argument("--check_n_qa", type=int, default=3)
+
+    # --- Progressive gauntlet + per-step deterministic sampling (Task 9) ---
+    # These REPLACE the removed flat eval_n_samples/eval_n_qa/check_n_samples/
+    # check_n_qa knobs: evaluation sizes now live in the shared `stages` schema
+    # (common.staged_eval.DEFAULT_STAGES), and each candidate is scored through
+    # the same stage1→2→3 gauntlet forge uses.
+    parser.add_argument("--progressive", action=argparse.BooleanOptionalAction, default=True,
+                        help="Evaluate each candidate through the stage1→2→3 gauntlet "
+                             "(default). --no-progressive = a single terminal-size pass.")
+    parser.add_argument("--random_sample", action=argparse.BooleanOptionalAction, default=False,
+                        help="Draw a DIFFERENT deterministic task subset each search step "
+                             "(seeded by --sampling_seed + step). Off = fixed prefix.")
+    parser.add_argument("--sampling_seed", type=int, default=42,
+                        help="Base seed for --random_sample per-step subset selection.")
+    parser.add_argument("--stages", type=str, default=None,
+                        help="JSON override of the stages block "
+                             "(sanity_check/stage1..3); default = family DEFAULT_STAGES.")
+    parser.add_argument("--memory_cache", action=argparse.BooleanOptionalAction, default=True,
+                        help="Cross-stage Phase-1 memory reuse inside the gauntlet.")
 
     return parser.parse_args()
 
 
 async def main(args):
+    import json
     from baselines.evolve.alma.meta_agent import MetaAgent
+
+    stages = json.loads(args.stages) if args.stages else None
 
     meta_agent = MetaAgent(
         meta_model=args.meta_model,
@@ -79,26 +93,30 @@ async def main(args):
             max_memo_concurrent=args.max_memo_concurrent,
             max_sample_concurrent=args.max_sample_concurrent,
             result_dir=args.result_dir,
-            eval_n_samples=args.eval_n_samples,
             max_logs=args.max_logs,
-            eval_n_qa=args.eval_n_qa,
             n_score_bins=args.n_score_bins,
             samples_per_bin=args.samples_per_bin,
             judge_model=args.judge_model,
-            check_n_samples=args.check_n_samples,
-            check_n_qa=args.check_n_qa,
+            progressive=args.progressive,
+            random_sample=args.random_sample,
+            sampling_seed=args.sampling_seed,
+            stages=stages,
+            memory_cache=args.memory_cache,
         )
     else:
         await meta_agent.run_single_memo(
             memo_SHA=args.memo_SHA,
             status=args.status,
-            eval_n_samples=args.eval_n_samples,
             max_logs=args.max_logs,
-            eval_n_qa=args.eval_n_qa,
             max_sample_concurrent=args.max_sample_concurrent,
             n_score_bins=args.n_score_bins,
             samples_per_bin=args.samples_per_bin,
             judge_model=args.judge_model,
+            progressive=args.progressive,
+            random_sample=args.random_sample,
+            sampling_seed=args.sampling_seed,
+            stages=stages,
+            memory_cache=args.memory_cache,
         )
 
 
