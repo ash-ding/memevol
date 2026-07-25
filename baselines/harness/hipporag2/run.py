@@ -24,6 +24,10 @@ def main():
     p.add_argument("--dataset", default="dynamicmem", choices=DATASETS)
     p.add_argument("--split", default="test", choices=["test", "search"])
     p.add_argument("--stage-spec", default=None)
+    p.add_argument("--progressive", action="store_true")
+    p.add_argument("--sampling-seed", type=int, default=42)
+    p.add_argument("--stages", type=str, default=None)
+    p.add_argument("--no-memory-cache", dest="memory_cache", action="store_false", default=True)
     p.add_argument("--embedding", default="text-embedding-3-small")
     p.add_argument("--llm_model", default="gpt-5-mini")   # QA agent + HippoRAG internal LLM
     p.add_argument("--judge_model", default="gpt-5-mini")
@@ -42,6 +46,8 @@ def main():
         dataset=a.dataset, split=a.split, user_stage_spec=parse_stage_spec(a.stage_spec),
         memo_class=memo_class, qa_model=a.llm_model, judge_model=a.judge_model,
         out_dir=out_dir, max_sample_concurrent=a.max_sample_concurrent,
+        progressive=a.progressive, sampling_seed=a.sampling_seed,
+        stages=parse_stage_spec(a.stages), memory_cache=a.memory_cache,
     ))
     print("overall:", score["benchmark_eval_score"]["benchmark_overall_eval_score"], "→", out_dir)
 
