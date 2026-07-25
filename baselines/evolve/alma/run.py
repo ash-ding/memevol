@@ -107,7 +107,7 @@ def build_cfg(args):
     import json
 
     def _json_or_none(s):
-        return json.loads(s) if s is not None else None
+        return json.loads(s) if s else None
 
     cli = {k: getattr(args, k) for k in DEFAULT_CONFIG if k != "stages"}
     cli["stages"] = _json_or_none(getattr(args, "stages"))

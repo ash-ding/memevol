@@ -60,7 +60,7 @@ def main():
 
     def _json_or_none(s):
         import json
-        return json.loads(s) if s is not None else None
+        return json.loads(s) if s else None
 
     cli = {
         "dataset": a.dataset, "split": a.split, "stage_spec": _json_or_none(a.stage_spec),
