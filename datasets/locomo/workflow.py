@@ -49,9 +49,11 @@ class LoCoMoWorkflow(BaseWorkflow):
     # ------------------------------------------------------------------
 
     async def load_user_data(
-        self, user_dir: str, eval_n_qa: Optional[int]
+        self, user_dir: str, eval_n_qa: Optional[int], sample_seed: Optional[str] = None
     ) -> Tuple[Dict, List[Dict]]:
-        conversation, _profile, qa_pairs = load_user_data(user_dir, eval_n_qa)
+        conversation, _profile, qa_pairs = load_user_data(
+            user_dir, eval_n_qa, sample_seed=sample_seed
+        )
         return conversation, qa_pairs
 
     # ------------------------------------------------------------------

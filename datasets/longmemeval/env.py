@@ -266,6 +266,7 @@ def load_user_data(
     eval_n_qa: Optional[int] = None,
     *,
     variant: str = "s",
+    sample_seed: Optional[str] = None,
 ) -> Tuple[List[Dict], Dict, List[Dict]]:
     """Load one LongMemEval sample for the given variant.
 
@@ -278,6 +279,9 @@ def load_user_data(
         Ignored — LongMemEval has 1 QA per sample. Kept for API parity.
     variant : str
         "s" or "m" — which haystack density to use.
+    sample_seed : Optional[str]
+        Unused — LongMemEval has exactly 1 QA per sample, so there is no QA
+        subset to seed. Accepted for hook-uniformity with locomo/dynamicmem.
 
     Returns
     -------

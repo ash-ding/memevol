@@ -153,7 +153,7 @@ def _find_sample(sample_id: str) -> Dict:
 
 
 def load_user_data(
-    user_dir: str, eval_n_qa: Optional[int] = None
+    user_dir: str, eval_n_qa: Optional[int] = None, sample_seed: Optional[str] = None
 ) -> Tuple[Dict, Dict, List[Dict]]:
     """Load one LoCoMo sample.
 
@@ -164,6 +164,10 @@ def load_user_data(
         DynamicMem signature consumed by forge.BaseWorkflow.
     eval_n_qa : Optional[int]
         If not None, sample this many QAs deterministically.
+    sample_seed : Optional[str]
+        Per-step seed (stage_spec["sample_seed"]); combined with user_dir via
+        common.sampling.combine_seed. None (default) → seeds on user_dir
+        alone, exactly as before this parameter existed (back-compat).
 
     Returns
     -------
@@ -205,7 +209,8 @@ def load_user_data(
         # Shuffle-then-prefix (NOT rng.sample): guarantees the nesting
         # property staged evaluation depends on — the n=20 selection is
         # always the first 20 of the n=40 selection for the same sample.
-        rng = random.Random(user_dir)
+        from common.sampling import combine_seed
+        rng = random.Random(combine_seed(sample_seed, user_dir))
         shuffled = list(qa_pairs)
         rng.shuffle(shuffled)
         qa_pairs = shuffled[: min(eval_n_qa, len(shuffled))]

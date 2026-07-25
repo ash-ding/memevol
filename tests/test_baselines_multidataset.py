@@ -61,7 +61,7 @@ def test_base_workflow_default_answer_call_signature():
     class _W(BaseWorkflow):
         recorder_class = _Rec
         judge_score_max = 1
-        async def load_user_data(self, user_dir, eval_n_qa):
+        async def load_user_data(self, user_dir, eval_n_qa, sample_seed=None):
             return [], [{"query": "USR", "reference": "r", "metadata": {}}]
         async def phase1_log_init(self, recorder, chunk): return None
         def build_query_recorder_init(self, init_data, qa): return {}

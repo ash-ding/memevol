@@ -30,6 +30,7 @@ from typing import Any, Dict, List, Optional, Tuple, Type
 
 import httpx
 
+from common.sampling import combine_seed
 from common.workflow import BaseWorkflow, _QAProgressTracker, log
 from datasets.dynamicmem.env import (
     Basic_Recorder,
@@ -90,14 +91,15 @@ class DynamicMemWorkflow(BaseWorkflow):
                 n_checkpoints=_n(n_cp),
                 n_task_a=_n(spec.get("n_task_a", 0)),
                 n_task_c=_n(spec.get("n_task_c", 0)),
-                seed=user_dir,
+                seed=combine_seed(spec.get("sample_seed"), user_dir),
             )
         else:
             # Legacy total-count spec (alma baseline path): n_qa items
             # stratified across checkpoints; sanity stage = first cp only.
             checkpoints_used = checkpoints[:1] if stage == "sanity" else checkpoints
             sampled = sample_items(
-                checkpoints_used, spec.get("n_qa", self.eval_n_qa), seed=user_dir
+                checkpoints_used, spec.get("n_qa", self.eval_n_qa),
+                seed=combine_seed(spec.get("sample_seed"), user_dir),
             )
 
         sampled_by_cp: Dict[str, List[Dict]] = {}

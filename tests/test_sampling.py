@@ -76,6 +76,34 @@ def test_get_task_list_seed_varies_and_nests():
         assert set(s1) <= set(full)
 
 
+def test_get_task_list_dynamicmem_seed_none_and_nesting():
+    from datasets.dynamicmem import env as dm
+    base = dm.get_task_list(status="search", eval_n_samples=2)
+    assert dm.get_task_list(status="search", eval_n_samples=2, seed=None) == base   # back-compat
+    full = dm.get_task_list(status="search", eval_n_samples=None, seed=None)
+    assert base == full[:2]
+    if len(full) >= 4:
+        s1 = dm.get_task_list(status="search", eval_n_samples=2, seed="S")
+        s2 = dm.get_task_list(status="search", eval_n_samples=3, seed="S")
+        assert s1 == s2[:2]                       # nested for same seed
+        assert set(s1) <= set(full)
+
+
+def test_locomo_qa_sampling_honors_stage_sample_seed():
+    # load_user_data must seed QA sampling on combine_seed(sample_seed, user_dir).
+    from datasets.locomo import env as lc
+    from common.sampling import combine_seed
+    tasks = lc.get_task_list(status="search", eval_n_samples=1)
+    uid = tasks[0]
+    _c, _p, base = lc.load_user_data(uid, eval_n_qa=5)                 # historical seed (user_dir)
+    _c, _p, none_seed = lc.load_user_data(uid, eval_n_qa=5, sample_seed=None)
+    assert [q["query"] for q in none_seed] == [q["query"] for q in base]   # back-compat
+    _c, _p, stepped = lc.load_user_data(uid, eval_n_qa=5, sample_seed="STEP9")
+    # different step seed → (very likely) different QA subset, same size
+    assert len(stepped) == len(base)
+    assert [q["query"] for q in stepped] != [q["query"] for q in base]
+
+
 def main():
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = []

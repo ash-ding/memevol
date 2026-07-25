@@ -228,9 +228,14 @@ class BaseWorkflow(ABC):
 
     @abstractmethod
     async def load_user_data(
-        self, user_dir: str, eval_n_qa: Optional[int]
+        self, user_dir: str, eval_n_qa: Optional[int], sample_seed: Optional[str] = None
     ) -> Tuple[Any, List[Dict]]:
         """Load raw data for one user.
+
+        `sample_seed` carries the per-step seed (stage_spec["sample_seed"],
+        via common.sampling.combine_seed) for benchmarks that sample a QA
+        subset per user. None (default) preserves the historical seed
+        (user_dir alone) — back-compat.
 
         Returns (init_data, qa_pairs):
           init_data: opaque payload passed back to `phase1_log_init` and
@@ -446,7 +451,8 @@ class BaseWorkflow(ABC):
         user_tag = user_dir[-15:]
 
         qa_size = (stage_spec or {}).get("n_qa", self.eval_n_qa)
-        init_data, qa_pairs = await self.load_user_data(user_dir, qa_size)
+        sample_seed = (stage_spec or {}).get("sample_seed")
+        init_data, qa_pairs = await self.load_user_data(user_dir, qa_size, sample_seed=sample_seed)
 
         memo = self.memo_class()
 
