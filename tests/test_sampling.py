@@ -55,6 +55,27 @@ def test_combine_seed_backcompat_and_step():
     assert got != "conv-26" and "conv-26" in got               # step-varying, still user-scoped
 
 
+def test_get_task_list_seed_none_is_unchanged_all_datasets():
+    # Back-compat anchor: seed=None must equal the historical raw-prefix output.
+    from datasets.locomo import env as lc
+    base = lc.get_task_list(status="search", eval_n_samples=2)
+    assert lc.get_task_list(status="search", eval_n_samples=2, seed=None) == base
+    # the pool's raw prefix is what "no seed" means:
+    full = lc.get_task_list(status="search", eval_n_samples=None, seed=None)
+    assert base == full[:2]
+
+
+def test_get_task_list_seed_varies_and_nests():
+    from datasets.longmemeval import env as lme
+    full = lme.get_task_list(status="search", eval_n_samples=None, seed=None)
+    if len(full) >= 8:
+        s1 = lme.get_task_list(status="search", eval_n_samples=3, seed="STEP1")
+        s2 = lme.get_task_list(status="search", eval_n_samples=6, seed="STEP1")
+        assert s1 == s2[:3]                          # nested for same seed
+        assert s1 != lme.get_task_list(status="search", eval_n_samples=3, seed=None)  # differs from raw prefix
+        assert set(s1) <= set(full)
+
+
 def main():
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = []

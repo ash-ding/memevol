@@ -126,7 +126,7 @@ def _load_all() -> List[Dict]:
     return _CACHE
 
 
-def get_task_list(status: str, eval_n_samples: int) -> List[str]:
+def get_task_list(status: str, eval_n_samples: Optional[int], seed: Optional[str] = None) -> List[str]:
     """Return sample_id strings for the requested split.
 
     status='search' → first TRAIN_SAMPLES (6) samples, capped at eval_n_samples
@@ -136,17 +136,13 @@ def get_task_list(status: str, eval_n_samples: int) -> List[str]:
     staged nesting holds on the test split too — heldout sample-coverage sizing
     was silently void before 2026-07-08).
     """
+    from common.sampling import shuffle_prefix
     all_samples = _load_all()
     sample_ids = [s["sample_id"] for s in all_samples]
-
     train_ids = sample_ids[:TRAIN_SAMPLES]
     eval_ids = sample_ids[TRAIN_SAMPLES:TRAIN_SAMPLES + EVAL_SAMPLES]
-
-    if eval_n_samples is None:  # coverage=full: whole split, no cap
-        return train_ids if status == "search" else eval_ids
-    if status == "search":
-        return train_ids[:int(eval_n_samples)]
-    return eval_ids[:int(eval_n_samples)]
+    pool = train_ids if status == "search" else eval_ids
+    return shuffle_prefix(pool, eval_n_samples, seed)
 
 
 def _find_sample(sample_id: str) -> Dict:

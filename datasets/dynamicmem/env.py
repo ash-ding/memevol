@@ -211,7 +211,7 @@ def _get_all_user_dirs() -> List[str]:
     return [str(user_data_dir / d) for d in dirs]
 
 
-def get_task_list(status: str, eval_n_samples: int) -> List[str]:
+def get_task_list(status: str, eval_n_samples: Optional[int], seed: Optional[str] = None) -> List[str]:
     """Return user-directory paths for the requested split.
 
     status:
@@ -222,16 +222,12 @@ def get_task_list(status: str, eval_n_samples: int) -> List[str]:
     staged nesting holds on the test split too — mode=test stage sizing
     was silently void before 2026-07-08).
     """
+    from common.sampling import shuffle_prefix
     all_dirs = _get_all_user_dirs()
     train_dirs = all_dirs[:TRAIN_USERS]
     eval_dirs = all_dirs[TRAIN_USERS:]
-
-    if eval_n_samples is None:  # coverage=full: whole split, no cap
-        return train_dirs if status == "search" else eval_dirs
-    if status == "search":
-        return train_dirs[:int(eval_n_samples)]
-    else:  # test
-        return eval_dirs[:int(eval_n_samples)]
+    pool = train_dirs if status == "search" else eval_dirs
+    return shuffle_prefix(pool, eval_n_samples, seed)
 
 
 # ---------------------------------------------------------------------------
