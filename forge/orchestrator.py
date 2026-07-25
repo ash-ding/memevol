@@ -60,7 +60,7 @@ import sys
 import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import yaml
 
@@ -75,6 +75,14 @@ from forge.paths import (
 from forge.prompts import PromptVersionError, load_template_module, resolve_version
 from forge.proposer import propose, propose_with_fix
 from forge.selection import Entry, Frontier
+
+from common.config import deep_merge as _deep_merge  # shared primitive (2026-07-25)
+from common.staged_eval import (  # re-export: config moved to common/ 2026-07-25
+    STAGE_ORDER, DEFAULT_STAGES, FULL_STAGE, _FAMILY_FIELDS,
+    _benchmark_family, _wire_size, stage_wire_spec, full_wire_spec,
+    stage_plan, _resolve_dataset_stages, run_gauntlet,
+)
+from common.sampling import derive_sample_seed
 
 log = logging.getLogger("forge.orchestrator")
 
@@ -118,7 +126,29 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     #   full   — ONE whole-split evaluation per benchmark (no stage1/2, no
     #            elimination; wire stage "full", artifacts under <ds>/full/).
     # The sanity gate and smoke_test runs are unaffected. CLI: --coverage.
+    # SUPERSEDED 2026-07-25 by `progressive` below — `coverage` is kept as a
+    # back-compat read/write alias (derived from `progressive` at resolve
+    # time: progressive=True → "sample", False → "full") and as the literal
+    # value `evaluate_harness(coverage=...)` still consumes.
     "coverage": "sample",
+    # Progressive sampling (2026-07-25): whether a candidate goes through the
+    # staged stage1→2→3 gauntlet (True, default — preserves today's
+    # behavior) or gets ONE whole-split pass (False — same effect as the
+    # legacy `coverage: full`). CLI: --progressive / --no-progressive.
+    # `--coverage full`/`sample` is kept as a back-compat alias: giving it
+    # (YAML or CLI) without an explicit `progressive` maps full→False,
+    # sample→True; an explicit `progressive` always wins.
+    "progressive": True,
+    # When True, each search step samples a DIFFERENT (but still
+    # deterministic + reproducible) subset per benchmark, via
+    # common.sampling.derive_sample_seed(sampling_seed, step_index, dataset).
+    # Default False = every step samples the SAME fixed prefix (today's
+    # behavior — sample_seed=None throughout). CLI: --random-sample.
+    "random_sample": False,
+    # Base seed combined with (step_index, dataset) to derive each step's
+    # sample_seed when random_sample is on. Irrelevant when random_sample is
+    # False. CLI: --sampling-seed.
+    "sampling_seed": 42,
     # Search-mode data isolation: overlay-bind search-split-only data into
     # BOTH containers so the held-out test split (questions + gold answers)
     # is technically invisible to the proposer agent and to harness code.
@@ -240,194 +270,26 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 }
 
 
-# ---------------------------------------------------------------------------
-# Staged evaluation — per-benchmark stage schema
-#
-# Each benchmark's `datasets.<ds>` block carries a `stages` mapping with four
-# entries (sanity_check + stage1..3). Sizes use the benchmark's NATIVE
-# hierarchy fields; `threshold` on stage1/stage2 is the promotion gate (the
-# stage's normalized score must be >= threshold to advance; per-benchmark
-# independent). stage3 is terminal (no threshold). Sizes are PER-UNIT
-# (DynamicMem task counts are per checkpoint; LoCoMo QA counts are per
-# conversation). Nested sampling guarantees a smaller stage's task set is a
-# subset of a larger one.
-# ---------------------------------------------------------------------------
+def _sync_coverage_progressive(cfg: Dict[str, Any], *, source: str = "progressive") -> None:
+    """Keep `cfg['coverage']` and `cfg['progressive']` mutually consistent.
 
-STAGE_ORDER = ("stage1", "stage2", "stage3")
+    `progressive` is canonical; `coverage` ("sample"/"full") is kept only as
+    a back-compat read/write alias — the persisted config.yaml snapshot must
+    never show a contradictory pair (e.g. `progressive: true` alongside
+    `coverage: full`). `source` picks which field is authoritative THIS call:
 
-# Benchmark-family field vocabulary: <family> -> (sample-count field, extras)
-_FAMILY_FIELDS = {
-    "dynamicmem": ("n_users", ("n_checkpoints", "n_task_a", "n_task_c")),
-    "locomo": ("n_conversations", ("n_qa",)),
-    "longmemeval": ("n_questions", ()),
-}
-
-# Initial thresholds are DELIBERATELY conservative (only clearly-broken
-# candidates get eliminated early) — calibrate against stage-score
-# distributions after the first real search run. LoCoMo/LongMemEval have a
-# non-zero no-memory floor (some questions are answerable from the question
-# text alone), hence higher thresholds than DynamicMem. (LoCoMo runs on
-# categories 1-4 only since 2026-07-08 — cat-5 adversarial QAs are excluded.)
-DEFAULT_STAGES: Dict[str, Dict[str, Dict[str, Any]]] = {
-    "dynamicmem": {
-        "sanity_check": {"n_users": 1, "n_checkpoints": 1, "n_task_a": 1, "n_task_c": 1},
-        "stage1": {"n_users": 2, "n_checkpoints": 1, "n_task_a": 5, "n_task_c": 5, "threshold": 0.05},
-        "stage2": {"n_users": 4, "n_checkpoints": 3, "n_task_a": 5, "n_task_c": 5, "threshold": 0.10},
-        "stage3": {"n_users": 6, "n_checkpoints": 5, "n_task_a": 5, "n_task_c": 5},
-    },
-    "locomo": {
-        "sanity_check": {"n_conversations": 1, "n_qa": 3},
-        "stage1": {"n_conversations": 2, "n_qa": 20, "threshold": 0.30},
-        "stage2": {"n_conversations": 4, "n_qa": 40, "threshold": 0.35},
-        "stage3": {"n_conversations": 6, "n_qa": 60},
-    },
-    "longmemeval": {
-        "sanity_check": {"n_questions": 2},
-        "stage1": {"n_questions": 20, "threshold": 0.25},
-        "stage2": {"n_questions": 50, "threshold": 0.30},
-        "stage3": {"n_questions": 100},
-    },
-}
-
-# stage_<ds> objective value for a coverage=full evaluation. Numerically above
-# the last gauntlet tier (3) so full-coverage entries are distinguishable in
-# frontier telemetry; scores at stage 3 vs 4 are still NOT mutually comparable —
-# coverage is uniform within a run.
-FULL_STAGE = 4.0
-
-_OLD_SIZE_FIELDS = ("eval_n_samples", "eval_n_qa", "check_n_samples", "check_n_qa")
-
-
-def _benchmark_family(ds: str) -> str:
-    """Map a dataset name to its stage-schema family (longmemeval_s/m share one)."""
-    if ds.startswith("longmemeval"):
-        return "longmemeval"
-    if ds not in _FAMILY_FIELDS:
-        raise ValueError(
-            f"Unknown benchmark {ds!r} — no stage schema. Known families: "
-            f"{sorted(_FAMILY_FIELDS)} (longmemeval_s / longmemeval_m share 'longmemeval')."
-        )
-    return ds
-
-
-def _wire_size(v: Any) -> Optional[int]:
-    """Stage size field → wire value. None (a `null` / `full` / `all` field,
-    normalized by _resolve_dataset_stages) passes through as None = no cap
-    (whole pool / whole split), reusing the same downstream machinery as
-    coverage=full; anything else is coerced to int."""
-    return None if v is None else int(v)
-
-
-def stage_wire_spec(ds: str, stage_params: Dict[str, Any]) -> Dict[str, Any]:
-    """Normalize a stage's benchmark-native size fields to the wire spec the
-    container consumes: {"n_samples": int|None, ...family extras}. A None
-    field means full coverage of that dimension. `threshold` is an
-    orchestrator-side concern and is stripped."""
-    family = _benchmark_family(ds)
-    sample_field, extras = _FAMILY_FIELDS[family]
-    spec: Dict[str, Any] = {"n_samples": _wire_size(stage_params[sample_field])}
-    for f in extras:
-        spec[f] = _wire_size(stage_params[f])
-    return spec
-
-
-def full_wire_spec(ds: str) -> Dict[str, Any]:
-    """Wire spec for coverage=full: every size field None = no cap (the
-    container's env/get_task_list and the workflows treat None as "whole
-    split / all checkpoints / whole buckets")."""
-    family = _benchmark_family(ds)
-    sample_field, extras = _FAMILY_FIELDS[family]
-    spec: Dict[str, Any] = {"n_samples": None}
-    for f in extras:
-        spec[f] = None
-    return spec
-
-
-def stage_plan(ds: str, ds_params: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any], Optional[float]]]:
-    """Ordered promotion plan for one benchmark:
-    [(stage_name, wire_spec, threshold_or_None), ...] for stage1..3."""
-    stages = ds_params["stages"]
-    plan = []
-    for name in STAGE_ORDER:
-        params = stages[name]
-        threshold = params.get("threshold")
-        plan.append((name, stage_wire_spec(ds, params), float(threshold) if threshold is not None else None))
-    return plan
-
-
-def _resolve_dataset_stages(ds: str, params: Dict[str, Any]) -> None:
-    """Fill defaults + validate the `stages` block of one dataset, in place."""
-    family = _benchmark_family(ds)
-    sample_field, extras = _FAMILY_FIELDS[family]
-    allowed = {sample_field, *extras, "threshold"}
-
-    # Old flat schema is gone — fail loudly with a migration hint.
-    stale = [f for f in _OLD_SIZE_FIELDS if f in params]
-    if stale:
-        raise ValueError(
-            f"datasets.{ds}: fields {stale} were removed — evaluation sizes now "
-            f"live in a `stages` block. Example:\n"
-            f"  {ds}:\n    stages:\n"
-            f"      sanity_check: {DEFAULT_STAGES[family]['sanity_check']}\n"
-            f"      stage1: {DEFAULT_STAGES[family]['stage1']}\n"
-            f"      stage2: {DEFAULT_STAGES[family]['stage2']}\n"
-            f"      stage3: {DEFAULT_STAGES[family]['stage3']}"
-        )
-
-    stages = params.setdefault("stages", {})
-    if not isinstance(stages, dict):
-        raise ValueError(f"datasets.{ds}.stages must be a mapping")
-    for name in ("sanity_check", *STAGE_ORDER):
-        block = stages.setdefault(name, {})
-        if not isinstance(block, dict):
-            raise ValueError(f"datasets.{ds}.stages.{name} must be a mapping")
-        unknown = set(block) - allowed
-        if unknown:
-            raise ValueError(
-                f"datasets.{ds}.stages.{name}: unknown field(s) {sorted(unknown)} "
-                f"for family {family!r}; allowed: {sorted(allowed)}"
-            )
-        for field, default in DEFAULT_STAGES[family][name].items():
-            block.setdefault(field, default)
-        # Full-coverage sentinel: a size field of null / "full" / "all"
-        # (case-insensitive) → None = that dimension's whole pool / split,
-        # reusing coverage=full's downstream None path. Intended for stage3
-        # (progressive gauntlet with a full final stage); the monotonicity
-        # check below treats None as +inf, so a stray null at an earlier
-        # stage forces later stages full or errors out.
-        for field in (sample_field, *extras):
-            v = block.get(field)
-            if isinstance(v, str) and v.strip().lower() in ("full", "all"):
-                block[field] = None
-        # sanity_check and stage3 never gate
-        if name in ("sanity_check", "stage3"):
-            block.pop("threshold", None)
-        thr = block.get("threshold")
-        if thr is not None and not (0.0 <= float(thr) <= 1.0):
-            raise ValueError(f"datasets.{ds}.stages.{name}.threshold must be in [0,1], got {thr}")
-
-    # Monotonic non-decreasing sizes across stage1..3 (nesting depends on it).
-    # None (full coverage) counts as the largest value, so it must not precede
-    # a concrete size — a null/full field forces every later stage full too.
-    for field in (sample_field, *extras):
-        seq = [stages[name][field] for name in STAGE_ORDER]
-        cmp = [float("inf") if v is None else int(v) for v in seq]
-        if any(b < a for a, b in zip(cmp, cmp[1:])):
-            raise ValueError(
-                f"datasets.{ds}.stages: {field} must be non-decreasing across "
-                f"stage1..stage3 (got {seq}) — staged nesting depends on it; "
-                f"a null/full field (= full coverage) may only be followed by "
-                f"another null/full field"
-            )
-
-
-def _deep_merge(base: Dict[str, Any], overlay: Dict[str, Any]) -> None:
-    """In-place deep merge of overlay into base (dicts only)."""
-    for k, v in overlay.items():
-        if isinstance(v, dict) and isinstance(base.get(k), dict):
-            _deep_merge(base[k], v)
-        else:
-            base[k] = v
+      "progressive" (default) — cfg["coverage"] is derived from
+        cfg["progressive"] (True → "sample", False → "full"). Used by
+        `_resolve_config` once `progressive` has settled from CLI/YAML/alias.
+      "coverage" — cfg["progressive"] is derived from cfg["coverage"]
+        (=="sample" → True). Used by callers (e.g. `forge.heldout`) that
+        override `coverage` AFTER `_resolve_config` already ran, so the two
+        fields don't drift apart again in the persisted snapshot.
+    """
+    if source == "coverage":
+        cfg["progressive"] = (cfg.get("coverage", "sample") == "sample")
+    else:
+        cfg["coverage"] = "sample" if cfg.get("progressive", True) else "full"
 
 
 def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
@@ -439,6 +301,10 @@ def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
       3. Explicit CLI args (only when not None)
     """
     cfg: Dict[str, Any] = copy.deepcopy(DEFAULT_CONFIG)
+    # Raw YAML dict (empty when no --config given) — kept around so the
+    # progressive/coverage alias resolution below can tell "explicitly set
+    # in the file" apart from "left at its DEFAULT_CONFIG value".
+    file_cfg: Dict[str, Any] = {}
 
     if args.config is not None:
         path = Path(args.config)
@@ -575,6 +441,32 @@ def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
         raise ValueError(
             f"coverage must be 'sample' or 'full', got {cfg.get('coverage')!r}"
         )
+
+    # progressive / random_sample / sampling_seed (2026-07-25).
+    # Precedence: an explicit `progressive` (YAML key OR --progressive/
+    # --no-progressive) always wins. Otherwise `coverage` is honored as a
+    # back-compat ALIAS (YAML key OR --coverage): full → progressive=False,
+    # sample → progressive=True. Absent both, DEFAULT_CONFIG's
+    # progressive=True stands.
+    progressive_explicit = ("progressive" in file_cfg) or (
+        getattr(args, "progressive", None) is not None
+    )
+    coverage_explicit = ("coverage" in file_cfg) or (
+        getattr(args, "coverage", None) is not None
+    )
+    if getattr(args, "progressive", None) is not None:
+        cfg["progressive"] = bool(args.progressive)
+    elif not progressive_explicit and coverage_explicit:
+        cfg["progressive"] = (cfg["coverage"] == "sample")
+    # `coverage` stays derivable from `progressive` for the
+    # evaluate_harness(coverage=...) call sites — always re-synced here so
+    # it never drifts from the canonical `progressive` flag.
+    _sync_coverage_progressive(cfg, source="progressive")
+
+    if getattr(args, "random_sample", False):
+        cfg["random_sample"] = True
+    if getattr(args, "sampling_seed", None) is not None:
+        cfg["sampling_seed"] = int(args.sampling_seed)
 
     # llm block: --anthropic-transport override + validation.
     if getattr(args, "anthropic_transport", None) is not None:
@@ -1234,6 +1126,7 @@ async def evaluate_harness(
     llm_cfg: Optional[Dict[str, Any]] = None,
     coverage: str = "sample",
     data_isolation_binds: Optional[List[str]] = None,
+    sample_seed_for: Callable[[str], Optional[str]] = lambda ds: None,
 ) -> Dict[str, Dict[str, Any]]:
     """Run the evaluation on every dataset (serial).
 
@@ -1257,131 +1150,119 @@ async def evaluate_harness(
     """
     harness_dir = paths.harnesses_dir / harness_id
 
-    scores: Dict[str, Dict[str, Any]] = {}
-    for ds, params in datasets_config.items():
-        ds_judge = params.get("judge_model", judge_model)
+    # --- injected stage EXECUTION (container exec + publish + memcache) ------
+    # run_gauntlet owns only the promotion/elimination/cost/telemetry logic;
+    # the container run, artifact publishing, memcache-dir gating and the
+    # scoreless-crash synthesis stay here (the CALLER's concern). The output
+    # dir + real split are captured in this closure, not run_gauntlet params:
+    # the "sanity" (smoke) stage publishes at the dataset root on the search
+    # split; gauntlet/full stages publish to a per-stage subdir on `split`.
+    async def _run_stage_fn(ds: str, stage_name: str,
+                            spec: Dict[str, Any]) -> Optional[Exception]:
+        ds_judge = datasets_config[ds].get("judge_model", judge_model)
         dst_root = _dataset_dir(harness_dir, ds)
-
-        async def _run_stage(stage_name: str, spec: Dict[str, Any], dst: Path,
-                             split: str) -> Optional[Exception]:
-            run_dir = paths.runs_dir / f"{harness_id}_{int(time.time())}_{ds}_{stage_name}"
-            # Cross-stage memory cache: gauntlet tiers only (launch.py gates
-            # on the stage name too; sanity/dev execs never get the mount).
-            memcache_dir: Optional[Path] = None
-            if memory_cache and stage_name in ("stage1", "stage2", "stage3", "full"):
-                memcache_dir = dst_root / "memory_cache"
-                memcache_dir.mkdir(parents=True, exist_ok=True)
-            crashed: Optional[Exception] = None
-            try:
-                await run_evaluation(
-                    harness_dir=harness_dir,
-                    image_path=image_path,
-                    out_dir=run_dir,
-                    dataset=ds,
-                    split=split,
-                    stage=stage_name,
-                    stage_spec=spec,
-                    model=model,
-                    judge_model=ds_judge,
-                    max_sample_concurrent=max_sample_concurrent,
-                    memcache_dir=memcache_dir,
-                    gpu=gpu,
-                    anthropic_transport=(llm_cfg or {}).get("anthropic_transport", "api"),
-                    vertex_cfg=(llm_cfg or {}).get("vertex"),
-                    data_isolation_binds=data_isolation_binds,
-                )
-            except Exception as exc:
-                log.error(f"evaluation crashed for {harness_id} [{ds}/{stage_name}]: {exc}")
-                crashed = exc
-            # Always publish + cleanup. If the container died mid-write,
-            # subprocess.log + any partial score.json are still useful for triage.
-            _publish_run_artifacts(run_dir, dst)
-            if not (dst / "score.json").exists():
-                _write_failure(dst, f"eval_crashed: {crashed}" if crashed else "no score.json produced")
-                if crashed is None:
-                    # Container exited without a score (rc!=0, OOM-kill, ...).
-                    # Surface it as a crash so stages.json records it and the
-                    # gauntlet stops here — a scoreless run must never be
-                    # indistinguishable from a genuine 0-score run.
-                    crashed = RuntimeError(
-                        f"container produced no score.json [{ds}/{stage_name}]"
-                    )
-            return crashed
-
-        if smoke:
-            # Sanity-size single run, no gating, artifacts at the dataset root.
-            spec = stage_wire_spec(ds, params["stages"]["sanity_check"])
-            await _run_stage("sanity", spec, dst_root, "search")
-            m = _read_dataset_metrics(harness_dir, ds)
-            m["stage"] = 0.0  # 0 = sanity-size smoke run (not a gauntlet tier)
-            m["eliminated"] = False
-            scores[ds] = m
-            continue
-
-        # ---- staged gauntlet OR single full pass on `split` ----
-        if coverage == "full":
-            plan = [("full", full_wire_spec(ds), None)]
+        if stage_name == "sanity":
+            dst, stage_split = dst_root, "search"
         else:
-            plan = stage_plan(ds, params)
-        stage_summary: Dict[str, Any] = {}
-        final_metrics: Dict[str, Any] = {}
-        reached = ""
-        eliminated = False
-        for stage_name, spec, threshold in plan:
-            crashed = await _run_stage(stage_name, spec, dst_root / stage_name, split)
-            m = _read_dataset_metrics(harness_dir, ds, subdir=stage_name)
-            score_max = int(m.get("score_max", 10)) or 1
-            normalized = float(m.get("raw_score", 0.0)) / score_max
-            stage_summary[stage_name] = {
-                "raw_score": m["raw_score"],
-                "score_max": m["score_max"],
-                "normalized": normalized,
-                "threshold": threshold,
-                "tokens": m["tokens"],
-                "spec": spec,
-            }
-            # Cost accounting spans ALL executed stages, not just the last.
-            m["tokens"] += sum(
-                s["tokens"] for n, s in stage_summary.items() if n != stage_name
+            dst, stage_split = dst_root / stage_name, split
+        run_dir = paths.runs_dir / f"{harness_id}_{int(time.time())}_{ds}_{stage_name}"
+        # Cross-stage memory cache: gauntlet tiers only (launch.py gates
+        # on the stage name too; sanity/dev execs never get the mount).
+        memcache_dir: Optional[Path] = None
+        if memory_cache and stage_name in ("stage1", "stage2", "stage3", "full"):
+            memcache_dir = dst_root / "memory_cache"
+            memcache_dir.mkdir(parents=True, exist_ok=True)
+        crashed: Optional[Exception] = None
+        try:
+            await run_evaluation(
+                harness_dir=harness_dir,
+                image_path=image_path,
+                out_dir=run_dir,
+                dataset=ds,
+                split=stage_split,
+                stage=stage_name,
+                stage_spec=spec,
+                model=model,
+                judge_model=ds_judge,
+                max_sample_concurrent=max_sample_concurrent,
+                memcache_dir=memcache_dir,
+                gpu=gpu,
+                anthropic_transport=(llm_cfg or {}).get("anthropic_transport", "api"),
+                vertex_cfg=(llm_cfg or {}).get("vertex"),
+                data_isolation_binds=data_isolation_binds,
             )
-            final_metrics = m
-            reached = stage_name
-            if crashed is not None:
-                eliminated = True
-                stage_summary[stage_name]["crashed"] = repr(crashed)
-                break
-            if threshold is not None and normalized < threshold:
-                eliminated = True
+        except Exception as exc:
+            log.error(f"evaluation crashed for {harness_id} [{ds}/{stage_name}]: {exc}")
+            crashed = exc
+        # Always publish + cleanup. If the container died mid-write,
+        # subprocess.log + any partial score.json are still useful for triage.
+        _publish_run_artifacts(run_dir, dst)
+        if not (dst / "score.json").exists():
+            _write_failure(dst, f"eval_crashed: {crashed}" if crashed else "no score.json produced")
+            if crashed is None:
+                # Container exited without a score (rc!=0, OOM-kill, ...).
+                # Surface it as a crash so stages.json records it and the
+                # gauntlet stops here — a scoreless run must never be
+                # indistinguishable from a genuine 0-score run.
+                crashed = RuntimeError(
+                    f"container produced no score.json [{ds}/{stage_name}]"
+                )
+        return crashed
+
+    def _read_metrics_fn(ds: str, stage_name: str) -> Dict[str, Any]:
+        # smoke's "sanity" run publishes at the dataset root (no subdir);
+        # gauntlet/full stages live under their per-stage subdir.
+        subdir = None if stage_name == "sanity" else stage_name
+        return _read_dataset_metrics(harness_dir, ds, subdir=subdir)
+
+    def _stages_writer(ds: str, summary: Dict[str, Any]) -> None:
+        dst_root = _dataset_dir(harness_dir, ds)
+        reached = summary["reached"]
+        # Narrate each gated stage's promote/eliminate decision (run_gauntlet
+        # itself stays logger-free — this closure is the only place forge
+        # logs it). Only stages with a threshold gate anything; a crashed
+        # stage already got a log.error from _run_stage_fn above, so it's
+        # skipped here to avoid a redundant/misleading ELIMINATED-by-score line.
+        for stage_name, info in summary["stages"].items():
+            threshold = info.get("threshold")
+            if threshold is None or "crashed" in info:
+                continue
+            normalized = info["normalized"]
+            if stage_name == reached and summary["eliminated"]:
                 log.info(
                     f"{harness_id} [{ds}] ELIMINATED at {stage_name}: "
                     f"{normalized:.3f} < threshold {threshold}"
                 )
-                break
-            if threshold is not None:
+            else:
                 log.info(
                     f"{harness_id} [{ds}] promoted past {stage_name}: "
                     f"{normalized:.3f} >= {threshold}"
                 )
-
-        # Final-stage artifacts to the dataset root (CC browsing + the
-        # frontier reader default path).
+        # Final (highest-reached) stage artifacts to the dataset root (CC
+        # browsing + the frontier reader default path).
         for fname in ("score.json", "token_usage.json"):
             src = dst_root / reached / fname
             if src.exists():
                 shutil.copy2(src, dst_root / fname)
         with (dst_root / "stages.json").open("w", encoding="utf-8") as f:
             json.dump(
-                {"reached": reached, "eliminated": eliminated, "stages": stage_summary},
+                {"reached": reached, "eliminated": summary["eliminated"],
+                 "stages": summary["stages"]},
                 f, indent=2, ensure_ascii=False,
             )
 
-        final_metrics["stage"] = (
-            FULL_STAGE if reached == "full" else float(STAGE_ORDER.index(reached) + 1)
-        )
-        final_metrics["eliminated"] = eliminated
-        scores[ds] = final_metrics
-
-    return scores
+    # sample_seed_for defaults to `lambda ds: None` (unchanged behavior);
+    # callers pass the real per-step seed function when cfg.random_sample
+    # is on (see propose_eval_one, Task 6).
+    return await run_gauntlet(
+        datasets_config=datasets_config,
+        coverage=coverage,
+        smoke=smoke,
+        sample_seed_for=sample_seed_for,
+        run_stage_fn=_run_stage_fn,
+        read_metrics_fn=_read_metrics_fn,
+        stages_writer=_stages_writer,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1394,6 +1275,7 @@ async def propose_eval_one(
     new_id: str,
     *,
     is_seed: bool = False,
+    step_index: int = 0,
 ) -> Tuple[str, Dict[str, float], str, List[str]]:
     """End-to-end for one harness (seed or proposed).
 
@@ -1409,6 +1291,10 @@ async def propose_eval_one(
     The harness directory is renamed `harnesses/<int>` →
     `harnesses/<int>_<hash8>` after the sanity-retry loop settles, so the
     suffix reflects the code that's actually evaluated.
+
+    `step_index` (the outer-loop step this candidate belongs to; 0 for the
+    seed) feeds `common.sampling.derive_sample_seed` when cfg.random_sample
+    is on — see the `sample_seed_for` closure below.
     """
     datasets_config = cfg["datasets"]
     dataset_names = list(datasets_config.keys())
@@ -1557,6 +1443,21 @@ async def propose_eval_one(
     # rename `<int>` → `<int>_<hash8>`, then run full eval against the new dir.
     _settle_path()
 
+    # Per-step sample seed (2026-07-25): when random_sample is on, each step
+    # gets a different but reproducible subset per dataset; otherwise every
+    # step reuses the same fixed prefix (sample_seed=None, identical to
+    # pre-progressive-sampling behavior). `s=step_index` binds the current
+    # value explicitly — step_index is a plain function parameter here (not
+    # a loop variable this closure could outlive), so this isn't strictly
+    # needed for correctness, but it documents intent and guards against the
+    # classic late-binding-in-a-loop mistake if this ever gets refactored to
+    # close over a loop variable directly.
+    if cfg.get("random_sample", False):
+        sampling_seed = cfg.get("sampling_seed", 42)
+        sample_seed_for = lambda ds, s=step_index: derive_sample_seed(sampling_seed, s, ds)
+    else:
+        sample_seed_for = lambda ds: None
+
     per_ds = await evaluate_harness(
         final_id, image_path,
         datasets_config=datasets_config,
@@ -1569,6 +1470,7 @@ async def propose_eval_one(
         llm_cfg=cfg.get("llm"),
         coverage=cfg.get("coverage", "sample"),
         data_isolation_binds=_isolation_binds(cfg),
+        sample_seed_for=sample_seed_for,
     )
     return final_id, per_ds, sanity_status, _read_parent_ids(harness_dir)
 
@@ -1674,7 +1576,7 @@ async def search_loop(cfg: Dict[str, Any]) -> None:
         log.info(f"[step {step}/{cfg['steps']}] candidate {j}/{k} → int_id={int_id}")
         try:
             final_id, per_ds, sanity_status, parent_ids = await propose_eval_one(
-                cfg, new_id=int_id, is_seed=False,
+                cfg, new_id=int_id, is_seed=False, step_index=step,
             )
         except ProposerInfraError as exc:
             log.error(
@@ -1901,6 +1803,19 @@ async def _adopt_orphan(
         f"adoption: harnesses/{name} → sanity_passed; running evaluate_harness "
         f"on {dataset_names}"
     )
+    if cfg.get("random_sample", False):
+        # meta.json doesn't record which step_index this candidate belonged
+        # to, so its per-step sample_seed can't be reconstructed on resume —
+        # this re-eval falls back to evaluate_harness's default
+        # sample_seed_for=lambda ds: None (the historical fixed prefix), NOT
+        # the per-step subset its original-run siblings used. Score is real
+        # but not step-comparable to same-run candidates under random_sample.
+        log.warning(
+            f"adoption: harnesses/{name} resumed under random_sample=True but "
+            f"has no recorded step_index — evaluating with the fixed "
+            f"(unseeded) sample instead of a per-step subset; its score is "
+            f"not directly comparable to same-step siblings from this run"
+        )
     try:
         image_path = await ensure_image(harness_dir)
     except EnvBuildError as exc:
@@ -2104,10 +2019,29 @@ def build_arg_parser() -> argparse.ArgumentParser:
                              "the test split) into search-mode containers "
                              "instead of the search-split-only overlay.")
     parser.add_argument("--coverage", default=None, choices=["sample", "full"],
-                        help="Evaluation coverage (overrides cfg.coverage): "
-                             "sample = staged gauntlet (default); full = one "
-                             "whole-split evaluation per benchmark, no "
-                             "stage1/2, no threshold elimination.")
+                        help="DEPRECATED alias for --progressive/--no-progressive "
+                             "(overrides cfg.coverage): sample = staged gauntlet "
+                             "(default, progressive=True); full = one whole-split "
+                             "evaluation per benchmark, no stage1/2, no threshold "
+                             "elimination (progressive=False). Ignored if "
+                             "--progressive/--no-progressive is also given.")
+    parser.add_argument("--progressive", dest="progressive",
+                        action="store_true", default=None,
+                        help="Run the staged stage1→2→3 gauntlet (default). "
+                             "Supersedes --coverage sample.")
+    parser.add_argument("--no-progressive", dest="progressive",
+                        action="store_false", default=None,
+                        help="Skip the gauntlet — ONE whole-split pass per "
+                             "benchmark. Supersedes --coverage full.")
+    parser.add_argument("--random-sample", action="store_true",
+                        help="Sample a DIFFERENT (deterministic) subset each "
+                             "search step, seeded from --sampling-seed via "
+                             "common.sampling.derive_sample_seed. Default: "
+                             "every step samples the same fixed prefix.")
+    parser.add_argument("--sampling-seed", type=int, default=None,
+                        help="Base seed combined with (step, dataset) to "
+                             "derive each step's sample when --random-sample "
+                             "is on (default 42).")
     parser.add_argument("--anthropic-transport", default=None,
                         choices=["api", "vertex"],
                         help="How claude-* QA/judge models reach Anthropic "

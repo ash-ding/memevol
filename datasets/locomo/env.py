@@ -126,7 +126,7 @@ def _load_all() -> List[Dict]:
     return _CACHE
 
 
-def get_task_list(status: str, eval_n_samples: int) -> List[str]:
+def get_task_list(status: str, eval_n_samples: Optional[int], seed: Optional[str] = None) -> List[str]:
     """Return sample_id strings for the requested split.
 
     status='search' → first TRAIN_SAMPLES (6) samples, capped at eval_n_samples
@@ -136,17 +136,13 @@ def get_task_list(status: str, eval_n_samples: int) -> List[str]:
     staged nesting holds on the test split too — heldout sample-coverage sizing
     was silently void before 2026-07-08).
     """
+    from common.sampling import shuffle_prefix
     all_samples = _load_all()
     sample_ids = [s["sample_id"] for s in all_samples]
-
     train_ids = sample_ids[:TRAIN_SAMPLES]
     eval_ids = sample_ids[TRAIN_SAMPLES:TRAIN_SAMPLES + EVAL_SAMPLES]
-
-    if eval_n_samples is None:  # coverage=full: whole split, no cap
-        return train_ids if status == "search" else eval_ids
-    if status == "search":
-        return train_ids[:int(eval_n_samples)]
-    return eval_ids[:int(eval_n_samples)]
+    pool = train_ids if status == "search" else eval_ids
+    return shuffle_prefix(pool, eval_n_samples, seed)
 
 
 def _find_sample(sample_id: str) -> Dict:
@@ -157,7 +153,7 @@ def _find_sample(sample_id: str) -> Dict:
 
 
 def load_user_data(
-    user_dir: str, eval_n_qa: Optional[int] = None
+    user_dir: str, eval_n_qa: Optional[int] = None, sample_seed: Optional[str] = None
 ) -> Tuple[Dict, Dict, List[Dict]]:
     """Load one LoCoMo sample.
 
@@ -168,6 +164,10 @@ def load_user_data(
         DynamicMem signature consumed by forge.BaseWorkflow.
     eval_n_qa : Optional[int]
         If not None, sample this many QAs deterministically.
+    sample_seed : Optional[str]
+        Per-step seed (stage_spec["sample_seed"]); combined with user_dir via
+        common.sampling.combine_seed. None (default) → seeds on user_dir
+        alone, exactly as before this parameter existed (back-compat).
 
     Returns
     -------
@@ -209,7 +209,8 @@ def load_user_data(
         # Shuffle-then-prefix (NOT rng.sample): guarantees the nesting
         # property staged evaluation depends on — the n=20 selection is
         # always the first 20 of the n=40 selection for the same sample.
-        rng = random.Random(user_dir)
+        from common.sampling import combine_seed
+        rng = random.Random(combine_seed(sample_seed, user_dir))
         shuffled = list(qa_pairs)
         rng.shuffle(shuffled)
         qa_pairs = shuffled[: min(eval_n_qa, len(shuffled))]

@@ -1,0 +1,22 @@
+# alma baseline config (memory-structure evolution). Launch:
+#   baselines/venv/bin/python baselines/evolve/alma/run.py --config baselines/evolve/alma/config.example.yaml
+# CLI flags override this file (defaults < this file < CLI).
+meta_model: gpt-5
+execution_model: gpt-5-mini
+steps: 10
+max_memo_concurrent: 2
+result_dir: check
+status: search                # search | test
+dataset: dynamicmem           # dynamicmem | locomo | longmemeval_s | longmemeval_m
+# memo_SHA: null              # set for --status test (a specific evolved memo)
+# history_ckpt_path: null     # resume from a search checkpoint
+# max_logs: null
+max_sample_concurrent: 3
+n_score_bins: 3
+samples_per_bin: 3
+judge_model: gpt-5-mini
+progressive: true             # staged gauntlet per candidate; false = single pass
+random_sample: false          # different subset each search step (seeded)
+sampling_seed: 42
+# stages: {...}               # override family DEFAULT_STAGES (native YAML dict)
+memory_cache: true

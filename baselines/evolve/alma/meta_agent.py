@@ -115,17 +115,24 @@ class MetaAgent:
     async def examine_new_code(
         self,
         code_str: str,
-        eval_n_samples: int = 6,
         max_logs: Optional[int] = None,
-        eval_n_qa: Optional[int] = None,
         max_sample_concurrent: int = 6,
         n_score_bins: int = 3,
         samples_per_bin: int = 3,
         judge_model: str = "gpt-5-mini",
-        check_n_samples: int = 6,
-        check_n_qa: int = 3,
+        progressive: bool = True,
+        random_sample: bool = False,
+        sampling_seed: int = 42,
+        step_index: int = 0,
+        stages: Optional[dict] = None,
+        memory_cache: bool = True,
     ):
-        """Sanity-check gating: run generated code; on failure, reflect + retry."""
+        """Sanity-check gating: run generated code; on failure, reflect + retry.
+
+        The gate is a single cheap sanity-size pass (launch.py mode='check'
+        ignores `progressive` — the gauntlet only applies to mode='eval'); the
+        per-step seed still threads through so a random_sample run's sanity
+        subset tracks its step."""
         memo_SHA = None
         recorder = self._get_recorder_class()
         success = False
@@ -138,16 +145,18 @@ class MetaAgent:
                     target_sha=memo_SHA,
                     mode='check',
                     model=self.execution_model,
-                    eval_n_samples=eval_n_samples,
                     status='search',
                     max_logs=max_logs,
-                    eval_n_qa=eval_n_qa,
                     max_sample_concurrent=max_sample_concurrent,
                     n_score_bins=n_score_bins,
                     samples_per_bin=samples_per_bin,
                     judge_model=judge_model,
-                    check_n_samples=check_n_samples,
-                    check_n_qa=check_n_qa,
+                    progressive=progressive,
+                    random_sample=random_sample,
+                    sampling_seed=sampling_seed,
+                    step_index=step_index,
+                    stages=stages,
+                    memory_cache=memory_cache,
                 )
             except Exception as e:
                 success = False
@@ -179,15 +188,18 @@ class MetaAgent:
     async def run_single_memo(
         self,
         memo_SHA: str,
-        eval_n_samples: int = 6,
         status: str = 'search',
         max_logs: Optional[int] = None,
-        eval_n_qa: Optional[int] = None,
         max_sample_concurrent: int = 6,
         n_score_bins: int = 3,
         samples_per_bin: int = 3,
         judge_model: str = "gpt-5-mini",
-        **kargs,
+        progressive: bool = True,
+        random_sample: bool = False,
+        sampling_seed: int = 42,
+        step_index: int = 0,
+        stages: Optional[dict] = None,
+        memory_cache: bool = True,
     ):
         if status == 'search':
             self.memo_manager.update_visit_time(memo_SHA)
@@ -210,15 +222,17 @@ class MetaAgent:
 
             new_memo_SHA, new_code = await self.examine_new_code(
                 code_str=new_code,
-                eval_n_samples=eval_n_samples,
                 max_logs=max_logs,
-                eval_n_qa=eval_n_qa,
                 max_sample_concurrent=max_sample_concurrent,
                 n_score_bins=n_score_bins,
                 samples_per_bin=samples_per_bin,
                 judge_model=judge_model,
-                check_n_samples=kargs.get('check_n_samples', 6),
-                check_n_qa=kargs.get('check_n_qa', 3),
+                progressive=progressive,
+                random_sample=random_sample,
+                sampling_seed=sampling_seed,
+                step_index=step_index,
+                stages=stages,
+                memory_cache=memory_cache,
             )
 
             self.memo_manager.update_analysis(memo_sha=new_memo_SHA, suggestion=analysis_result)
@@ -231,14 +245,18 @@ class MetaAgent:
             target_sha=new_memo_SHA,
             mode='eval',
             model=self.execution_model,
-            eval_n_samples=eval_n_samples,
             status=status,
             max_logs=max_logs,
-            eval_n_qa=eval_n_qa,
             max_sample_concurrent=max_sample_concurrent,
             n_score_bins=n_score_bins,
             samples_per_bin=samples_per_bin,
             judge_model=judge_model,
+            progressive=progressive,
+            random_sample=random_sample,
+            sampling_seed=sampling_seed,
+            step_index=step_index,
+            stages=stages,
+            memory_cache=memory_cache,
         )
 
         if status == 'search':
@@ -258,31 +276,38 @@ class MetaAgent:
         max_memo_concurrent: int = 2,
         max_sample_concurrent: int = 6,
         result_dir: str = "check",
-        eval_n_samples: int = 6,
         max_logs: Optional[int] = None,
-        eval_n_qa: Optional[int] = None,
         n_score_bins: int = 3,
         samples_per_bin: int = 3,
         judge_model: str = "gpt-5-mini",
-        check_n_samples: int = 6,
-        check_n_qa: int = 3,
+        progressive: bool = True,
+        random_sample: bool = False,
+        sampling_seed: int = 42,
+        stages: Optional[dict] = None,
+        memory_cache: bool = True,
     ):
         logs_root = self.memo_manager.LOGS_ROOT
 
         if self.history_ckpt_path is None:
-            # Run no_mem baseline to calibrate normalized reward
+            # Run no_mem baseline to calibrate normalized reward (step 0 — the
+            # floor is measured the SAME way candidates are, so it stays a
+            # comparable reference under the gauntlet).
             _, eval_result, _, _ = await self.memo_manager.execute_memo_structure(
                 target_sha='no_mem',
                 mode='eval',
                 model=self.execution_model,
-                eval_n_samples=eval_n_samples,
                 status='search',
                 max_logs=max_logs,
-                eval_n_qa=eval_n_qa,
                 max_sample_concurrent=max_sample_concurrent,
                 n_score_bins=n_score_bins,
                 samples_per_bin=samples_per_bin,
                 judge_model=judge_model,
+                progressive=progressive,
+                random_sample=random_sample,
+                sampling_seed=sampling_seed,
+                step_index=0,
+                stages=stages,
+                memory_cache=memory_cache,
             )
             self.memo_manager.no_memo_reward = (
                 eval_result.get('benchmark_eval_score', {}).get('benchmark_overall_eval_score', 0.0)
@@ -299,15 +324,17 @@ class MetaAgent:
 
             new_memo_SHA, new_code = await self.examine_new_code(
                 code_str=new_code,
-                eval_n_samples=eval_n_samples,
                 max_logs=max_logs,
-                eval_n_qa=eval_n_qa,
                 max_sample_concurrent=max_sample_concurrent,
                 n_score_bins=n_score_bins,
                 samples_per_bin=samples_per_bin,
                 judge_model=judge_model,
-                check_n_samples=check_n_samples,
-                check_n_qa=check_n_qa,
+                progressive=progressive,
+                random_sample=random_sample,
+                sampling_seed=sampling_seed,
+                step_index=0,
+                stages=stages,
+                memory_cache=memory_cache,
             )
             log.info(f"[blue][FINISH CODE GENERATION] Code SHA: {new_memo_SHA} | Code example: {new_code[:30]}...[/blue]")
 
@@ -316,14 +343,18 @@ class MetaAgent:
                 target_sha=new_memo_SHA,
                 mode='eval',
                 model=self.execution_model,
-                eval_n_samples=eval_n_samples,
                 status='search',
                 max_logs=max_logs,
-                eval_n_qa=eval_n_qa,
                 max_sample_concurrent=max_sample_concurrent,
                 n_score_bins=n_score_bins,
                 samples_per_bin=samples_per_bin,
                 judge_model=judge_model,
+                progressive=progressive,
+                random_sample=random_sample,
+                sampling_seed=sampling_seed,
+                step_index=0,
+                stages=stages,
+                memory_cache=memory_cache,
             )
             self.memo_manager.update_reward(
                 new_memo_SHA,
@@ -391,22 +422,27 @@ class MetaAgent:
             memo_SHA_list = self.memo_manager.select_structure()
             log.info(f"Select memos {memo_SHA_list}")
 
-            async def sem_task(memo_SHA):
+            # `step` is bound as a default arg (NOT closed over) so every
+            # concurrent sem_task in this iteration sees THIS step's index —
+            # avoids late-binding when the loop advances (design decision 2).
+            async def sem_task(memo_SHA, step=absolute_step):
                 async with semaphore:
                     max_retries = 2
                     for attempt in range(max_retries + 1):
                         try:
                             await self.run_single_memo(
                                 memo_SHA,
-                                eval_n_samples=eval_n_samples,
                                 max_logs=max_logs,
-                                eval_n_qa=eval_n_qa,
                                 max_sample_concurrent=max_sample_concurrent,
                                 n_score_bins=n_score_bins,
                                 samples_per_bin=samples_per_bin,
                                 judge_model=judge_model,
-                                check_n_samples=check_n_samples,
-                                check_n_qa=check_n_qa,
+                                progressive=progressive,
+                                random_sample=random_sample,
+                                sampling_seed=sampling_seed,
+                                step_index=step,
+                                stages=stages,
+                                memory_cache=memory_cache,
                             )
                             break
                         except Exception as e:

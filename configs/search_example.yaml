@@ -76,15 +76,37 @@ llm:
     region: us-east5
     credentials: null
 
-# Evaluation coverage — applies to mode=search AND mode=test (CLI: --coverage):
-#   sample — staged gauntlet (stage1→2→3 nested sampling + threshold gates)
-#   full   — ONE whole-split evaluation per benchmark: no stage1/2, no
-#            elimination; artifacts under <ds>/full/; stage_<ds> records 4.
-#            Sanity gate and mode=dev are unaffected. Cost anchor (test split
-#            full sizes): DynamicMem 4 users × ~400 items, LoCoMo 655 QA
-#            (cat 1-4), LongMemEval 200 questions.
-# `python -m forge.heldout` (dedicated held-out entry) defaults to full.
-coverage: sample
+# Progressive sampling (2026-07-25): whether a candidate goes through the
+# staged stage1→2→3 gauntlet, or gets ONE whole-split pass. CLI:
+# --progressive / --no-progressive.
+#   true  (default) — staged gauntlet (stage1→2→3 nested sampling +
+#           threshold gates; artifacts under <ds>/<stageN>/, stage_<ds>
+#           records 1/2/3).
+#   false — ONE whole-split evaluation per benchmark: no stage1/2, no
+#           elimination; artifacts under <ds>/full/; stage_<ds> records 4.
+#           Sanity gate and smoke_test are unaffected. Cost anchor (test
+#           split full sizes): DynamicMem 4 users × ~400 items, LoCoMo 655 QA
+#           (cat 1-4), LongMemEval 200 questions.
+# `python -m forge.heldout` (dedicated held-out entry) defaults to full
+# coverage (progressive=false-equivalent) regardless of this field.
+#
+# `coverage: sample|full` (CLI --coverage) is kept as a back-compat ALIAS —
+# full → progressive=false, sample → progressive=true — honored only when
+# `progressive` isn't ALSO explicitly set (YAML or CLI); an explicit
+# `progressive` always wins. New configs should just set `progressive:`.
+progressive: true
+
+# When true, each search step samples a DIFFERENT (but still deterministic +
+# reproducible) subset per benchmark, derived from
+# (sampling_seed, step_index, dataset) via common.sampling.derive_sample_seed.
+# Default false = every step samples the SAME fixed prefix (today's
+# behavior). CLI: --random-sample.
+random_sample: false
+
+# Base seed combined with (step_index, dataset) to derive each step's sample
+# when random_sample is true. Irrelevant when random_sample is false.
+# CLI: --sampling-seed.
+sampling_seed: 42
 
 # Asyncio semaphore cap for parallel users within one Singularity exec.
 # Higher = faster eval but more concurrent OpenAI calls (rate limits) and

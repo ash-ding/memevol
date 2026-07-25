@@ -61,7 +61,7 @@ class FakeWorkflow(BaseWorkflow):
         super().__init__(memo_class=memo_class, model="test-model", **kw)
         self._n_qa = n_qa
 
-    async def load_user_data(self, user_dir, eval_n_qa):
+    async def load_user_data(self, user_dir, eval_n_qa, sample_seed=None):
         n = self._n_qa if eval_n_qa is None else int(eval_n_qa)
         qa = [{"query": f"q{i}", "reference": f"r{i}", "metadata": {}}
               for i in range(n)]

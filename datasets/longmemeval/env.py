@@ -225,14 +225,13 @@ def _compute_split() -> Tuple[List[str], List[str]]:
     return _SPLIT_CACHE
 
 
-def get_task_list(status: str, eval_n_samples: Optional[int]) -> List[str]:
+def get_task_list(status: str, eval_n_samples: Optional[int], seed: Optional[str] = None) -> List[str]:
     """Return question_id strings for the requested split, capped at
     eval_n_samples. None = no cap (coverage=full: the whole split)."""
+    from common.sampling import shuffle_prefix
     search_qids, test_qids = _compute_split()
     pool = search_qids if status == "search" else test_qids
-    if eval_n_samples is None:
-        return list(pool)
-    return pool[:int(eval_n_samples)]
+    return shuffle_prefix(list(pool), eval_n_samples, seed)
 
 
 # ---------------------------------------------------------------------------
@@ -267,6 +266,7 @@ def load_user_data(
     eval_n_qa: Optional[int] = None,
     *,
     variant: str = "s",
+    sample_seed: Optional[str] = None,
 ) -> Tuple[List[Dict], Dict, List[Dict]]:
     """Load one LongMemEval sample for the given variant.
 
@@ -279,6 +279,9 @@ def load_user_data(
         Ignored — LongMemEval has 1 QA per sample. Kept for API parity.
     variant : str
         "s" or "m" — which haystack density to use.
+    sample_seed : Optional[str]
+        Unused — LongMemEval has exactly 1 QA per sample, so there is no QA
+        subset to seed. Accepted for hook-uniformity with locomo/dynamicmem.
 
     Returns
     -------

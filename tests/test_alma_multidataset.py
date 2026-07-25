@@ -181,22 +181,22 @@ def test_meta_agent_recorder_by_dataset():
     assert ma_dm._get_recorder_class() is DynamicMemRecorder
 
 
-def test_run_main_parses_dataset():
+def test_run_parses_dataset():
     import importlib
-    rm = importlib.import_module("baselines.evolve.alma.run_main")
+    rm = importlib.import_module("baselines.evolve.alma.run")
     import sys as _sys
-    argv = ["run_main.py", "--dataset", "longmemeval_m", "--steps", "1"]
+    argv = ["run.py", "--dataset", "longmemeval_m", "--steps", "1"]
     old = _sys.argv
     _sys.argv = argv
     try:
-        args = rm.parse_args()
-        assert args.dataset == "longmemeval_m"
+        cfg = rm.build_cfg(rm.parse_args())
+        assert cfg["dataset"] == "longmemeval_m"
     finally:
         _sys.argv = old
-    # default
-    _sys.argv = ["run_main.py"]
+    # default: CLI None sentinel resolves to DEFAULT_CONFIG's dynamicmem
+    _sys.argv = ["run.py"]
     try:
-        assert rm.parse_args().dataset == "dynamicmem"
+        assert rm.build_cfg(rm.parse_args())["dataset"] == "dynamicmem"
     finally:
         _sys.argv = old
 
@@ -299,7 +299,7 @@ def test_locomo_end_to_end_fake():
     try:
         ma = MetaAgent(dataset="locomo")
         asyncio.run(ma.run_single_memo(
-            memo_SHA=sha, status="test", eval_n_samples=1,
+            memo_SHA=sha, status="test",
             max_sample_concurrent=1, judge_model="gpt-5-mini",
         ))
     finally:
@@ -319,6 +319,108 @@ def test_history_ckpt_filename_includes_dataset():
     fn = ma._history_ckpt_filename("check", 10, "TS")
     assert "locomo" in fn and fn == "check_locomo_10_TS.json"
     assert MetaAgent()._history_ckpt_filename("check", 10, "TS") == "check_dynamicmem_10_TS.json"
+
+
+# ---------------- Task 9: progressive gauntlet + per-step seed migration ----------------
+
+
+def test_launch_main_signature_migrated():
+    """launch.main drops the flat sizing knobs (eval_n_*/check_n_*) and gains
+    the progressive / per-step-seed knobs (Task 9 clean break)."""
+    import inspect
+    import baselines.evolve.alma.launch as launch
+    params = inspect.signature(launch.main).parameters
+    for p in ("progressive", "random_sample", "sampling_seed", "stages", "step_index"):
+        assert p in params, f"launch.main missing new param {p!r}"
+    for p in ("eval_n_samples", "eval_n_qa", "check_n_samples", "check_n_qa"):
+        assert p not in params, f"launch.main still accepts removed flat knob {p!r}"
+    assert params["progressive"].default is True
+    assert params["random_sample"].default is False
+    assert params["sampling_seed"].default == 42
+    # dataset param survives the migration (registry dispatch relies on it)
+    assert params["dataset"].default == "dynamicmem"
+
+
+def test_meta_agent_search_loop_signature_migrated():
+    """MetaAgent.forward / run_single_memo thread the progressive knobs and no
+    longer carry the removed flat sizing knobs."""
+    import inspect
+    from baselines.evolve.alma.meta_agent import MetaAgent
+    for meth in (MetaAgent.forward, MetaAgent.run_single_memo):
+        params = inspect.signature(meth).parameters
+        for p in ("progressive", "random_sample", "sampling_seed"):
+            assert p in params, f"{meth.__name__} missing {p!r}"
+        for p in ("eval_n_samples", "eval_n_qa", "check_n_samples", "check_n_qa"):
+            assert p not in params, f"{meth.__name__} still carries removed {p!r}"
+    # step_index threads into the per-candidate eval so consecutive steps seed
+    # differently.
+    assert "step_index" in inspect.signature(MetaAgent.run_single_memo).parameters
+
+
+def test_run_cli_migrated_flags():
+    """run CLI exposes the new flags and rejects the removed flat ones."""
+    import contextlib
+    import importlib
+    import io
+    import sys as _sys
+    rm = importlib.import_module("baselines.evolve.alma.run")
+    old = _sys.argv
+    try:
+        _sys.argv = ["run.py", "--dataset", "locomo", "--progressive",
+                     "--random_sample", "--sampling_seed", "7", "--steps", "1"]
+        args = rm.parse_args()
+        assert args.progressive is True
+        assert args.random_sample is True
+        assert args.sampling_seed == 7
+        assert hasattr(args, "stages")
+
+        _sys.argv = ["run.py", "--no-progressive"]
+        assert rm.parse_args().progressive is False
+
+        # removed flat flags are rejected (argparse -> SystemExit).
+        for bad in ("--eval_n_samples", "--check_n_samples",
+                    "--eval_n_qa", "--check_n_qa"):
+            _sys.argv = ["run.py", bad, "6"]
+            raised = False
+            with contextlib.redirect_stderr(io.StringIO()):
+                try:
+                    rm.parse_args()
+                except SystemExit:
+                    raised = True
+            assert raised, f"{bad} should be rejected after removal"
+    finally:
+        _sys.argv = old
+
+
+def test_per_step_seed_changes_task_subset():
+    """random_sample=True → consecutive search steps derive different seeds,
+    and those seeds select different task subsets from get_task_list — the
+    exact mechanism alma threads into run_gauntlet's sample_seed_for. Uses
+    LoCoMo (git-tracked locomo10.json; no network)."""
+    from common.sampling import derive_sample_seed
+    from datasets.locomo.env import get_task_list
+    ds = "locomo"
+    s0 = derive_sample_seed(42, 0, ds)
+    s1 = derive_sample_seed(42, 1, ds)
+    assert s0 != s1, "per-step seeds must differ across steps"
+    # the seed reaches get_task_list and reorders the pool per step
+    assert get_task_list("search", None, seed=s0) != get_task_list("search", None, seed=s1)
+    # and picks a different capped subset per step
+    assert get_task_list("search", 2, seed=s0) != get_task_list("search", 2, seed=s1)
+    # random_sample=False → seed None → historical deterministic prefix (stable)
+    assert get_task_list("search", 2, seed=None) == get_task_list("search", 2, seed=None)
+
+
+# ---------------- Task 4: shared --config / DEFAULT_CONFIG ----------------
+
+
+def test_alma_default_config_roundtrips():
+    from baselines.evolve.alma.run import DEFAULT_CONFIG
+    from common.config import resolve_config
+    d = DEFAULT_CONFIG
+    assert d["progressive"] is True and d["random_sample"] is False and d["sampling_seed"] == 42
+    assert d["steps"] == 10 and d["dataset"] == "dynamicmem"
+    assert resolve_config(d, None, {k: None for k in d}) == d
 
 
 # ---------------- runner ----------------
