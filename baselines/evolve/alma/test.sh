@@ -13,7 +13,8 @@
 # --- Evaluate a specific memo on held-out test users (progressive gauntlet) ---
 # <SHA> must exist under baselines/evolve/alma/memo_archive/dynamicmem/memo_structure_<SHA>.py
 # Results land in baselines/evolve/alma/results/dynamicmem/<SHA>_test_eval/
-python baselines/evolve/alma/run_main.py \
+python baselines/evolve/alma/run.py \
+    --config baselines/evolve/alma/config.example.yaml \
     --meta_model gpt-5 \
     --execution_model gpt-5-mini \
     --judge_model gpt-5-mini \
@@ -23,7 +24,8 @@ python baselines/evolve/alma/run_main.py \
 
 # --- Evaluate the no-memory baseline on held-out users ---
 # Establishes the floor reward; useful for comparing any learned memo.
-python baselines/evolve/alma/run_main.py \
+python baselines/evolve/alma/run.py \
+    --config baselines/evolve/alma/config.example.yaml \
     --meta_model gpt-5 \
     --execution_model gpt-5-mini \
     --judge_model gpt-5-mini \
@@ -33,7 +35,8 @@ python baselines/evolve/alma/run_main.py \
 
 # --- Quick smoke eval (tiny sizes via --stages) to verify plumbing ---
 SMOKE_STAGES='{"sanity_check":{"n_users":1,"n_checkpoints":1,"n_task_a":1,"n_task_c":1},"stage1":{"n_users":1,"n_checkpoints":1,"n_task_a":1,"n_task_c":1,"threshold":0.0},"stage2":{"n_users":1,"n_checkpoints":1,"n_task_a":1,"n_task_c":1,"threshold":0.0},"stage3":{"n_users":1,"n_checkpoints":1,"n_task_a":1,"n_task_c":1}}'
-python baselines/evolve/alma/run_main.py \
+python baselines/evolve/alma/run.py \
+    --config baselines/evolve/alma/config.example.yaml \
     --meta_model gpt-5 \
     --execution_model gpt-5-mini \
     --judge_model gpt-5-mini \

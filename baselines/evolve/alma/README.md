@@ -13,23 +13,34 @@ Evaluation sizes no longer live on flat `--eval_n_*/--check_n_*` flags (removed)
 Each candidate is scored through the shared staged gauntlet (`--progressive`);
 sizes come from the family `DEFAULT_STAGES` (override with `--stages '<json>'`).
 
+alma is **config-first**: pass `--config <yaml>` for a reusable settings file and
+override individual fields on the CLI (precedence: `DEFAULT_CONFIG` < `--config`
+YAML < CLI flags). `config.example.yaml` is a documented, runnable example:
+
+```bash
+# Config-first: everything from the YAML, override --status / --steps on the CLI
+python baselines/evolve/alma/run.py \
+    --config baselines/evolve/alma/config.example.yaml \
+    --status search --steps 10
+```
+
 ```bash
 # Smoke test — tiny 1-user/1-checkpoint gauntlet, 2 steps
 # (--stages sizes must be non-decreasing across stage1..3)
 SMOKE_STAGES='{"sanity_check":{"n_users":1,"n_checkpoints":1,"n_task_a":1,"n_task_c":1},"stage1":{"n_users":1,"n_checkpoints":1,"n_task_a":1,"n_task_c":1,"threshold":0.0},"stage2":{"n_users":1,"n_checkpoints":1,"n_task_a":1,"n_task_c":1,"threshold":0.0},"stage3":{"n_users":1,"n_checkpoints":1,"n_task_a":1,"n_task_c":1}}'
-python baselines/evolve/alma/run_main.py \
+python baselines/evolve/alma/run.py \
     --status search \
     --progressive --stages "$SMOKE_STAGES" \
     --steps 2
 
 # Full training — stage1→2→3 gauntlet (default stages), 10 steps
-python baselines/evolve/alma/run_main.py \
+python baselines/evolve/alma/run.py \
     --status search \
     --progressive \
     --steps 10
 
 # Evaluate a saved memo on held-out users (007–010)
-python baselines/evolve/alma/run_main.py \
+python baselines/evolve/alma/run.py \
     --status test \
     --memo_SHA <SHA> --progressive
 ```
@@ -40,7 +51,8 @@ See `search.sh` for search-loop examples and `test.sh` for held-out evaluation e
 
 ```
 baselines/evolve/alma/
-├── run_main.py         # CLI entry
+├── run.py              # CLI entry (config-first: --config <yaml> + CLI overrides)
+├── config.example.yaml # documented, runnable example config (DEFAULT_CONFIG < YAML < CLI)
 ├── meta_agent.py       # MetaAgent: analyze → generate → examine → evaluate
 ├── memo_manager.py     # memo lifecycle, reward, softmax selection
 ├── meta_agent_prompt.py  # meta-LLM prompts (shows common/harness_base.py as the contract)
@@ -112,12 +124,12 @@ Example commands (mirroring "Quick start" above, run from the project root):
 ```bash
 # LoCoMo — smoke-size search loop, 1 step, per-step random subset
 LC_STAGES='{"sanity_check":{"n_conversations":1,"n_qa":2},"stage1":{"n_conversations":1,"n_qa":3,"threshold":0.0},"stage2":{"n_conversations":1,"n_qa":3,"threshold":0.0},"stage3":{"n_conversations":1,"n_qa":3}}'
-python baselines/evolve/alma/run_main.py \
+python baselines/evolve/alma/run.py \
     --dataset locomo --status search --steps 1 \
     --progressive --random_sample --sampling_seed 42 --stages "$LC_STAGES" \
     --meta_model gpt-5-mini --execution_model gpt-5-mini --judge_model gpt-5-mini
 
 # LongMemEval (s or m variant) — evaluate a saved memo on the held-out split
-python baselines/evolve/alma/run_main.py \
+python baselines/evolve/alma/run.py \
     --dataset longmemeval_s --status test --memo_SHA <SHA> --progressive
 ```

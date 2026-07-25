@@ -181,22 +181,22 @@ def test_meta_agent_recorder_by_dataset():
     assert ma_dm._get_recorder_class() is DynamicMemRecorder
 
 
-def test_run_main_parses_dataset():
+def test_run_parses_dataset():
     import importlib
-    rm = importlib.import_module("baselines.evolve.alma.run_main")
+    rm = importlib.import_module("baselines.evolve.alma.run")
     import sys as _sys
-    argv = ["run_main.py", "--dataset", "longmemeval_m", "--steps", "1"]
+    argv = ["run.py", "--dataset", "longmemeval_m", "--steps", "1"]
     old = _sys.argv
     _sys.argv = argv
     try:
-        args = rm.parse_args()
-        assert args.dataset == "longmemeval_m"
+        cfg = rm.build_cfg(rm.parse_args())
+        assert cfg["dataset"] == "longmemeval_m"
     finally:
         _sys.argv = old
-    # default
-    _sys.argv = ["run_main.py"]
+    # default: CLI None sentinel resolves to DEFAULT_CONFIG's dynamicmem
+    _sys.argv = ["run.py"]
     try:
-        assert rm.parse_args().dataset == "dynamicmem"
+        assert rm.build_cfg(rm.parse_args())["dataset"] == "dynamicmem"
     finally:
         _sys.argv = old
 
@@ -357,16 +357,16 @@ def test_meta_agent_search_loop_signature_migrated():
     assert "step_index" in inspect.signature(MetaAgent.run_single_memo).parameters
 
 
-def test_run_main_cli_migrated_flags():
-    """run_main CLI exposes the new flags and rejects the removed flat ones."""
+def test_run_cli_migrated_flags():
+    """run CLI exposes the new flags and rejects the removed flat ones."""
     import contextlib
     import importlib
     import io
     import sys as _sys
-    rm = importlib.import_module("baselines.evolve.alma.run_main")
+    rm = importlib.import_module("baselines.evolve.alma.run")
     old = _sys.argv
     try:
-        _sys.argv = ["run_main.py", "--dataset", "locomo", "--progressive",
+        _sys.argv = ["run.py", "--dataset", "locomo", "--progressive",
                      "--random_sample", "--sampling_seed", "7", "--steps", "1"]
         args = rm.parse_args()
         assert args.progressive is True
@@ -374,13 +374,13 @@ def test_run_main_cli_migrated_flags():
         assert args.sampling_seed == 7
         assert hasattr(args, "stages")
 
-        _sys.argv = ["run_main.py", "--no-progressive"]
+        _sys.argv = ["run.py", "--no-progressive"]
         assert rm.parse_args().progressive is False
 
         # removed flat flags are rejected (argparse -> SystemExit).
         for bad in ("--eval_n_samples", "--check_n_samples",
                     "--eval_n_qa", "--check_n_qa"):
-            _sys.argv = ["run_main.py", bad, "6"]
+            _sys.argv = ["run.py", bad, "6"]
             raised = False
             with contextlib.redirect_stderr(io.StringIO()):
                 try:
@@ -409,6 +409,18 @@ def test_per_step_seed_changes_task_subset():
     assert get_task_list("search", 2, seed=s0) != get_task_list("search", 2, seed=s1)
     # random_sample=False → seed None → historical deterministic prefix (stable)
     assert get_task_list("search", 2, seed=None) == get_task_list("search", 2, seed=None)
+
+
+# ---------------- Task 4: shared --config / DEFAULT_CONFIG ----------------
+
+
+def test_alma_default_config_roundtrips():
+    from baselines.evolve.alma.run import DEFAULT_CONFIG
+    from common.config import resolve_config
+    d = DEFAULT_CONFIG
+    assert d["progressive"] is True and d["random_sample"] is False and d["sampling_seed"] == 42
+    assert d["steps"] == 10 and d["dataset"] == "dynamicmem"
+    assert resolve_config(d, None, {k: None for k in d}) == d
 
 
 # ---------------- runner ----------------

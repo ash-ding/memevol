@@ -1,5 +1,5 @@
 #!/bin/bash
-# Alma search supervisor — launches run_main.py, auto-resumes from checkpoint
+# Alma search supervisor — launches run.py, auto-resumes from checkpoint
 # if it exits before reaching the target number of evolution steps.
 #
 # The underlying `--steps N` is now idempotent ("target total N"), so we just
@@ -51,6 +51,7 @@ find_latest_ckpt() {
 # Each candidate is scored through the shared staged gauntlet (--progressive);
 # sizes come from the family DEFAULT_STAGES (override with --stages '<json>').
 COMMON_ARGS=(
+  --config baselines/evolve/alma/config.example.yaml
   --status search
   --dataset dynamicmem
   --progressive
@@ -87,13 +88,13 @@ while :; do
   CHILD_OUT="/tmp/alma_search_attempt${attempt}_${SUP_TS}.out"
   if [ -n "$CKPT_NAME" ]; then
     log "resuming from ckpt=$CKPT_NAME ; child stdout/stderr -> $CHILD_OUT"
-    "$PYTHON" "$PROJECT_ROOT/baselines/evolve/alma/run_main.py" \
+    "$PYTHON" "$PROJECT_ROOT/baselines/evolve/alma/run.py" \
       "${COMMON_ARGS[@]}" \
       --history_ckpt_path "$CKPT_NAME" \
       > "$CHILD_OUT" 2>&1
   else
     log "starting fresh ; child stdout/stderr -> $CHILD_OUT"
-    "$PYTHON" "$PROJECT_ROOT/baselines/evolve/alma/run_main.py" \
+    "$PYTHON" "$PROJECT_ROOT/baselines/evolve/alma/run.py" \
       "${COMMON_ARGS[@]}" \
       > "$CHILD_OUT" 2>&1
   fi

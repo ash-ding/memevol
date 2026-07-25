@@ -13,7 +13,8 @@
 
 # --- Full progressive search (default stages) ---
 # stage1 -> stage2 -> stage3 gauntlet per candidate, 10 meta-learning steps.
-python baselines/evolve/alma/run_main.py \
+python baselines/evolve/alma/run.py \
+    --config baselines/evolve/alma/config.example.yaml \
     --meta_model gpt-5 \
     --execution_model gpt-5-mini \
     --judge_model gpt-5-mini \
@@ -28,7 +29,8 @@ python baselines/evolve/alma/run_main.py \
 # --- Progressive + per-step random sampling ---
 # Each search step draws a DIFFERENT deterministic task subset (seeded by
 # --sampling_seed + step) — reduces overfitting to one fixed subset.
-python baselines/evolve/alma/run_main.py \
+python baselines/evolve/alma/run.py \
+    --config baselines/evolve/alma/config.example.yaml \
     --meta_model gpt-5 \
     --execution_model gpt-5-mini \
     --judge_model gpt-5-mini \
@@ -44,7 +46,8 @@ python baselines/evolve/alma/run_main.py \
 # A minimal 1-user/1-checkpoint gauntlet, 2 steps. thresholds 0.0 so nothing is
 # eliminated early. (--stages must keep sizes non-decreasing across stage1..3.)
 SMOKE_STAGES='{"sanity_check":{"n_users":1,"n_checkpoints":1,"n_task_a":1,"n_task_c":1},"stage1":{"n_users":1,"n_checkpoints":1,"n_task_a":1,"n_task_c":1,"threshold":0.0},"stage2":{"n_users":1,"n_checkpoints":1,"n_task_a":1,"n_task_c":1,"threshold":0.0},"stage3":{"n_users":1,"n_checkpoints":1,"n_task_a":1,"n_task_c":1}}'
-python baselines/evolve/alma/run_main.py \
+python baselines/evolve/alma/run.py \
+    --config baselines/evolve/alma/config.example.yaml \
     --meta_model gpt-5 \
     --execution_model gpt-5-mini \
     --judge_model gpt-5-mini \
@@ -57,7 +60,8 @@ python baselines/evolve/alma/run_main.py \
 
 # --- Non-progressive search (single terminal-size pass per candidate) ---
 # --no-progressive skips the gauntlet: one stage3-size pass, no thresholds.
-python baselines/evolve/alma/run_main.py \
+python baselines/evolve/alma/run.py \
+    --config baselines/evolve/alma/config.example.yaml \
     --meta_model gpt-5 \
     --execution_model gpt-5-mini \
     --judge_model gpt-5-mini \
@@ -69,7 +73,8 @@ python baselines/evolve/alma/run_main.py \
 
 # --- Resume from checkpoint ---
 # Checkpoint files live under baselines/evolve/alma/logs/ after the first step.
-python baselines/evolve/alma/run_main.py \
+python baselines/evolve/alma/run.py \
+    --config baselines/evolve/alma/config.example.yaml \
     --meta_model gpt-5 \
     --execution_model gpt-5-mini \
     --judge_model gpt-5-mini \
