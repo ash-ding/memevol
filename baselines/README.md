@@ -9,10 +9,11 @@ producing comparable metrics: per-user reward, judge-scored accuracy, and
 
 1. [Layout — two kinds of baseline](#layout--two-kinds-of-baseline)
 2. [Method-boundary conventions](#method-boundary-conventions)
-3. [Existing baselines](#existing-baselines)
-4. [**Adding a harness baseline** — adapting an existing memory system](#adding-a-harness-baseline--adapting-an-existing-memory-system)
-5. [Adding an evolve baseline](#adding-an-evolve-baseline)
-6. [Shared foundation](#shared-foundation)
+3. [Shared progressive sampling, seeding & memory cache](#shared-progressive-sampling-seeding--memory-cache)
+4. [Existing baselines](#existing-baselines)
+5. [**Adding a harness baseline** — adapting an existing memory system](#adding-a-harness-baseline--adapting-an-existing-memory-system)
+6. [Adding an evolve baseline](#adding-an-evolve-baseline)
+7. [Shared foundation](#shared-foundation)
 
 ## Layout — two kinds of baseline
 
@@ -73,6 +74,56 @@ All baselines share **`baselines/venv/`** (full ML install:
 `pip install -r baselines/requirements.txt`) and write artifacts under
 each baseline's own `logs/` and `results/` directories (gitignored).
 
+## Shared progressive sampling, seeding & memory cache
+
+Every baseline (`evolve/alma` and every `harness/*`) now shares the same
+evaluation-sampling infrastructure as forge, via two global flags plus a
+cross-stage memory cache — not a re-implementation per baseline, but the
+literal same `common/` modules forge uses:
+
+- **`--progressive`** (alma default `true`, `harness/*/run.py` default
+  `false` — matching each side's historical behavior): drives the candidate
+  through the shared stage1→2→3 gauntlet (`common.staged_eval.run_gauntlet`)
+  instead of a single one-shot pass. Sizes come from the family
+  `DEFAULT_STAGES` (in `common/staged_eval.py`) unless overridden with
+  `--stages '<json>'`. `run_gauntlet`'s promotion/elimination logic,
+  `stages.json` shape, and cost accounting are IDENTICAL to forge's — only
+  the stage-execution callback differs (forge: `singularity exec`; baselines:
+  an in-process `run_all_users` runner).
+- **`--random_sample`** / **`--random-sample`** (alma only — harness
+  baselines have no step loop, so this flag isn't exposed there; default
+  `false`): whether each search STEP evaluates a different, reproducibly
+  seeded task subset (via `common.sampling.derive_sample_seed`) instead of
+  the same fixed subset every step.
+- **`--sampling_seed`** / **`--sampling-seed`** (default `42`): the base
+  seed. alma combines it with `(step_index, dataset)` when `random_sample`
+  is on; harness baselines (no steps) use it directly as a single fixed
+  seed for their one-shot sample.
+- **Memory cache** (`--memory_cache` / `--no-memory-cache`, default on):
+  when `--progressive` is set, the SAME `common/memory_cache.py` mechanism
+  forge's evaluator uses is mounted in the baseline's in-process stage
+  runner too, so stage2/stage3 reuse stage1's built Phase-1 memory instead
+  of re-ingesting from scratch — a real win for expensive builders (e.g.
+  A-mem's per-note LLM analysis + evolution).
+
+CLI surface per side:
+
+```bash
+# harness (cc / hipporag2 / amem run.py) — no --random-sample (no step loop)
+baselines/venv/bin/python baselines/harness/hipporag2/run.py \
+    --dataset locomo --progressive --sampling-seed 42 \
+    --stages '{"stage1": {"n_conversations": 2, "n_qa": 10, "threshold": 0.2}}'
+
+# alma (evolve/alma/run_main.py) — has a step loop, so random_sample applies
+baselines/venv/bin/python baselines/evolve/alma/run_main.py \
+    --status search --progressive --random_sample --sampling_seed 42 --steps 10
+```
+
+See [CLAUDE.md](../CLAUDE.md) ("Shared progressive sampling") for the full
+seed-derivation contract (`derive_sample_seed` / `combine_seed` /
+`shuffle_prefix`, nesting guarantees, and the accepted overfitting-vs-
+comparability tradeoff of `random_sample`).
+
 ## Existing baselines
 
 | Baseline | Kind | Approach | Optimization | Best for |
@@ -89,17 +140,19 @@ structure code. Sanity-checks each candidate, then evaluates on the search
 split. Softmax-weighted parent selection over reward.
 
 ```bash
-# Smoke — 2 users, 2 steps
+# Smoke — tiny staged gauntlet, 2 steps (evaluation sizes come from the
+# shared `stages` schema now, not flat eval_n_*/check_n_* flags — see
+# "Shared progressive sampling" below)
 baselines/venv/bin/python baselines/evolve/alma/run_main.py \
-    --status search --eval_n_samples 2 --eval_n_qa 10 --steps 2
+    --status search --progressive --steps 2
 
-# Full training
+# Full training — stage1->2->3 gauntlet (default DEFAULT_STAGES sizes), 10 steps
 baselines/venv/bin/python baselines/evolve/alma/run_main.py \
-    --status search --eval_n_samples 6 --eval_n_qa 20 --steps 10
+    --status search --progressive --steps 10
 
 # Held-out evaluation of a saved memo
 baselines/venv/bin/python baselines/evolve/alma/run_main.py \
-    --status test --memo_SHA <SHA>
+    --status test --memo_SHA <SHA> --progressive
 ```
 
 Artifacts: `baselines/evolve/alma/{logs/, memo_archive/, results/}`. See
@@ -109,8 +162,9 @@ Artifacts: `baselines/evolve/alma/{logs/, memo_archive/, results/}`. See
 compressed feedback (sampled trajectories + meta-prompt), whereas forge's
 proposer is an agentic CC SDK call with full filesystem access to all
 prior code, traces, and scores. alma runs the shared per-dataset workflows
-(including the official DynamicMem TCE v2 checkpoint protocol), so its
-numbers ARE comparable with forge.
+(including the official DynamicMem TCE v2 checkpoint protocol) AND the same
+`common.staged_eval.run_gauntlet` driver forge uses, so its numbers ARE
+comparable with forge.
 
 ### harness/cc — Claude Code as direct QA agent
 
