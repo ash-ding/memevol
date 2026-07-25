@@ -10,10 +10,11 @@ producing comparable metrics: per-user reward, judge-scored accuracy, and
 1. [Layout — two kinds of baseline](#layout--two-kinds-of-baseline)
 2. [Method-boundary conventions](#method-boundary-conventions)
 3. [Shared progressive sampling, seeding & memory cache](#shared-progressive-sampling-seeding--memory-cache)
-4. [Existing baselines](#existing-baselines)
-5. [**Adding a harness baseline** — adapting an existing memory system](#adding-a-harness-baseline--adapting-an-existing-memory-system)
-6. [Adding an evolve baseline](#adding-an-evolve-baseline)
-7. [Shared foundation](#shared-foundation)
+4. [Configuration](#configuration)
+5. [Existing baselines](#existing-baselines)
+6. [**Adding a harness baseline** — adapting an existing memory system](#adding-a-harness-baseline--adapting-an-existing-memory-system)
+7. [Adding an evolve baseline](#adding-an-evolve-baseline)
+8. [Shared foundation](#shared-foundation)
 
 ## Layout — two kinds of baseline
 
@@ -119,8 +120,8 @@ baselines/venv/bin/python baselines/harness/hipporag2/run.py \
     --dataset locomo --progressive --sampling-seed 42 \
     --stages '{"stage1": {"n_conversations": 2, "n_qa": 10, "threshold": 0.2}}'
 
-# alma (evolve/alma/run_main.py) — has a step loop, so random_sample applies
-baselines/venv/bin/python baselines/evolve/alma/run_main.py \
+# alma (evolve/alma/run.py) — has a step loop, so random_sample applies
+baselines/venv/bin/python baselines/evolve/alma/run.py \
     --status search --progressive --random_sample --sampling_seed 42 --steps 10
 ```
 
@@ -130,6 +131,49 @@ seed-derivation contract (`derive_sample_seed` / `combine_seed` /
 comparability tradeoff of `random_sample`) — not a link, since the
 design docs under `docs/` are gitignored local scratch notes and never
 committed (a link from a tracked file would be dead on a fresh clone).
+
+## Configuration
+
+All four baselines (`evolve/alma` and every `harness/{cc,hipporag2,amem}`)
+accept a `--config <yaml>` flag, resolved through the same shared helper
+forge uses:
+
+- **[`common/config.py`](../common/config.py)** — `deep_merge(base, overlay)`
+  (in-place recursive dict merge) + `resolve_config(defaults, config_path,
+  cli_overrides)`. Precedence, lowest → highest: each `run.py`'s own
+  `DEFAULT_CONFIG` dict < the YAML at `--config` (deep-merged in, must be a
+  mapping) < CLI flags (every flag defaults to `None`, a "not given"
+  sentinel, so only flags actually passed on the command line override the
+  YAML — an unset flag never clobbers a YAML value with `None`). forge
+  reuses the same `deep_merge` (`forge/orchestrator.py` imports it as
+  `common.config.deep_merge`) instead of keeping its own copy, so there is
+  exactly one merge implementation shared by forge and every baseline.
+- **`config.example.yaml`** — each method directory ships one, alongside its
+  `run.py`, documenting every field with inline comments:
+  [`evolve/alma/config.example.yaml`](evolve/alma/config.example.yaml),
+  [`harness/cc/config.example.yaml`](harness/cc/config.example.yaml),
+  [`harness/hipporag2/config.example.yaml`](harness/hipporag2/config.example.yaml),
+  [`harness/amem/config.example.yaml`](harness/amem/config.example.yaml).
+  Copy one to start a real run instead of hand-assembling a CLI invocation.
+- **alma's entrypoint is `run.py`** (renamed from its old script name) —
+  every baseline is now invoked the same way: `evolve/alma/run.py`,
+  `harness/cc/run.py`, `harness/hipporag2/run.py`, `harness/amem/run.py`.
+- **JSON-string fields** (`--stages` / `--stage-spec`) travel as literal
+  JSON strings on the CLI but as native mappings in YAML (e.g. `stages:
+  {stage1: {...}}`); each `run.py` only parses the CLI string when it's
+  actually given, so an omitted `--stages` never overwrites a YAML dict with
+  `{}`.
+
+```bash
+# alma — config file only
+baselines/venv/bin/python baselines/evolve/alma/run.py \
+    --config baselines/evolve/alma/config.example.yaml
+
+# harness baseline — config file + a CLI override (CLI wins on conflicts)
+baselines/venv/bin/python baselines/harness/hipporag2/run.py \
+    --config baselines/harness/hipporag2/config.example.yaml \
+    --sampling-seed 7
+```
 
 ## Existing baselines
 
@@ -150,15 +194,15 @@ split. Softmax-weighted parent selection over reward.
 # Smoke — tiny staged gauntlet, 2 steps (evaluation sizes come from the
 # shared `stages` schema now, not flat eval_n_*/check_n_* flags — see
 # "Shared progressive sampling" below)
-baselines/venv/bin/python baselines/evolve/alma/run_main.py \
+baselines/venv/bin/python baselines/evolve/alma/run.py \
     --status search --progressive --steps 2
 
 # Full training — stage1->2->3 gauntlet (default DEFAULT_STAGES sizes), 10 steps
-baselines/venv/bin/python baselines/evolve/alma/run_main.py \
+baselines/venv/bin/python baselines/evolve/alma/run.py \
     --status search --progressive --steps 10
 
 # Held-out evaluation of a saved memo
-baselines/venv/bin/python baselines/evolve/alma/run_main.py \
+baselines/venv/bin/python baselines/evolve/alma/run.py \
     --status test --memo_SHA <SHA> --progressive
 ```
 
@@ -424,7 +468,7 @@ convention set above, concretely:
    exactly once, for the final frozen artifact — mirroring how forge's
    search never touches test data (`forge.heldout` is the only test entry).
 4. **Reference implementation**: [evolve/alma/](evolve/alma/) — its
-   `run_main.py --status {search,test}` split handling, `eval_runner.py` →
+   `run.py --status {search,test}` split handling, `eval_runner.py` →
    shared-workflow scoring, and `memo_archive/` artifact management are the
    patterns to mirror (by copying, not importing).
 
