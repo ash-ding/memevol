@@ -87,6 +87,18 @@ Two evaluation-efficiency mechanisms:
   snapshotted (pickle; per checkpoint for DynamicMem) and reused at deeper
   stages instead of being rebuilt. See [`common/memory_cache.py`](common/memory_cache.py).
 
+How much and which data each eval covers is controlled by three flags,
+honored by forge AND every baseline (alma + the harness/ baselines):
+`progressive` (default `true` — the staged gauntlet above vs. one
+single-stage pass over the whole split; unifies/supersedes the older
+`coverage: sample|full`), `random_sample` (default `false` — whether each
+search-loop step evaluates a different reproducibly-seeded task subset or
+the same fixed one every step), and `sampling_seed` (default `42` — the
+base seed for the per-step subset derivation). See
+[`configs/search_example.yaml`](configs/search_example.yaml) for the fully
+documented block. Held-out test evaluation (below) always forces full
+coverage regardless of these flags.
+
 ### What the proposer sees inside its container
 
 Each propose call runs Claude Code in a fresh Singularity container with a
@@ -247,9 +259,14 @@ Everything the run produces lands under `workspace/<run_name>/`:
 
 Held-out evaluation is deliberately a **separate entry point**
 (`forge.heldout`): it runs frozen harnesses on the **test split**, whole
-split by default (`coverage: full`), with no proposer / sanity gate /
-frontier — running the search loop on test data would optimize against the
-held-out split.
+split by default (`coverage: full`, equivalently `progressive: false`),
+with no proposer / sanity gate / frontier — running the search loop on
+test data would optimize against the held-out split. Held-out evaluation
+always uses full, uniform coverage: the staged gauntlet
+(`progressive: true` / the back-compat `coverage: sample`) samples subsets
+and eliminates candidates early, which is invalid for final held-out
+numbers — `forge.heldout` refuses to run (exits with an error) if either
+is set.
 
 ```bash
 # Config-first: list the harnesses in the YAML (see configs/test_example.yaml)

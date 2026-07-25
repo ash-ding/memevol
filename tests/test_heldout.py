@@ -291,6 +291,96 @@ def test_heldout_yaml_progressive_true_no_coverage_not_forced_full():
         assert _consistent(cfg)
 
 
+# ---------------- guardrail: reject progressive/coverage=sample on heldout --
+
+def test_reject_progressive_on_heldout_raises():
+    """A heldout config resolving to progressive=True (the staged gauntlet)
+    must be rejected before any harness runs — held-out numbers require a
+    full, uniform pass, not a stage-eliminated subset score."""
+    import yaml
+    from forge.orchestrator import _resolve_config
+    with tempfile.TemporaryDirectory() as td:
+        cfg_path = Path(td) / "c.yaml"
+        cfg_path.write_text(yaml.safe_dump({
+            "harnesses": ["a/b/1_x"], "datasets": {"locomo": {}},
+            "progressive": True,
+        }))
+        args = H._heldout_arg_parser().parse_args(["--config", str(cfg_path)])
+        cfg = _resolve_config(args)
+        raw_yaml = H._yaml_raw(args)
+        H._apply_heldout_coverage_default(cfg, args, raw_yaml)
+        assert cfg["progressive"] is True  # sanity: this IS the gauntlet case
+        try:
+            H._reject_progressive_on_heldout(cfg)
+        except SystemExit as exc:
+            assert exc.code == 2
+        else:
+            raise AssertionError("expected SystemExit(2)")
+
+
+def test_reject_progressive_on_heldout_via_coverage_sample_alias():
+    """`coverage: sample` (the back-compat alias) must also be rejected —
+    after `_sync_coverage_progressive` this implies progressive=True too,
+    but the guard checks `coverage` directly regardless, defensively."""
+    import yaml
+    from forge.orchestrator import _resolve_config
+    with tempfile.TemporaryDirectory() as td:
+        cfg_path = Path(td) / "c.yaml"
+        cfg_path.write_text(yaml.safe_dump({
+            "harnesses": ["a/b/1_x"], "datasets": {"locomo": {}},
+            "coverage": "sample",
+        }))
+        args = H._heldout_arg_parser().parse_args(["--config", str(cfg_path)])
+        cfg = _resolve_config(args)
+        raw_yaml = H._yaml_raw(args)
+        H._apply_heldout_coverage_default(cfg, args, raw_yaml)
+        assert cfg["coverage"] == "sample"
+        try:
+            H._reject_progressive_on_heldout(cfg)
+        except SystemExit as exc:
+            assert exc.code == 2
+        else:
+            raise AssertionError("expected SystemExit(2)")
+
+
+def test_reject_progressive_on_heldout_default_passes():
+    """The normal/default heldout case (neither `coverage` nor `progressive`
+    given anywhere → coverage='full' / progressive=False) must NOT raise —
+    the guardrail only fires when the user explicitly opted into the
+    gauntlet."""
+    import yaml
+    from forge.orchestrator import _resolve_config
+    with tempfile.TemporaryDirectory() as td:
+        cfg_path = Path(td) / "c.yaml"
+        cfg_path.write_text(yaml.safe_dump({
+            "harnesses": ["a/b/1_x"], "datasets": {"locomo": {}},
+        }))
+        args = H._heldout_arg_parser().parse_args(["--config", str(cfg_path)])
+        cfg = _resolve_config(args)
+        raw_yaml = H._yaml_raw(args)
+        H._apply_heldout_coverage_default(cfg, args, raw_yaml)
+        assert cfg["coverage"] == "full" and cfg["progressive"] is False
+        H._reject_progressive_on_heldout(cfg)  # must not raise
+
+
+def test_reject_progressive_on_heldout_explicit_full_passes():
+    """An explicit `coverage: full` (no `progressive` key) also must not
+    raise — matches configs/test_example.yaml's documented default."""
+    import yaml
+    from forge.orchestrator import _resolve_config
+    with tempfile.TemporaryDirectory() as td:
+        cfg_path = Path(td) / "c.yaml"
+        cfg_path.write_text(yaml.safe_dump({
+            "harnesses": ["a/b/1_x"], "datasets": {"locomo": {}},
+            "coverage": "full",
+        }))
+        args = H._heldout_arg_parser().parse_args(["--config", str(cfg_path)])
+        cfg = _resolve_config(args)
+        raw_yaml = H._yaml_raw(args)
+        H._apply_heldout_coverage_default(cfg, args, raw_yaml)
+        H._reject_progressive_on_heldout(cfg)  # must not raise
+
+
 # ---------------- evaluate_harness coverage=full integration ----------------
 
 def _fake_run_evaluation_factory(calls):

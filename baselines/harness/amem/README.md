@@ -37,6 +37,14 @@ gpt-5 family rejects, so keep a 4-series model); `--retrieve_k` (default 10,
 upstream default); `--llm_model` / `--judge_model` (default `gpt-5-mini` —
 shared QA agent + judge, baseline convention); `--split`; `--stage-spec`.
 
+Shared progressive-sampling flags (same as cc/hipporag2): `--progressive`
+(store_true, default off — run the staged stage1→2→3 gauntlet with
+threshold elimination instead of one single-stage pass); `--sampling-seed`
+(default `42`, base seed for the fixed one-shot sample); `--stages '<json>'`
+(override the family `DEFAULT_STAGES` sizes when `--progressive` is set);
+`--no-memory-cache` (disable cross-stage Phase-1 memory reuse, on by
+default).
+
 ## Faithfulness boundary
 
 | Category | Items |

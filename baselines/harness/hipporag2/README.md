@@ -64,6 +64,15 @@ baselines/venv/bin/python baselines/harness/hipporag2/run.py \
   local embeddings → batch 4, dtype float16 — computed automatically in
   `_ensure_hippo`.
 - `--max_sample_concurrent` — per-eval user/sample concurrency (default 3).
+- `--progressive` (store_true; default off, matching this baseline's
+  historical single-pass behavior) — run the staged stage1→2→3 gauntlet
+  (with threshold elimination) instead of one single-stage pass.
+- `--sampling-seed` (default `42`) — base seed for the (fixed, one-shot)
+  sample this baseline evaluates.
+- `--stages '<json>'` — override the family's `DEFAULT_STAGES` sizes when
+  `--progressive` is set.
+- `--no-memory-cache` — disable cross-stage Phase-1 memory reuse (on by
+  default).
 
 Examples:
 

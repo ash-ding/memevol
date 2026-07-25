@@ -36,6 +36,7 @@ import datetime as _dt
 import json
 import logging
 import shutil
+import sys
 
 import yaml
 from pathlib import Path
@@ -184,6 +185,47 @@ def _apply_heldout_coverage_default(
         _sync_coverage_progressive(cfg, source="coverage")
 
 
+def _reject_progressive_on_heldout(cfg: Dict[str, Any]) -> None:
+    """Fail fast if the resolved heldout config still requests the staged
+    gauntlet after `_apply_heldout_coverage_default` has run.
+
+    Held-out test evaluation exists to produce final, comparable numbers —
+    that requires ONE full, uniform pass over the whole test split. The
+    staged gauntlet (`progressive=True`, equivalently the back-compat
+    `coverage="sample"` alias) evaluates small per-stage subsets and
+    ELIMINATES candidates early on a threshold check: a harness cut at
+    stage1 only ever gets a ~20-item score, never the full-split score.
+    That's semantically invalid as a held-out result, so we refuse to run
+    rather than silently producing a partial/eliminated number.
+
+    Checks BOTH spellings defensively — `progressive` is the canonical
+    knob, but `coverage` is also checked directly in case some future code
+    path leaves the two inconsistent (`_sync_coverage_progressive` is
+    supposed to prevent that, but this guard does not rely on that
+    invariant holding). Must be called BEFORE any harness is staged or
+    evaluated (see `main()` — right after `_apply_heldout_coverage_default`,
+    before the workspace/run_name setup and `_run(...)`).
+    """
+    if cfg.get("progressive") is True or cfg.get("coverage") == "sample":
+        msg = (
+            "forge.heldout: refusing to run — this config requests the "
+            "staged gauntlet (progressive=true / coverage=sample), which is "
+            "not valid for held-out test evaluation.\n"
+            "Held-out numbers must come from ONE full, uniform pass over the "
+            "whole test split. The staged gauntlet samples small per-stage "
+            "subsets and ELIMINATES candidates early via threshold checks — "
+            "a harness cut at stage1 only ever gets a ~20-item score, not "
+            "the full-split score — which invalidates final held-out "
+            "numbers.\n"
+            "Fix: set `progressive: false` (or the back-compat "
+            "`coverage: full`) in your heldout config, or drop both fields "
+            "entirely (heldout defaults to full coverage when neither is "
+            "given anywhere)."
+        )
+        log.warning(msg)
+        sys.exit(2)
+
+
 def _resolve_harnesses(args, raw_yaml: Dict[str, Any]) -> List[str]:
     """CLI --harness (repeatable) REPLACES the YAML `harnesses:` list."""
     if getattr(args, "harnesses", None):
@@ -206,6 +248,7 @@ def main() -> None:
     raw_yaml = _yaml_raw(args)
     harnesses = _resolve_harnesses(args, raw_yaml)
     _apply_heldout_coverage_default(cfg, args, raw_yaml)
+    _reject_progressive_on_heldout(cfg)
 
     run_name = cfg.get("run_name") or _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     if not str(run_name).startswith("heldout"):
