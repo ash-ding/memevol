@@ -45,13 +45,61 @@ shared QA agent + judge, baseline convention); `--split`; `--stage-spec`.
 | Integration adaptations (not algorithm) | longmemeval (per message) / dynamicmem (per app-log entry, hipporag2's `app_log_to_passage` text) ingestion mapping — A-mem only defined LoCoMo; answering via the shared QA agent; `_st_shim.py` (memevol's `datasets/` shadows HF `datasets`, an ST 5.x import-time dep); per-note `print` flood redirected to devnull |
 | Upstream quirks preserved | `find_related_memories_raw` neighbor-cap loop behavior; `"says :"` spacing |
 
+## Smoke verification (per code path)
+
+`_init_to_note_units` has three ingestion branches; each was verified
+end-to-end on a small slice of real data (`--split search`), confirming
+build → retrieve → QA runs, `invalid_users` is empty, and retrieved memories
+are non-empty in the expected note format:
+
+| Dataset | Branch | Spec | Result | Retrieved-memory format |
+|---|---|---|---|---|
+| dynamicmem | `app_logs` | `{"n_samples":1,"n_checkpoints":1,"n_task_a":1,"n_task_c":1}` | overall 0.75, invalid=[] | `talk start time:…memory content:` (app-log passage) |
+| locomo | `conversation` | `{"n_samples":1,"n_qa":3}` | overall 0.667, invalid=[] | verbatim `Speaker Xsays :` (missing-space quirk) |
+| longmemeval_s | `sessions` | `{"n_samples":1}` | overall 1.0, invalid=[] | `role: content` (`assistant: …` / `user: …`) |
+| longmemeval_m | `sessions` (same as _s) | — | not run | — |
+
+Scores are single-sample sanity signals, NOT benchmark numbers.
+`longmemeval_m` shares the exact `sessions` branch as `longmemeval_s`, so `_s`
+already exercises its code path; it was skipped because one question ≈ 5000
+messages (~10× `_s`) — see the estimate below.
+
 ## Cost profile
 
-2 gpt-4o-mini calls per ingested note (analysis + evolution) + 1 per query
-(keywords rewrite). Internal calls use A-mem's own OpenAI client and are NOT
-tracked by `common.tokens` (same caveat as HippoRAG's internal calls). LoCoMo
-≈ 300–600 turns/conversation → expect ~20–60 min and ~$1 per conversation at
-build time (calls are sync + serial).
+Build dominates: **2 gpt-4o-mini calls per ingested note** (analyze_content +
+process_memory evolution), plus per query 1 gpt-4o-mini keyword rewrite + 1
+gpt-5-mini QA + 1 gpt-5-mini judge. A-mem's internal gpt-4o-mini calls do NOT
+flow through `common.tokens` (same caveat as HippoRAG), so the build-side
+figures below are STRUCTURAL estimates (~1.5k in / ~0.33k out per note, ±50%);
+the gpt-5-mini QA/judge side is calibrated from the smoke runs' tracked usage.
+
+Build is **serial + blocking** (A-mem is synchronous), and
+`consolidate_memories` re-embeds the whole accumulated corpus every 100
+evolutions (≈ O(n²) local MiniLM work), so per-note wall-clock GROWS with
+corpus size (~3 s/note at ~500 notes, more beyond). Samples run at
+`--max_sample_concurrent` (default 3).
+
+### Full held-out test-set estimate (per dataset)
+
+Assumed pricing: gpt-4o-mini $0.15 / $0.60 per 1M in/out; gpt-5-mini ~$0.25 /
+$2.00 per 1M in/out (plug in real rates — the total is gpt-4o-mini-build-dominated).
+
+| Dataset (test split) | build notes | queries | est. API $ | est. wall-clock |
+|---|---|---|---|---|
+| dynamicmem (4 users) | ~7 k | ~1.6 k | ~$14 | ~4–5 h |
+| locomo (4 convs) | ~2.4 k | 655 | ~$2 | ~1 h |
+| longmemeval_s (200 q) | ~101 k | 200 | ~$40 | ~2.5 days |
+| longmemeval_m (200 q) | ~977 k | 200 | ~$390 | ~5–6 weeks |
+
+- **Excluding longmemeval_m: ≈ $55 total, ≈ 3 days wall-clock** (dominated by
+  longmemeval_s's serial build).
+- **Including longmemeval_m: ≈ $450 total, many weeks** — the per-message note
+  model + O(n²) consolidate makes it impractical at full scale without
+  engineering changes (coarser ingestion / lower consolidate frequency), which
+  would depart from the faithful method.
+
+Time, not money, is the binding constraint. The build is API-bound, so raising
+`--max_sample_concurrent` (within OpenAI rate limits) is the main lever.
 
 Tests: `baselines/venv/bin/python tests/test_amem_baseline.py` (baselines
 venv only — heavy imports).
