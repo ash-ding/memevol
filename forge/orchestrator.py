@@ -278,6 +278,28 @@ def _deep_merge(base: Dict[str, Any], overlay: Dict[str, Any]) -> None:
             base[k] = v
 
 
+def _sync_coverage_progressive(cfg: Dict[str, Any], *, source: str = "progressive") -> None:
+    """Keep `cfg['coverage']` and `cfg['progressive']` mutually consistent.
+
+    `progressive` is canonical; `coverage` ("sample"/"full") is kept only as
+    a back-compat read/write alias — the persisted config.yaml snapshot must
+    never show a contradictory pair (e.g. `progressive: true` alongside
+    `coverage: full`). `source` picks which field is authoritative THIS call:
+
+      "progressive" (default) — cfg["coverage"] is derived from
+        cfg["progressive"] (True → "sample", False → "full"). Used by
+        `_resolve_config` once `progressive` has settled from CLI/YAML/alias.
+      "coverage" — cfg["progressive"] is derived from cfg["coverage"]
+        (=="sample" → True). Used by callers (e.g. `forge.heldout`) that
+        override `coverage` AFTER `_resolve_config` already ran, so the two
+        fields don't drift apart again in the persisted snapshot.
+    """
+    if source == "coverage":
+        cfg["progressive"] = (cfg.get("coverage", "sample") == "sample")
+    else:
+        cfg["coverage"] = "sample" if cfg.get("progressive", True) else "full"
+
+
 def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
     """Build the effective run config from defaults, optional YAML, and CLI.
 
@@ -447,7 +469,7 @@ def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
     # `coverage` stays derivable from `progressive` for the
     # evaluate_harness(coverage=...) call sites — always re-synced here so
     # it never drifts from the canonical `progressive` flag.
-    cfg["coverage"] = "sample" if cfg["progressive"] else "full"
+    _sync_coverage_progressive(cfg, source="progressive")
 
     if getattr(args, "random_sample", False):
         cfg["random_sample"] = True
@@ -1769,6 +1791,19 @@ async def _adopt_orphan(
         f"adoption: harnesses/{name} → sanity_passed; running evaluate_harness "
         f"on {dataset_names}"
     )
+    if cfg.get("random_sample", False):
+        # meta.json doesn't record which step_index this candidate belonged
+        # to, so its per-step sample_seed can't be reconstructed on resume —
+        # this re-eval falls back to evaluate_harness's default
+        # sample_seed_for=lambda ds: None (the historical fixed prefix), NOT
+        # the per-step subset its original-run siblings used. Score is real
+        # but not step-comparable to same-run candidates under random_sample.
+        log.warning(
+            f"adoption: harnesses/{name} resumed under random_sample=True but "
+            f"has no recorded step_index — evaluating with the fixed "
+            f"(unseeded) sample instead of a per-step subset; its score is "
+            f"not directly comparable to same-step siblings from this run"
+        )
     try:
         image_path = await ensure_image(harness_dir)
     except EnvBuildError as exc:

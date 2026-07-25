@@ -186,6 +186,86 @@ def test_search_example_yaml_parses():
     assert cfg["coverage"] == "sample"
 
 
+# ---------------- progressive/coverage consistency (fix-round finding 1) ----------------
+
+def _consistent(cfg):
+    """progressive=True must always mean coverage=='sample' and vice versa —
+    the persisted config.yaml snapshot must never show a contradictory pair."""
+    return cfg["progressive"] == (cfg["coverage"] == "sample")
+
+
+def test_heldout_omitted_coverage_stays_consistent_with_progressive():
+    """Regression for fix-round finding 1: a heldout YAML that omits
+    `coverage:` entirely used to leave cfg["progressive"] at _resolve_config's
+    default (True) while _apply_heldout_coverage_default forced
+    cfg["coverage"] to "full" — a self-contradictory pair persisted into
+    config.yaml. Must now resync to progressive=False (matching the "full"
+    that heldout defaults to when coverage is omitted everywhere)."""
+    import argparse, yaml
+    from forge.orchestrator import build_arg_parser, _resolve_config
+    with tempfile.TemporaryDirectory() as td:
+        cfg_path = Path(td) / "no_coverage.yaml"
+        # No `coverage:` key AND no `progressive:` key — purely defaults.
+        cfg_path.write_text(yaml.safe_dump({
+            "harnesses": ["a/b/1_x"],
+            "datasets": {"locomo": {}},
+        }))
+        args = H._heldout_arg_parser().parse_args(["--config", str(cfg_path)])
+        cfg = _resolve_config(args)
+        # Before the heldout-specific override: _resolve_config's own default
+        # (progressive=True <-> coverage="sample") must already be consistent.
+        assert _consistent(cfg)
+        assert cfg["progressive"] is True and cfg["coverage"] == "sample"
+
+        raw_yaml = H._yaml_raw(args)
+        H._apply_heldout_coverage_default(cfg, args, raw_yaml)
+        # heldout's "default to full when omitted" kicks in...
+        assert cfg["coverage"] == "full"
+        # ...and progressive MUST be resynced to match — no contradictory pair.
+        assert _consistent(cfg)
+        assert cfg["progressive"] is False
+
+
+def test_heldout_explicit_coverage_cli_stays_consistent():
+    """--coverage sample on the CLI is honored as-is (not forced to full),
+    and progressive/coverage stay consistent."""
+    import yaml
+    from forge.orchestrator import _resolve_config
+    with tempfile.TemporaryDirectory() as td:
+        cfg_path = Path(td) / "c.yaml"
+        cfg_path.write_text(yaml.safe_dump({
+            "harnesses": ["a/b/1_x"], "datasets": {"locomo": {}},
+        }))
+        args = H._heldout_arg_parser().parse_args(
+            ["--config", str(cfg_path), "--coverage", "sample"])
+        cfg = _resolve_config(args)
+        raw_yaml = H._yaml_raw(args)
+        H._apply_heldout_coverage_default(cfg, args, raw_yaml)
+        assert cfg["coverage"] == "sample"
+        assert _consistent(cfg)
+        assert cfg["progressive"] is True
+
+
+def test_heldout_yaml_coverage_full_stays_consistent():
+    """An explicit `coverage: full` in the heldout YAML (no CLI flag) is
+    honored, and progressive resyncs to False."""
+    import yaml
+    from forge.orchestrator import _resolve_config
+    with tempfile.TemporaryDirectory() as td:
+        cfg_path = Path(td) / "c.yaml"
+        cfg_path.write_text(yaml.safe_dump({
+            "harnesses": ["a/b/1_x"], "datasets": {"locomo": {}},
+            "coverage": "full",
+        }))
+        args = H._heldout_arg_parser().parse_args(["--config", str(cfg_path)])
+        cfg = _resolve_config(args)
+        raw_yaml = H._yaml_raw(args)
+        H._apply_heldout_coverage_default(cfg, args, raw_yaml)
+        assert cfg["coverage"] == "full"
+        assert _consistent(cfg)
+        assert cfg["progressive"] is False
+
+
 # ---------------- evaluate_harness coverage=full integration ----------------
 
 def _fake_run_evaluation_factory(calls):

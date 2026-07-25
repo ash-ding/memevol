@@ -47,6 +47,7 @@ from forge.orchestrator import (
     _build_objectives,
     _resolve_config,
     _setup_logging,
+    _sync_coverage_progressive,
     _write_resolved_config,
     build_arg_parser,
     evaluate_harness,
@@ -147,6 +148,27 @@ def _yaml_raw(args) -> Dict[str, Any]:
         return yaml.safe_load(f) or {}
 
 
+def _apply_heldout_coverage_default(
+    cfg: Dict[str, Any], args, raw_yaml: Dict[str, Any]
+) -> None:
+    """Held-out evaluation is a final-numbers flow — default to FULL coverage
+    when `coverage` isn't given anywhere. Precedence: --coverage CLI (already
+    applied by `_resolve_config`) > explicit `coverage:` in the YAML > "full"
+    (DEFAULT_CONFIG's "sample" is a search-loop default, not a heldout one).
+
+    Mutates `cfg` in place. ALWAYS re-syncs `cfg["progressive"]` from the
+    (possibly just-overridden) `cfg["coverage"]` afterward — `_resolve_config`
+    already settled `progressive`/`coverage` consistently, but this function
+    can override `coverage` again (to "full") AFTER that, and skipping the
+    re-sync would persist a self-contradictory config.yaml snapshot (e.g.
+    `progressive: true` + `coverage: full` when a heldout YAML omits
+    `coverage:` entirely — Task 6 fix-round finding 1).
+    """
+    if getattr(args, "coverage", None) is None:
+        cfg["coverage"] = raw_yaml.get("coverage") or "full"
+    _sync_coverage_progressive(cfg, source="coverage")
+
+
 def _resolve_harnesses(args, raw_yaml: Dict[str, Any]) -> List[str]:
     """CLI --harness (repeatable) REPLACES the YAML `harnesses:` list."""
     if getattr(args, "harnesses", None):
@@ -168,11 +190,7 @@ def main() -> None:
     cfg = _resolve_config(args)
     raw_yaml = _yaml_raw(args)
     harnesses = _resolve_harnesses(args, raw_yaml)
-    # Held-out evaluation is a final-numbers flow — default to FULL coverage.
-    # Precedence: --coverage CLI > explicit `coverage:` in the YAML > "full"
-    # (DEFAULT_CONFIG's "sample" is a search-loop default, not a heldout one).
-    if getattr(args, "coverage", None) is None:
-        cfg["coverage"] = raw_yaml.get("coverage") or "full"
+    _apply_heldout_coverage_default(cfg, args, raw_yaml)
 
     run_name = cfg.get("run_name") or _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     if not str(run_name).startswith("heldout"):
