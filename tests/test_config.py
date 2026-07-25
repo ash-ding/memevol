@@ -61,6 +61,22 @@ def test_resolve_non_mapping_yaml_raises():
     assert raised
 
 
+def test_amem_default_config_roundtrips_to_argparse_defaults():
+    # Backward-compat anchor: no --config, no CLI → DEFAULT_CONFIG unchanged,
+    # and DEFAULT_CONFIG equals the historical argparse defaults.
+    import importlib
+    m = importlib.import_module("baselines.harness.amem.run")
+    from common.config import resolve_config
+    d = m.DEFAULT_CONFIG
+    assert d["dataset"] == "locomo" and d["split"] == "test"
+    assert d["sampling_seed"] == 42 and d["memory_cache"] is True
+    assert d["progressive"] is False and d["retrieve_k"] == 10
+    assert d["amem_llm_model"] == "gpt-4o-mini"
+    # all-None overrides → identical to defaults
+    none_over = {k: None for k in d}
+    assert resolve_config(d, None, none_over) == d
+
+
 def main():
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = []

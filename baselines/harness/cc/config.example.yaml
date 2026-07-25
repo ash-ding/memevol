@@ -1,0 +1,14 @@
+# cc (Claude Code) baseline config. Launch:
+#   baselines/venv/bin/python baselines/harness/cc/run.py --config baselines/harness/cc/config.example.yaml
+# Any CLI flag overrides the matching key here (precedence: defaults < this file < CLI).
+dataset: dynamicmem           # dynamicmem | locomo | longmemeval_s | longmemeval_m
+split: test                   # test | search
+progressive: false            # true = staged stage1->2->3 gauntlet; false = single pass
+sampling_seed: 42             # fixed seed for the one-shot sample
+# stages: {...}               # optional: override family DEFAULT_STAGES (native YAML dict) when progressive
+# stage_spec: {n_samples: 1}  # optional: single-stage size override (native YAML dict)
+memory_cache: true            # cross-stage Phase-1 memory reuse
+model: sonnet                 # claude-sonnet-4-20250514 | claude-opus-4-20250514 | sonnet | opus
+max_turns: 30                 # max tool-use turns per QA question
+judge_model: gpt-5-mini
+max_sample_concurrent: 3
