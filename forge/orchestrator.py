@@ -60,7 +60,7 @@ import sys
 import time
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import yaml
 
@@ -81,6 +81,7 @@ from common.staged_eval import (  # re-export: config moved to common/ 2026-07-2
     _benchmark_family, _wire_size, stage_wire_spec, full_wire_spec,
     stage_plan, _resolve_dataset_stages, run_gauntlet,
 )
+from common.sampling import derive_sample_seed
 
 log = logging.getLogger("forge.orchestrator")
 
@@ -124,7 +125,29 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     #   full   — ONE whole-split evaluation per benchmark (no stage1/2, no
     #            elimination; wire stage "full", artifacts under <ds>/full/).
     # The sanity gate and smoke_test runs are unaffected. CLI: --coverage.
+    # SUPERSEDED 2026-07-25 by `progressive` below — `coverage` is kept as a
+    # back-compat read/write alias (derived from `progressive` at resolve
+    # time: progressive=True → "sample", False → "full") and as the literal
+    # value `evaluate_harness(coverage=...)` still consumes.
     "coverage": "sample",
+    # Progressive sampling (2026-07-25): whether a candidate goes through the
+    # staged stage1→2→3 gauntlet (True, default — preserves today's
+    # behavior) or gets ONE whole-split pass (False — same effect as the
+    # legacy `coverage: full`). CLI: --progressive / --no-progressive.
+    # `--coverage full`/`sample` is kept as a back-compat alias: giving it
+    # (YAML or CLI) without an explicit `progressive` maps full→False,
+    # sample→True; an explicit `progressive` always wins.
+    "progressive": True,
+    # When True, each search step samples a DIFFERENT (but still
+    # deterministic + reproducible) subset per benchmark, via
+    # common.sampling.derive_sample_seed(sampling_seed, step_index, dataset).
+    # Default False = every step samples the SAME fixed prefix (today's
+    # behavior — sample_seed=None throughout). CLI: --random-sample.
+    "random_sample": False,
+    # Base seed combined with (step_index, dataset) to derive each step's
+    # sample_seed when random_sample is on. Irrelevant when random_sample is
+    # False. CLI: --sampling-seed.
+    "sampling_seed": 42,
     # Search-mode data isolation: overlay-bind search-split-only data into
     # BOTH containers so the held-out test split (questions + gold answers)
     # is technically invisible to the proposer agent and to harness code.
@@ -264,6 +287,10 @@ def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
       3. Explicit CLI args (only when not None)
     """
     cfg: Dict[str, Any] = copy.deepcopy(DEFAULT_CONFIG)
+    # Raw YAML dict (empty when no --config given) — kept around so the
+    # progressive/coverage alias resolution below can tell "explicitly set
+    # in the file" apart from "left at its DEFAULT_CONFIG value".
+    file_cfg: Dict[str, Any] = {}
 
     if args.config is not None:
         path = Path(args.config)
@@ -400,6 +427,32 @@ def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
         raise ValueError(
             f"coverage must be 'sample' or 'full', got {cfg.get('coverage')!r}"
         )
+
+    # progressive / random_sample / sampling_seed (2026-07-25).
+    # Precedence: an explicit `progressive` (YAML key OR --progressive/
+    # --no-progressive) always wins. Otherwise `coverage` is honored as a
+    # back-compat ALIAS (YAML key OR --coverage): full → progressive=False,
+    # sample → progressive=True. Absent both, DEFAULT_CONFIG's
+    # progressive=True stands.
+    progressive_explicit = ("progressive" in file_cfg) or (
+        getattr(args, "progressive", None) is not None
+    )
+    coverage_explicit = ("coverage" in file_cfg) or (
+        getattr(args, "coverage", None) is not None
+    )
+    if getattr(args, "progressive", None) is not None:
+        cfg["progressive"] = bool(args.progressive)
+    elif not progressive_explicit and coverage_explicit:
+        cfg["progressive"] = (cfg["coverage"] == "sample")
+    # `coverage` stays derivable from `progressive` for the
+    # evaluate_harness(coverage=...) call sites — always re-synced here so
+    # it never drifts from the canonical `progressive` flag.
+    cfg["coverage"] = "sample" if cfg["progressive"] else "full"
+
+    if getattr(args, "random_sample", False):
+        cfg["random_sample"] = True
+    if getattr(args, "sampling_seed", None) is not None:
+        cfg["sampling_seed"] = int(args.sampling_seed)
 
     # llm block: --anthropic-transport override + validation.
     if getattr(args, "anthropic_transport", None) is not None:
@@ -1059,6 +1112,7 @@ async def evaluate_harness(
     llm_cfg: Optional[Dict[str, Any]] = None,
     coverage: str = "sample",
     data_isolation_binds: Optional[List[str]] = None,
+    sample_seed_for: Callable[[str], Optional[str]] = lambda ds: None,
 ) -> Dict[str, Dict[str, Any]]:
     """Run the evaluation on every dataset (serial).
 
@@ -1163,13 +1217,14 @@ async def evaluate_harness(
                 f, indent=2, ensure_ascii=False,
             )
 
-    # Per-run sample seed is Task 6 wiring; forge is unchanged for now (None →
-    # specs untouched, behavior identical to the pre-extraction inline loop).
+    # sample_seed_for defaults to `lambda ds: None` (unchanged behavior);
+    # callers pass the real per-step seed function when cfg.random_sample
+    # is on (see propose_eval_one, Task 6).
     return await run_gauntlet(
         datasets_config=datasets_config,
         coverage=coverage,
         smoke=smoke,
-        sample_seed_for=lambda ds: None,
+        sample_seed_for=sample_seed_for,
         run_stage_fn=_run_stage_fn,
         read_metrics_fn=_read_metrics_fn,
         stages_writer=_stages_writer,
@@ -1186,6 +1241,7 @@ async def propose_eval_one(
     new_id: str,
     *,
     is_seed: bool = False,
+    step_index: int = 0,
 ) -> Tuple[str, Dict[str, float], str, List[str]]:
     """End-to-end for one harness (seed or proposed).
 
@@ -1201,6 +1257,10 @@ async def propose_eval_one(
     The harness directory is renamed `harnesses/<int>` →
     `harnesses/<int>_<hash8>` after the sanity-retry loop settles, so the
     suffix reflects the code that's actually evaluated.
+
+    `step_index` (the outer-loop step this candidate belongs to; 0 for the
+    seed) feeds `common.sampling.derive_sample_seed` when cfg.random_sample
+    is on — see the `sample_seed_for` closure below.
     """
     datasets_config = cfg["datasets"]
     dataset_names = list(datasets_config.keys())
@@ -1349,6 +1409,21 @@ async def propose_eval_one(
     # rename `<int>` → `<int>_<hash8>`, then run full eval against the new dir.
     _settle_path()
 
+    # Per-step sample seed (2026-07-25): when random_sample is on, each step
+    # gets a different but reproducible subset per dataset; otherwise every
+    # step reuses the same fixed prefix (sample_seed=None, identical to
+    # pre-progressive-sampling behavior). `s=step_index` binds the current
+    # value explicitly — step_index is a plain function parameter here (not
+    # a loop variable this closure could outlive), so this isn't strictly
+    # needed for correctness, but it documents intent and guards against the
+    # classic late-binding-in-a-loop mistake if this ever gets refactored to
+    # close over a loop variable directly.
+    if cfg.get("random_sample", False):
+        sampling_seed = cfg.get("sampling_seed", 42)
+        sample_seed_for = lambda ds, s=step_index: derive_sample_seed(sampling_seed, s, ds)
+    else:
+        sample_seed_for = lambda ds: None
+
     per_ds = await evaluate_harness(
         final_id, image_path,
         datasets_config=datasets_config,
@@ -1361,6 +1436,7 @@ async def propose_eval_one(
         llm_cfg=cfg.get("llm"),
         coverage=cfg.get("coverage", "sample"),
         data_isolation_binds=_isolation_binds(cfg),
+        sample_seed_for=sample_seed_for,
     )
     return final_id, per_ds, sanity_status, _read_parent_ids(harness_dir)
 
@@ -1466,7 +1542,7 @@ async def search_loop(cfg: Dict[str, Any]) -> None:
         log.info(f"[step {step}/{cfg['steps']}] candidate {j}/{k} → int_id={int_id}")
         try:
             final_id, per_ds, sanity_status, parent_ids = await propose_eval_one(
-                cfg, new_id=int_id, is_seed=False,
+                cfg, new_id=int_id, is_seed=False, step_index=step,
             )
         except ProposerInfraError as exc:
             log.error(
@@ -1896,10 +1972,29 @@ def build_arg_parser() -> argparse.ArgumentParser:
                              "the test split) into search-mode containers "
                              "instead of the search-split-only overlay.")
     parser.add_argument("--coverage", default=None, choices=["sample", "full"],
-                        help="Evaluation coverage (overrides cfg.coverage): "
-                             "sample = staged gauntlet (default); full = one "
-                             "whole-split evaluation per benchmark, no "
-                             "stage1/2, no threshold elimination.")
+                        help="DEPRECATED alias for --progressive/--no-progressive "
+                             "(overrides cfg.coverage): sample = staged gauntlet "
+                             "(default, progressive=True); full = one whole-split "
+                             "evaluation per benchmark, no stage1/2, no threshold "
+                             "elimination (progressive=False). Ignored if "
+                             "--progressive/--no-progressive is also given.")
+    parser.add_argument("--progressive", dest="progressive",
+                        action="store_true", default=None,
+                        help="Run the staged stage1→2→3 gauntlet (default). "
+                             "Supersedes --coverage sample.")
+    parser.add_argument("--no-progressive", dest="progressive",
+                        action="store_false", default=None,
+                        help="Skip the gauntlet — ONE whole-split pass per "
+                             "benchmark. Supersedes --coverage full.")
+    parser.add_argument("--random-sample", action="store_true",
+                        help="Sample a DIFFERENT (deterministic) subset each "
+                             "search step, seeded from --sampling-seed via "
+                             "common.sampling.derive_sample_seed. Default: "
+                             "every step samples the same fixed prefix.")
+    parser.add_argument("--sampling-seed", type=int, default=None,
+                        help="Base seed combined with (step, dataset) to "
+                             "derive each step's sample when --random-sample "
+                             "is on (default 42).")
     parser.add_argument("--anthropic-transport", default=None,
                         choices=["api", "vertex"],
                         help="How claude-* QA/judge models reach Anthropic "
