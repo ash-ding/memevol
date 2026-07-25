@@ -119,6 +119,45 @@ def test_derive_sample_seed_used_by_orchestrator_import():
     assert derive_sample_seed(42, 1, "locomo") == a
 
 
+# ---------------- Task 6b: forge/launch.py forwards sample_seed to get_task_list ----------------
+
+def test_launch_style_seed_forwarding_varies_task_list():
+    # Mirrors forge/launch.py's actual call (stage_spec.get("sample_seed") ->
+    # get_task_list(..., seed=...)) without needing the container: proves the
+    # per-step seed actually reaches task-LIST selection, not just per-user
+    # QA/item sampling. Regression target for the gap found in Task 7 review.
+    from datasets.longmemeval import env as lme
+
+    def pick(spec):
+        n = spec.get("n_samples")
+        return lme.get_task_list(
+            status="search",
+            eval_n_samples=None if n is None else int(n),
+            seed=spec.get("sample_seed"),
+        )
+
+    raw = pick({"n_samples": 20})  # no seed -> raw prefix (today's behavior)
+    step0 = pick({"n_samples": 20, "sample_seed": "SEEDA"})
+    step1 = pick({"n_samples": 20, "sample_seed": "SEEDB"})
+
+    assert raw == pick({"n_samples": 20})  # seed absent = deterministic raw prefix
+    assert step0 != raw  # a seed actually changes WHICH tasks are selected
+    assert step0 != step1  # different step seeds -> different subsets
+    assert len(step0) == len(step1) == 20  # same size regardless of seed
+    assert set(step0) <= set(pick({"n_samples": None}))  # still within the split
+
+
+def test_launch_py_forwards_sample_seed_to_get_task_list():
+    # Lightweight source check: guard against someone reverting the
+    # forge/launch.py forwarding line back to the old no-seed call.
+    import inspect
+    import forge.launch as launch_mod
+    src = inspect.getsource(launch_mod)
+    call_start = src.index("task_list = env_module.get_task_list(")
+    call_snippet = src[call_start:call_start + 300]
+    assert "seed=stage_spec.get(\"sample_seed\")" in call_snippet
+
+
 # ---------------- runner ----------------
 
 def main():

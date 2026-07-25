@@ -186,7 +186,9 @@ async def _async_main(args: argparse.Namespace) -> None:
     # n_samples None = no cap (coverage=full: the whole split).
     n_samples = stage_spec.get("n_samples")
     task_list = env_module.get_task_list(
-        status=args.split, eval_n_samples=None if n_samples is None else int(n_samples)
+        status=args.split,
+        eval_n_samples=None if n_samples is None else int(n_samples),
+        seed=stage_spec.get("sample_seed"),
     )
 
     workflow = workflow_cls(
