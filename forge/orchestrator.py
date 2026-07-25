@@ -76,6 +76,7 @@ from forge.prompts import PromptVersionError, load_template_module, resolve_vers
 from forge.proposer import propose, propose_with_fix
 from forge.selection import Entry, Frontier
 
+from common.config import deep_merge as _deep_merge  # shared primitive (2026-07-25)
 from common.staged_eval import (  # re-export: config moved to common/ 2026-07-25
     STAGE_ORDER, DEFAULT_STAGES, FULL_STAGE, _FAMILY_FIELDS,
     _benchmark_family, _wire_size, stage_wire_spec, full_wire_spec,
@@ -267,15 +268,6 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # `run_name` defaults to a timestamp at resolve time (so the default isn't
     # frozen at import time). `datasets` intentionally omitted from defaults.
 }
-
-
-def _deep_merge(base: Dict[str, Any], overlay: Dict[str, Any]) -> None:
-    """In-place deep merge of overlay into base (dicts only)."""
-    for k, v in overlay.items():
-        if isinstance(v, dict) and isinstance(base.get(k), dict):
-            _deep_merge(base[k], v)
-        else:
-            base[k] = v
 
 
 def _sync_coverage_progressive(cfg: Dict[str, Any], *, source: str = "progressive") -> None:
