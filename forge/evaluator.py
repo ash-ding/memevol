@@ -66,7 +66,8 @@ SUBPROCESS_TIMEOUT = {
     "stage1": 2 * 3600,
     "stage2": 4 * 3600,
     "stage3": 8 * 3600,
-    "full": 12 * 3600,   # coverage=full — whole-split single pass
+    "full": 12 * 3600,     # legacy plan name — no caller emits it anymore
+    "single": 12 * 3600,   # progressive=false — whole-split single pass (via single_stage)
 }
 
 GRACE_AFTER_SCORE = 60

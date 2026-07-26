@@ -41,7 +41,10 @@ DEFAULT_CONFIG = {
     "max_logs": None, "max_sample_concurrent": 3, "n_score_bins": 3,
     "samples_per_bin": 3, "judge_model": "gpt-5-mini",
     "progressive": True, "random_sample": False, "sampling_seed": 42,
-    "stages": None, "memory_cache": True,
+    # Evaluation SIZES are config-file-only (no CLI flag): `stages` overrides the
+    # progressive gauntlet's family DEFAULT_STAGES; `single_stage` sizes the
+    # progressive=false single pass (REQUIRED when progressive=false).
+    "stages": None, "single_stage": None, "memory_cache": True,
 }
 
 
@@ -88,9 +91,10 @@ def parse_args():
                              "(seeded by --sampling_seed + step). Off = fixed prefix.")
     parser.add_argument("--sampling_seed", type=int, default=None,
                         help="Base seed for --random_sample per-step subset selection.")
-    parser.add_argument("--stages", type=str, default=None,
-                        help="JSON override of the stages block "
-                             "(sanity_check/stage1..3); default = family DEFAULT_STAGES.")
+    # Evaluation SIZES (`stages` / `single_stage`) are config-file-only — set them
+    # in the --config YAML, not on the CLI. `stages` overrides the gauntlet's
+    # family DEFAULT_STAGES; `single_stage` sizes the progressive=false single
+    # pass (required when --no-progressive). The old `--stages` CLI flag is gone.
     parser.add_argument("--memory_cache", action=argparse.BooleanOptionalAction, default=None,
                         help="Cross-stage Phase-1 memory reuse inside the gauntlet.")
 
@@ -101,16 +105,12 @@ def build_cfg(args):
     """Resolve the effective config: DEFAULT_CONFIG < --config YAML < CLI flags.
 
     Every CLI flag defaults to None ("not given"); only non-None CLI values
-    override. --stages is a JSON string on the CLI but a native dict in YAML /
-    DEFAULT_CONFIG — parse it here so cfg["stages"] is always a dict-or-None.
+    override. `stages` / `single_stage` are config-file-only (native YAML dicts,
+    no CLI flag) — kept out of the CLI overlay so their YAML value survives.
     """
-    import json
-
-    def _json_or_none(s):
-        return json.loads(s) if s else None
-
-    cli = {k: getattr(args, k) for k in DEFAULT_CONFIG if k != "stages"}
-    cli["stages"] = _json_or_none(getattr(args, "stages"))
+    _config_only = {"stages", "single_stage"}
+    cli = {k: getattr(args, k) for k in DEFAULT_CONFIG if k not in _config_only}
+    cli.update({k: None for k in _config_only})
     return resolve_config(DEFAULT_CONFIG, args.config, cli)
 
 
@@ -118,6 +118,7 @@ async def main(cfg):
     from baselines.evolve.alma.meta_agent import MetaAgent
 
     stages = cfg["stages"]
+    single_stage = cfg["single_stage"]
 
     meta_agent = MetaAgent(
         meta_model=cfg["meta_model"],
@@ -141,6 +142,7 @@ async def main(cfg):
             random_sample=cfg["random_sample"],
             sampling_seed=cfg["sampling_seed"],
             stages=stages,
+            single_stage=single_stage,
             memory_cache=cfg["memory_cache"],
         )
     else:
@@ -156,6 +158,7 @@ async def main(cfg):
             random_sample=cfg["random_sample"],
             sampling_seed=cfg["sampling_seed"],
             stages=stages,
+            single_stage=single_stage,
             memory_cache=cfg["memory_cache"],
         )
 

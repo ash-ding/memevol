@@ -199,6 +199,7 @@ class MetaAgent:
         sampling_seed: int = 42,
         step_index: int = 0,
         stages: Optional[dict] = None,
+        single_stage: Optional[dict] = None,
         memory_cache: bool = True,
     ):
         if status == 'search':
@@ -256,6 +257,7 @@ class MetaAgent:
             sampling_seed=sampling_seed,
             step_index=step_index,
             stages=stages,
+            single_stage=single_stage,
             memory_cache=memory_cache,
         )
 
@@ -284,6 +286,7 @@ class MetaAgent:
         random_sample: bool = False,
         sampling_seed: int = 42,
         stages: Optional[dict] = None,
+        single_stage: Optional[dict] = None,
         memory_cache: bool = True,
     ):
         logs_root = self.memo_manager.LOGS_ROOT
@@ -307,6 +310,7 @@ class MetaAgent:
                 sampling_seed=sampling_seed,
                 step_index=0,
                 stages=stages,
+                single_stage=single_stage,
                 memory_cache=memory_cache,
             )
             self.memo_manager.no_memo_reward = (
@@ -354,6 +358,7 @@ class MetaAgent:
                 sampling_seed=sampling_seed,
                 step_index=0,
                 stages=stages,
+                single_stage=single_stage,
                 memory_cache=memory_cache,
             )
             self.memo_manager.update_reward(
@@ -442,6 +447,7 @@ class MetaAgent:
                                 sampling_seed=sampling_seed,
                                 step_index=step,
                                 stages=stages,
+                                single_stage=single_stage,
                                 memory_cache=memory_cache,
                             )
                             break

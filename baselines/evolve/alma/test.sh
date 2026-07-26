@@ -5,9 +5,12 @@
 # Run a saved memo structure on the held-out test split (users 007-010).
 # Invoke from the project root.
 #
-# The flat --eval_n_qa knob was removed; sizes come from the shared `stages`
-# schema. --status test evaluates the memo through the gauntlet by default
-# (--progressive); --no-progressive does a single terminal-size pass.
+# Evaluation SIZES live in the --config YAML only (the flat --eval_n_qa and the
+# --stages CLI flags were removed). --status test evaluates the memo through the
+# gauntlet by default (--progressive), sized by the config's `stages` block;
+# --no-progressive does ONE pass sized by the config's REQUIRED `single_stage`
+# block. Edit baselines/evolve/alma/config.example.yaml (or a copy) to change
+# sizes.
 # ===========================================================================
 
 # --- Evaluate a specific memo on held-out test users (progressive gauntlet) ---
@@ -33,8 +36,10 @@ python baselines/evolve/alma/run.py \
     --memo_SHA no_mem \
     --progressive
 
-# --- Quick smoke eval (tiny sizes via --stages) to verify plumbing ---
-SMOKE_STAGES='{"sanity_check":{"n_users":1,"n_checkpoints":1,"n_task_a":1,"n_task_c":1},"stage1":{"n_users":1,"n_checkpoints":1,"n_task_a":1,"n_task_c":1,"threshold":0.0},"stage2":{"n_users":1,"n_checkpoints":1,"n_task_a":1,"n_task_c":1,"threshold":0.0},"stage3":{"n_users":1,"n_checkpoints":1,"n_task_a":1,"n_task_c":1}}'
+# --- Single-pass eval (no gauntlet), sized by the config's single_stage ---
+# --no-progressive runs ONE pass; sizes come from the config's REQUIRED
+# `single_stage` block. For a quick plumbing check, point --config at a config
+# whose `single_stage` uses tiny sizes.
 python baselines/evolve/alma/run.py \
     --config baselines/evolve/alma/config.example.yaml \
     --meta_model gpt-5 \
@@ -42,6 +47,5 @@ python baselines/evolve/alma/run.py \
     --judge_model gpt-5-mini \
     --status test \
     --memo_SHA no_mem \
-    --progressive \
-    --stages "$SMOKE_STAGES" \
+    --no-progressive \
     --max_sample_concurrent 1

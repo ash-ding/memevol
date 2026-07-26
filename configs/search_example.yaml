@@ -82,11 +82,13 @@ llm:
 #   true  (default) — staged gauntlet (stage1→2→3 nested sampling +
 #           threshold gates; artifacts under <ds>/<stageN>/, stage_<ds>
 #           records 1/2/3).
-#   false — ONE whole-split evaluation per benchmark: no stage1/2, no
-#           elimination; artifacts under <ds>/full/; stage_<ds> records 4.
+#   false — ONE evaluation per benchmark, sized by the REQUIRED
+#           `single_stage` config block (see `datasets:` below; null field =
+#           whole split for that dimension): no stage1/2, no elimination;
+#           artifacts under <ds>/single/; stage_<ds> records 4.
 #           Sanity gate and smoke_test are unaffected. Cost anchor (test
-#           split full sizes): DynamicMem 4 users × ~400 items, LoCoMo 655 QA
-#           (cat 1-4), LongMemEval 200 questions.
+#           split whole-split sizes): DynamicMem 4 users × ~400 items, LoCoMo
+#           655 QA (cat 1-4), LongMemEval 200 questions.
 # `python -m forge.heldout` (dedicated held-out entry) defaults to full
 # coverage (progressive=false-equivalent) regardless of this field.
 #
@@ -310,6 +312,24 @@ prompts:
 #   stage3: {n_users: null, n_checkpoints: null, n_task_a: null, n_task_c: null}
 # NB this differs from top-level `coverage: full`, which is ONE full pass
 # with NO gauntlet (stage_<ds>=4); stage3-null keeps the gauntlet (=3).
+#
+# `stages` vs `single_stage` — which block sizes your run depends on
+# `progressive` (2026-07-26):
+#   progressive: true  (default, above) — `stages` sizes the stage1→2→3
+#                       gauntlet, as documented above. `single_stage` is
+#                       ignored.
+#   progressive: false — `stages` is ignored; each dataset instead REQUIRES a
+#                       `single_stage` block — same size fields as a stage
+#                       entry, but NO `threshold` (ONE ungated pass, so there's
+#                       nothing to gate). A field `null`/`full`/`all` = whole
+#                       pool for that dimension, same as stage3-null above.
+#                       Missing `single_stage` raises ValueError at eval time
+#                       — there is no automatic whole-split fallback anymore.
+#                       Example (sizes locomo's one pass to 2 conversations ×
+#                       20 QA each — swap in `null` fields for the whole
+#                       split, which is what `forge.heldout`'s
+#                       configs/test_example.yaml does):
+#     single_stage: {n_conversations: 2, n_qa: 20}
 
 # A search run targets ONE dataset. Per-benchmark scores are recorded
 # independently on their own `accuracy_<dataset>` axis — there is NO

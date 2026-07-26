@@ -86,8 +86,13 @@ literal same `common/` modules forge uses:
   `false` — matching each side's historical behavior): drives the candidate
   through the shared stage1→2→3 gauntlet (`common.staged_eval.run_gauntlet`)
   instead of a single one-shot pass. Sizes come from the family
-  `DEFAULT_STAGES` (in `common/staged_eval.py`) unless overridden with
-  `--stages '<json>'`. `run_gauntlet`'s promotion/elimination logic,
+  `DEFAULT_STAGES` (in `common/staged_eval.py`) unless overridden by a
+  `stages:` block in the `--config` YAML — for BOTH alma and harness, sizing
+  is config-file only (no `--stages`/`--stage-spec` JSON CLI flag anywhere;
+  see "Configuration"). The single-pass path (`--no-progressive`) instead
+  REQUIRES a `single_stage:` block in the config (a null/omitted field = the
+  whole split for that dimension; an absent block raises a clear `ValueError`,
+  never a silent whole-split). `run_gauntlet`'s promotion/elimination logic,
   `stages.json` shape, and cost accounting are IDENTICAL to forge's — only
   the stage-execution callback differs (forge: `singularity exec`; baselines:
   an in-process `run_all_users` runner).
@@ -115,10 +120,12 @@ literal same `common/` modules forge uses:
 CLI surface per side:
 
 ```bash
-# harness (cc / hipporag2 / amem run.py) — no --random_sample (no step loop)
+# harness (cc / hipporag2 / amem run.py) — no --random_sample (no step loop);
+# sizes (stages: for progressive, single_stage: for one-shot) live in the
+# --config YAML, never on the CLI
 baselines/venv/bin/python baselines/harness/hipporag2/run.py \
-    --dataset locomo --progressive --sampling-seed 42 \
-    --stages '{"stage1": {"n_conversations": 2, "n_qa": 10, "threshold": 0.2}}'
+    --config baselines/harness/hipporag2/config.example.yaml \
+    --dataset locomo --progressive --sampling-seed 42
 
 # alma (evolve/alma/run.py) — has a step loop, so random_sample applies
 baselines/venv/bin/python baselines/evolve/alma/run.py \
@@ -158,11 +165,16 @@ forge uses:
 - **alma's entrypoint is `run.py`** (renamed from its old script name) —
   every baseline is now invoked the same way: `evolve/alma/run.py`,
   `harness/cc/run.py`, `harness/hipporag2/run.py`, `harness/amem/run.py`.
-- **JSON-string fields** (`--stages` / `--stage-spec`) travel as literal
-  JSON strings on the CLI but as native mappings in YAML (e.g. `stages:
-  {stage1: {...}}`); each `run.py` only parses the CLI string when it's
-  actually given, so an omitted `--stages` never overwrites a YAML dict with
-  `{}`.
+- **Sampling sizes are config-file only** across ALL four baselines (and
+  forge) — the old `--stages` / `--stage-spec` JSON-string CLI flags were
+  removed. Both `stages:` (progressive) and `single_stage:` (one-shot) are
+  native YAML mappings in the `--config` file: `stages: {stage1: {...}, ...}`
+  drives the gauntlet; `single_stage: {n_qa: null, ...}` sizes the single pass
+  (required when `progressive: false`; a null field = whole split for that
+  dimension). The unified resolver is
+  `common.staged_eval.resolve_sampling_plan` (`progressive` → `stage_plan`;
+  `not progressive` → the `single_stage` wire spec, raising if the block is
+  absent) — shared verbatim by forge and every baseline.
 
 ```bash
 # alma — config file only
@@ -232,10 +244,12 @@ Skips memory-architecture design entirely. `CCMemo`
 
 ```bash
 baselines/venv/bin/python baselines/harness/cc/run.py \
+    --config baselines/harness/cc/config.example.yaml \
     --dataset locomo --model claude-sonnet-4-20250514
 
+# sizes live in the --config YAML (e.g. single_stage: {n_users: 2} for 2 dynamicmem users)
 baselines/venv/bin/python baselines/harness/cc/run.py \
-    --dataset dynamicmem --stage-spec '{"n_samples": 2}'
+    --config my_cc.yaml --dataset dynamicmem
 ```
 
 Useful as a reference point: how well does a strong agent do **with no
@@ -376,20 +390,27 @@ adjust the flags your system needs. Core shape:
 
 ```python
 from baselines.registry import DATASETS
-from baselines.harness.eval_common import make_memo_class, run_baseline, parse_stage_spec
+from baselines.harness.eval_common import make_memo_class, run_baseline, print_result
 from baselines.harness.<name>.memo import MyMemo
+from common.config import resolve_config
 
-p.add_argument("--dataset", required=True, choices=sorted(DATASETS))
-p.add_argument("--split", default="test", choices=["test", "search"])
-p.add_argument("--stage-spec", default=None)   # JSON size overrides, e.g. '{"n_samples": 2}'
+# Evaluation SIZES come from the --config YAML only (no sizing CLI flags):
+# single_stage (progressive: false) or stages (progressive: true).
+p.add_argument("--config", default=None)
+p.add_argument("--dataset", default=None, choices=sorted(DATASETS))
+p.add_argument("--split", default=None, choices=["test", "search"])
+p.add_argument("--progressive", action=argparse.BooleanOptionalAction, default=None)
 ...
-memo_cls = make_memo_class(MyMemo, top_k=a.top_k, ...)   # → sets _cfg
+cfg = resolve_config(DEFAULT_CONFIG, a.config, cli)   # defaults < YAML < CLI
+memo_cls = make_memo_class(MyMemo, top_k=cfg["top_k"], ...)   # → sets _cfg
 result = asyncio.run(run_baseline(
-    dataset=a.dataset, split=a.split,
-    user_stage_spec=parse_stage_spec(a.stage_spec),
-    memo_class=memo_cls, qa_model=a.model, judge_model=a.judge_model,
-    out_dir=Path(__file__).resolve().parent / "results" / a.dataset / a.split,
+    dataset=cfg["dataset"], split=cfg["split"],
+    single_stage=cfg["single_stage"], stages=cfg["stages"],   # native YAML dicts
+    memo_class=memo_cls, qa_model=cfg["model"], judge_model=cfg["judge_model"],
+    out_dir=Path(__file__).resolve().parent / "results" / cfg["dataset"] / cfg["split"],
+    progressive=cfg["progressive"], sampling_seed=cfg["sampling_seed"],
 ))
+print_result(cfg["dataset"], cfg["progressive"], result, out_dir)
 ```
 
 `make_memo_class` exists because the workflow instantiates the memo class
@@ -413,12 +434,14 @@ through `run_baseline`.)
 
 ```bash
 # One conversation, a handful of QAs — does the adapter run end-to-end?
+# Size via a --config YAML with `single_stage: {n_conversations: 1, n_qa: 3}`.
 baselines/venv/bin/python baselines/harness/<name>/run.py \
-    --dataset locomo --split search --stage-spec '{"n_samples": 1, "n_qa": 3}'
+    --config my_baseline.yaml --dataset locomo --split search
 
 # DynamicMem protocol check — 1 user exercises the checkpoint interleaving
+# (config YAML: `single_stage: {n_users: 1}`)
 baselines/venv/bin/python baselines/harness/<name>/run.py \
-    --dataset dynamicmem --split search --stage-spec '{"n_samples": 1}'
+    --config my_baseline.yaml --dataset dynamicmem --split search
 ```
 
 Iterate here as much as you like — this is the split the main method

@@ -17,12 +17,6 @@ from common.harness_base import MemoStructure
 from baselines.registry import resolve
 
 
-def parse_stage_spec(s: Optional[str]) -> Dict[str, Any]:
-    """Raw USER overrides only ({} when omitted). The family-full base is
-    applied by effective_stage_spec — NOT here."""
-    return json.loads(s) if s else {}
-
-
 # Mirrors forge.orchestrator._FAMILY_FIELDS (baselines never import forge).
 _FAMILY_FIELDS = {
     "dynamicmem": ("n_users", ("n_checkpoints", "n_task_a", "n_task_c")),
@@ -38,21 +32,6 @@ def _family(dataset: str) -> str:
             f"unknown dataset {dataset!r}; supported datasets: {sorted(_FAMILY_FIELDS.keys())}"
         )
     return family
-
-
-def family_full_spec(dataset: str) -> Dict[str, Any]:
-    """Byte-identical to forge.orchestrator.full_wire_spec: {"n_samples": None,
-    ...family extras: None}. The n_checkpoints KEY (dynamicmem) MUST be present
-    so run_single_user takes the full TCE path, not the legacy flat path."""
-    _sample_field, extras = _FAMILY_FIELDS[_family(dataset)]
-    spec: Dict[str, Any] = {"n_samples": None}
-    for f in extras:
-        spec[f] = None
-    return spec
-
-
-def effective_stage_spec(dataset: str, user_spec: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    return {**family_full_spec(dataset), **(user_spec or {})}
 
 
 def make_memo_class(base_cls: Type[MemoStructure], **cfg) -> Type[MemoStructure]:
@@ -123,7 +102,7 @@ async def run_baseline(
     *,
     dataset: str,
     split: str,
-    user_stage_spec: Optional[Dict[str, Any]],
+    single_stage: Optional[Dict[str, Any]] = None,
     memo_class: Type[MemoStructure],
     qa_model: str,
     judge_model: str,
@@ -136,9 +115,18 @@ async def run_baseline(
 ) -> Dict[str, Any]:
     """Evaluate one fixed memory system on a split.
 
-    progressive=False (default): today's single whole-split pass
-    (`run_all_users(stage="full")`) — UNCHANGED. Returns the _build_score_json
-    dict.
+    Sizing is config-driven (no sizing CLI flags — config file only):
+
+    progressive=False (default): ONE single-stage pass sized by the REQUIRED
+    `single_stage` block (via common.staged_eval.single_stage_wire_spec; a null /
+    omitted field = the whole split for that dimension). Raises ValueError when
+    `single_stage` is absent — no silent whole-split. The pass runs as
+    `run_all_users(stage="single", ...)`; the "single" stage label is purely
+    informational (the memory cache is gated by the workflow's memory_cache_dir,
+    not the stage name). A per-run sample_seed is derived (fixed step 0, honoring
+    `sampling_seed`) and threaded into the spec so it reaches BOTH the task-list
+    cap and the per-user QA sampling; it is a no-op at whole-split n=None.
+    Returns the _build_score_json dict.
 
     progressive=True: run the SAME memory system through the shared staged
     gauntlet (common.staged_eval.run_gauntlet, coverage="sample"): stage1 →
@@ -156,10 +144,24 @@ async def run_baseline(
             sampling_seed=sampling_seed, stages=stages, memory_cache=memory_cache,
         )
 
+    # progressive=False: single pass sized by the REQUIRED single_stage block.
+    # The shared resolver presence-checks (absent → ValueError, never silent
+    # whole-split; an empty {} counts as present = all-null = whole), validates
+    # (rejects unknown fields — a typo like `n_user` for `n_users` would
+    # otherwise be silently ignored → whole split — and a stray threshold),
+    # normalizes null/"full"/"all" → None, and returns the wire spec.
     from common.tokens import init_global_tracker
-    stage_spec = effective_stage_spec(dataset, user_stage_spec)   # family-full base + user overrides
-    workflow_cls, env_module, _rec = resolve(dataset)
-    task_list = resolve_task_list(dataset, split, stage_spec)
+    from common.sampling import derive_sample_seed
+    from common.staged_eval import resolve_single_stage_spec
+
+    # Same fixed step-0 seed derivation as the gauntlet (no search steps here);
+    # a no-op at whole-split n=None, only selecting a subset when a field caps.
+    spec = {
+        **resolve_single_stage_spec(dataset, single_stage),
+        "sample_seed": derive_sample_seed(sampling_seed, 0, dataset),
+    }
+    workflow_cls, _env, _rec = resolve(dataset)
+    task_list = resolve_task_list(dataset, split, spec)   # honors n_samples + sample_seed
 
     out_dir.mkdir(parents=True, exist_ok=True)
     tracker = init_global_tracker()
@@ -169,7 +171,7 @@ async def run_baseline(
     workflow.status = split
     workflow.output_run_dir = out_dir
     records, n = await workflow.run_all_users(
-        task_list, stage="full", stage_spec=stage_spec,
+        task_list, stage="single", stage_spec=spec,
         max_sample_concurrent=max_sample_concurrent,
     )
     workflow.save_full_traces(records[:n])
@@ -181,6 +183,20 @@ async def run_baseline(
     with (out_dir / "token_usage.json").open("w", encoding="utf-8") as f:
         json.dump(tracker.summary(), f, indent=2, ensure_ascii=False)
     return score
+
+
+def print_result(dataset: str, progressive: bool, result: Dict[str, Any], out_dir: Path) -> None:
+    """One-line run summary handling BOTH run_baseline return shapes:
+    progressive=False returns the _build_score_json dict; progressive=True
+    returns run_gauntlet's per-dataset metrics dict {dataset: {...}}."""
+    if progressive:
+        m = result.get(dataset, {})
+        print(
+            f"[{dataset}] gauntlet stage={m.get('stage')} "
+            f"raw_score={m.get('raw_score')} eliminated={m.get('eliminated')} → {out_dir}"
+        )
+    else:
+        print("overall:", result["benchmark_eval_score"]["benchmark_overall_eval_score"], "→", out_dir)
 
 
 def _total_tokens(summary: Dict[str, Any]) -> int:

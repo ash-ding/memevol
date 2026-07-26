@@ -9,9 +9,16 @@ method in memevol's root; it now lives here as a baseline so a new method
 
 Run from the **project root**:
 
-Evaluation sizes no longer live on flat `--eval_n_*/--check_n_*` flags (removed).
-Each candidate is scored through the shared staged gauntlet (`--progressive`);
-sizes come from the family `DEFAULT_STAGES` (override with `--stages '<json>'`).
+Evaluation **sizes live in the `--config` YAML only** — there is NO sizing CLI
+flag (the flat `--eval_n_*/--check_n_*` and the `--stages` flags were removed).
+Two config keys drive sizing:
+
+- `stages` — overrides the family `DEFAULT_STAGES` for the `progressive: true`
+  gauntlet (stage1 → stage2 → stage3 with promotion thresholds).
+- `single_stage` — sizes the `progressive: false` single pass. **Required when
+  `progressive: false`** (a clear `ValueError` is raised if absent — no silent
+  whole-split). Same size fields as a stage, NO threshold; a `null` / omitted
+  field = the whole split for that dimension.
 
 alma is **config-first**: pass `--config <yaml>` for a reusable settings file and
 override individual fields on the CLI (precedence: `DEFAULT_CONFIG` < `--config`
@@ -25,24 +32,21 @@ python baselines/evolve/alma/run.py \
 ```
 
 ```bash
-# Smoke test — tiny 1-user/1-checkpoint gauntlet, 2 steps
-# (--stages sizes must be non-decreasing across stage1..3)
-SMOKE_STAGES='{"sanity_check":{"n_users":1,"n_checkpoints":1,"n_task_a":1,"n_task_c":1},"stage1":{"n_users":1,"n_checkpoints":1,"n_task_a":1,"n_task_c":1,"threshold":0.0},"stage2":{"n_users":1,"n_checkpoints":1,"n_task_a":1,"n_task_c":1,"threshold":0.0},"stage3":{"n_users":1,"n_checkpoints":1,"n_task_a":1,"n_task_c":1}}'
+# Smoke test — copy config.example.yaml, set tiny sizes in its `stages`
+# (progressive: true) or `single_stage` (progressive: false) block, then:
 python baselines/evolve/alma/run.py \
-    --status search \
-    --progressive --stages "$SMOKE_STAGES" \
-    --steps 2
+    --config baselines/evolve/alma/config.smoke.yaml \
+    --status search --steps 2
 
-# Full training — stage1→2→3 gauntlet (default stages), 10 steps
+# Full training — stage1→2→3 gauntlet (stages from the config), 10 steps
 python baselines/evolve/alma/run.py \
-    --status search \
-    --progressive \
-    --steps 10
+    --config baselines/evolve/alma/config.example.yaml \
+    --status search --progressive --steps 10
 
 # Evaluate a saved memo on held-out users (007–010)
 python baselines/evolve/alma/run.py \
-    --status test \
-    --memo_SHA <SHA> --progressive
+    --config baselines/evolve/alma/config.example.yaml \
+    --status test --memo_SHA <SHA> --progressive
 ```
 
 See `search.sh` for search-loop examples and `test.sh` for held-out evaluation examples.
@@ -122,14 +126,17 @@ see `tests/test_alma_multidataset.py::test_dynamicmem_prompts_byte_identical`).
 Example commands (mirroring "Quick start" above, run from the project root):
 
 ```bash
-# LoCoMo — smoke-size search loop, 1 step, per-step random subset
-LC_STAGES='{"sanity_check":{"n_conversations":1,"n_qa":2},"stage1":{"n_conversations":1,"n_qa":3,"threshold":0.0},"stage2":{"n_conversations":1,"n_qa":3,"threshold":0.0},"stage3":{"n_conversations":1,"n_qa":3}}'
+# LoCoMo — search loop, 1 step, per-step random subset. Sizes come from the
+# config's `stages` block (a LoCoMo config sets n_conversations/n_qa); the
+# CLI carries only the per-invocation knobs.
 python baselines/evolve/alma/run.py \
+    --config baselines/evolve/alma/config.locomo.yaml \
     --dataset locomo --status search --steps 1 \
-    --progressive --random_sample --sampling_seed 42 --stages "$LC_STAGES" \
+    --progressive --random_sample --sampling_seed 42 \
     --meta_model gpt-5-mini --execution_model gpt-5-mini --judge_model gpt-5-mini
 
 # LongMemEval (s or m variant) — evaluate a saved memo on the held-out split
 python baselines/evolve/alma/run.py \
+    --config baselines/evolve/alma/config.example.yaml \
     --dataset longmemeval_s --status test --memo_SHA <SHA> --progressive
 ```

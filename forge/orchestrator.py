@@ -123,8 +123,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "max_sample_concurrent": 3,
     # Evaluation coverage (search loop AND forge.heldout):
     #   sample — the staged gauntlet (stage1→2→3 nested sampling + thresholds)
-    #   full   — ONE whole-split evaluation per benchmark (no stage1/2, no
-    #            elimination; wire stage "full", artifacts under <ds>/full/).
+    #   full   — ONE evaluation per benchmark sized by the REQUIRED
+    #            `single_stage` config block (no stage1/2, no elimination;
+    #            wire stage "single", artifacts under <ds>/single/).
     # The sanity gate and smoke_test runs are unaffected. CLI: --coverage.
     # SUPERSEDED 2026-07-25 by `progressive` below — `coverage` is kept as a
     # back-compat read/write alias (derived from `progressive` at resolve
@@ -1130,9 +1131,12 @@ async def evaluate_harness(
 ) -> Dict[str, Dict[str, Any]]:
     """Run the evaluation on every dataset (serial).
 
-    coverage="sample": the STAGED gauntlet below. coverage="full": ONE
-    whole-split pass per benchmark (plan = [("full", uncapped spec, no
-    threshold)]) — same loop, no promotion gates.
+    coverage="sample" (progressive=True): the STAGED gauntlet below, from the
+    dataset's `stages` block. coverage="full" (progressive=False): ONE pass
+    per benchmark (plan = [("single", spec, no threshold)], via
+    `common.staged_eval.resolve_sampling_plan`), sized by the dataset's
+    REQUIRED `single_stage` config block (raises ValueError if absent — no
+    automatic whole-split fallback) — same loop, no promotion gates.
 
     Per benchmark (independent promotion): run stage1 → stage2 → stage3,
     publishing each stage's artifacts to `harnesses/<id>/<ds>/<stage>/`.
@@ -1166,10 +1170,12 @@ async def evaluate_harness(
         else:
             dst, stage_split = dst_root / stage_name, split
         run_dir = paths.runs_dir / f"{harness_id}_{int(time.time())}_{ds}_{stage_name}"
-        # Cross-stage memory cache: gauntlet tiers only (launch.py gates
-        # on the stage name too; sanity/dev execs never get the mount).
+        # Cross-stage memory cache: gauntlet tiers + the progressive=false
+        # single pass (launch.py gates on the stage name too; sanity/dev
+        # execs never get the mount). "full" kept for back-compat — no
+        # caller emits it anymore, resolve_sampling_plan names it "single".
         memcache_dir: Optional[Path] = None
-        if memory_cache and stage_name in ("stage1", "stage2", "stage3", "full"):
+        if memory_cache and stage_name in ("stage1", "stage2", "stage3", "full", "single"):
             memcache_dir = dst_root / "memory_cache"
             memcache_dir.mkdir(parents=True, exist_ok=True)
         crashed: Optional[Exception] = None

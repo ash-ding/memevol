@@ -28,23 +28,26 @@ each call.
 
 ```bash
 baselines/venv/bin/python baselines/harness/cc/run.py \
-    --dataset {dynamicmem,locomo,longmemeval_s,longmemeval_m} \
+    --config baselines/harness/cc/config.example.yaml \
+    [--dataset {dynamicmem,locomo,longmemeval_s,longmemeval_m}] \
     [--split test|search] \
-    [--stage-spec '<json>'] \
+    [--progressive|--no-progressive] \
+    [--sampling-seed 42] \
     [--model sonnet|opus|claude-sonnet-4-20250514|...] \
     [--max_turns 30] \
     [--judge_model gpt-5-mini] \
-    [--max_sample_concurrent 3]
+    [--max_sample_concurrent 3] \
+    [--no-memory-cache]
 ```
 
+- `--config` — YAML config path (CLI flags override it). **Evaluation SIZES
+  live in the config file only** (`single_stage` / `stages` — see "Sizing"
+  below); there are no sizing CLI flags.
 - `--dataset` (required by convention; defaults to `dynamicmem`) — one of
   the four registered benchmarks (`baselines.registry.DATASETS`).
 - `--split` (default `test`) — `test` = held-out split, `search` = the
   split the main method's search loop sees. Cross-run leakage direction:
   never run `search` and treat it as a comparable held-out number.
-- `--stage-spec` (default `None` = **whole test split, full coverage** —
-  byte-identical to the main method's `forge.heldout` default; see "Stage
-  spec fields" below).
 - `--model` — the Claude Code model cc itself answers with (aliases
   `sonnet` → `claude-sonnet-4-20250514`, `opus` → `claude-opus-4-20250514`;
   any explicit model id also works). Does NOT affect scoring model choice —
@@ -57,56 +60,70 @@ baselines/venv/bin/python baselines/harness/cc/run.py \
   one), but it is never actually invoked to answer: `CCMemo.use_memory_to_answer`
   answers before the shared QA agent would be reached.
 - `--max_sample_concurrent` — per-eval user/sample concurrency (default 3).
-- `--progressive` (store_true; default off, matching this baseline's
+- `--progressive` / `--no-progressive` (default off, matching this baseline's
   historical single-pass behavior) — run the staged stage1→2→3 gauntlet
-  (with threshold elimination) instead of one single-stage pass.
-- `--sampling-seed` (default `42`) — base seed for the (fixed, one-shot)
-  sample this baseline evaluates.
-- `--stages '<json>'` — override the family's `DEFAULT_STAGES` sizes when
-  `--progressive` is set.
+  (with threshold elimination) instead of one single-stage pass. Sizes come
+  from the config `stages` block (or family `DEFAULT_STAGES`).
+- `--sampling-seed` (default `42`) — base seed for the (fixed step-0) sample
+  this baseline evaluates. A no-op at whole-split (`null` sizes); it only
+  selects a subset when a size field caps.
 - `--no-memory-cache` — disable cross-stage Phase-1 memory reuse (on by
   default).
 
 Examples:
 
 ```bash
-# Full held-out eval, one dataset, default model (sonnet)
-baselines/venv/bin/python baselines/harness/cc/run.py --dataset locomo
-
-# Opus, capped to 2 units for a quick check
+# Config-driven run (sizes from the config's single_stage / stages)
 baselines/venv/bin/python baselines/harness/cc/run.py \
-    --dataset dynamicmem --model opus --stage-spec '{"n_samples": 2}'
+    --config baselines/harness/cc/config.example.yaml
+
+# Opus, one dataset (size via a config with single_stage: {n_users: 2})
+baselines/venv/bin/python baselines/harness/cc/run.py \
+    --config my_cc.yaml --dataset dynamicmem --model opus
 
 # LongMemEval-m, search split (comparable to what the proposer itself sees)
 baselines/venv/bin/python baselines/harness/cc/run.py \
-    --dataset longmemeval_m --split search
+    --config my_cc.yaml --dataset longmemeval_m --split search
 ```
 
-## Stage-spec fields
+## Sizing (config file only)
 
-`--stage-spec` is a raw JSON object of USER OVERRIDES merged over the
-family's full-coverage base (`baselines.harness.eval_common.family_full_spec` /
-`effective_stage_spec` — mirrors `forge.orchestrator.full_wire_spec`
-exactly, so an omitted field stays `null` = uncapped, not zero). All units
-are PER-RUN counts (no gauntlet/staging here — this is a single pass, same
-as `forge.heldout`'s `coverage=full`):
+There are **no sizing CLI flags** — evaluation sizes are config-file keys
+resolved through the shared `common.staged_eval` layer (the same one forge
+uses):
+
+- **`progressive: false` (default)** REQUIRES a `single_stage` block — ONE pass
+  sized by its fields (`common.staged_eval.single_stage_wire_spec`; a `null`
+  or omitted field = the WHOLE split for that dimension, byte-identical to the
+  main method's `forge.heldout` `coverage=full` when all-null). Omitting
+  `single_stage` raises a clear `ValueError` (no silent whole-split).
+- **`progressive: true`** runs the staged stage1→2→3 gauntlet; a `stages` block
+  overrides the family `DEFAULT_STAGES`.
+
+Both blocks use the family's NATIVE size fields (PER-UNIT counts):
 
 | Field | Applies to | Meaning |
 |---|---|---|
-| `n_samples` | all datasets | Generic wire field for the unit count: **users** for dynamicmem, **conversations** for locomo, **questions** for longmemeval. `null`/omitted = whole split. |
+| `n_users` | dynamicmem | Users sampled from the split. `null`/omitted = whole split. |
+| `n_conversations` | locomo | Conversations sampled from the split. `null`/omitted = whole split. |
+| `n_questions` | longmemeval | Questions sampled from the split. `null`/omitted = whole split. |
 | `n_checkpoints` | dynamicmem only | DynamicMem TCE checkpoints per user (of 5 quarterly checkpoints). `null` = all 5. |
 | `n_task_a` | dynamicmem only | Task-A (`state_completion`) items sampled per checkpoint. `null` = full bucket. |
 | `n_task_c` | dynamicmem only | Task-C (`apply_service`) items sampled per checkpoint. `null` = full bucket. |
 | `n_qa` | locomo only | QA pairs sampled per conversation. `null` = all (categories 1-4 only; cat-5 excluded). |
-| — | longmemeval | No extra field — one question is one unit, so `n_samples` alone controls both. |
 
-```bash
-# 2 DynamicMem users, all 5 checkpoints, 3 Task-A + 3 Task-C items per checkpoint
-baselines/harness/cc/run.py --dataset dynamicmem \
-    --stage-spec '{"n_samples": 2, "n_checkpoints": 5, "n_task_a": 3, "n_task_c": 3}'
+```yaml
+# my_cc.yaml — 2 DynamicMem users, all 5 checkpoints, 3 Task-A + 3 Task-C per checkpoint
+dataset: dynamicmem
+progressive: false
+single_stage: {n_users: 2, n_checkpoints: 5, n_task_a: 3, n_task_c: 3}
+```
 
-# 3 LoCoMo conversations, 10 QA each
-baselines/harness/cc/run.py --dataset locomo --stage-spec '{"n_samples": 3, "n_qa": 10}'
+```yaml
+# my_cc.yaml — 3 LoCoMo conversations, 10 QA each
+dataset: locomo
+progressive: false
+single_stage: {n_conversations: 3, n_qa: 10}
 ```
 
 ## Output

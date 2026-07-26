@@ -4,6 +4,7 @@ run_gauntlet (Task 5) drives the promotion loop with an injected stage runner.
 Moved from forge/orchestrator.py 2026-07-25."""
 from __future__ import annotations
 
+import copy
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
@@ -109,6 +110,79 @@ def full_wire_spec(ds: str) -> Dict[str, Any]:
     return spec
 
 
+def single_stage_wire_spec(ds: str, single_stage_params: Dict[str, Any]) -> Dict[str, Any]:
+    """Wire spec for the progressive=false single pass — the `single_stage`
+    block, same size fields as a stage (NO threshold). null field → None (whole
+    split for that dimension)."""
+    family = _benchmark_family(ds)
+    sample_field, extras = _FAMILY_FIELDS[family]
+    spec: Dict[str, Any] = {"n_samples": _wire_size(single_stage_params.get(sample_field))}
+    for f in extras:
+        spec[f] = _wire_size(single_stage_params.get(f))
+    return spec
+
+
+def _resolve_single_stage_block(ds: str, params: Dict[str, Any]) -> None:
+    """Validate + normalize the `single_stage` block (progressive=false sizing)
+    in place, when present. Same size fields as a stage, NO threshold; a
+    null/"full"/"all" field → None (whole split for that dim); an omitted field
+    → None. A missing/None block is left as-is — required-ness is enforced by
+    resolve_single_stage_spec (which knows `progressive`)."""
+    family = _benchmark_family(ds)
+    sample_field, extras = _FAMILY_FIELDS[family]
+    single = params.get("single_stage")
+    if single is None:
+        return
+    if not isinstance(single, dict):
+        raise ValueError(f"datasets.{ds}.single_stage must be a mapping")
+    ss_allowed = {sample_field, *extras}   # NO threshold
+    unknown = set(single) - ss_allowed
+    if unknown:
+        raise ValueError(
+            f"datasets.{ds}.single_stage: unknown field(s) {sorted(unknown)} "
+            f"for family {family!r}; allowed: {sorted(ss_allowed)} (no threshold)"
+        )
+    for field in (sample_field, *extras):
+        v = single.get(field)
+        if isinstance(v, str) and v.strip().lower() in ("full", "all"):
+            single[field] = None
+        single.setdefault(field, None)   # omitted field → null = whole for that dim
+
+
+def resolve_single_stage_spec(ds: str, single_stage: Optional[Dict[str, Any]]
+                              ) -> Dict[str, Any]:
+    """Presence-check + validate + normalize the `single_stage` block for the
+    progressive=false single pass, returning its wire spec. Self-validating:
+    rejects unknown fields / a stray threshold even when called directly (does
+    NOT depend on a prior _resolve_dataset_stages call). An ABSENT block (None)
+    raises ValueError — but an empty `{}` counts as PRESENT (all-null = whole
+    split), NOT absent. The single source of the progressive=false sizing
+    semantics, shared by forge (resolve_sampling_plan) AND the baseline
+    single-pass paths (harness eval_common, alma launch)."""
+    if single_stage is None:
+        sample_field = _FAMILY_FIELDS[_benchmark_family(ds)][0]
+        raise ValueError(
+            f"datasets.{ds}: progressive=false requires a `single_stage` block "
+            f"(same size fields as a stage; use all-null for the whole split), "
+            f"e.g. single_stage: {{{sample_field}: null}}"
+        )
+    # Validate + normalize a throwaway copy so the caller's dict is untouched.
+    _ss = {"single_stage": copy.deepcopy(single_stage)}
+    _resolve_single_stage_block(ds, _ss)
+    return single_stage_wire_spec(ds, _ss["single_stage"])
+
+
+def resolve_sampling_plan(ds: str, params: Dict[str, Any], progressive: bool
+                          ) -> List[Tuple[str, Dict[str, Any], Optional[float]]]:
+    """Unified sampling plan for one dataset, shared by forge + baselines.
+    progressive=True  → the staged gauntlet (stage1..3 + thresholds).
+    progressive=False → ONE pass sized by the REQUIRED `single_stage` block
+    (via resolve_single_stage_spec: absent → ValueError; empty {} = whole)."""
+    if progressive:
+        return stage_plan(ds, params)
+    return [("single", resolve_single_stage_spec(ds, params.get("single_stage")), None)]
+
+
 def stage_plan(ds: str, ds_params: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any], Optional[float]]]:
     """Ordered promotion plan for one benchmark:
     [(stage_name, wire_spec, threshold_or_None), ...] for stage1..3."""
@@ -186,6 +260,11 @@ def _resolve_dataset_stages(ds: str, params: Dict[str, Any]) -> None:
                 f"another null/full field"
             )
 
+    # `single_stage` block (progressive=false sizing): validated + normalized in
+    # place when present. Required-ness is enforced by resolve_single_stage_spec
+    # (which knows `progressive`), not here.
+    _resolve_single_stage_block(ds, params)
+
 
 # ---------------------------------------------------------------------------
 # Gauntlet driver — the promotion/elimination loop, shared by forge AND the
@@ -229,12 +308,18 @@ async def run_gauntlet(
 
     - ``smoke=True``: one ``sanity_check``-sized run per benchmark, no gating,
       telemetry ``stage=0.0`` / ``eliminated=False`` (stages_writer NOT called).
-    - ``coverage='full'``: a single ``('full', uncapped, None)`` plan (no
-      promotion gates); reached stage telemetry is ``FULL_STAGE``.
-    - ``coverage='sample'`` (default): the stage1 → stage2 → stage3 gauntlet;
-      after a gated stage the normalized score must be >= its threshold to
-      advance, else the benchmark stops ("eliminated"). A crashed stage (a
-      non-None ``run_stage_fn`` return) also eliminates and stops.
+    - ``coverage='full'`` (progressive=False): a single ``('single', spec, None)``
+      plan (no promotion gates), sized by the dataset's REQUIRED `single_stage`
+      config block via ``resolve_sampling_plan`` — raises ``ValueError`` if that
+      dataset has no `single_stage` block (no more automatic whole-split
+      `full_wire_spec`; sizing is config-file only). Reached stage telemetry is
+      ``FULL_STAGE`` (the "full" plan name is legacy and no longer emitted, but
+      still mapped for back-compat).
+    - ``coverage='sample'`` (default, progressive=True): the stage1 → stage2 →
+      stage3 gauntlet from the dataset's `stages` block; after a gated stage
+      the normalized score must be >= its threshold to advance, else the
+      benchmark stops ("eliminated"). A crashed stage (a non-None
+      ``run_stage_fn`` return) also eliminates and stops.
 
     Cost accounting sums tokens across ALL executed stages. Returns the same
     per-dataset metrics dict shape forge builds today (raw_score, score_max,
@@ -262,13 +347,11 @@ async def run_gauntlet(
             scores[ds] = m
             continue
 
-        # ---- staged gauntlet OR single full pass ----
-        if coverage == "full":
-            plan: List[Tuple[str, Dict[str, Any], Optional[float]]] = [
-                ("full", full_wire_spec(ds), None)
-            ]
-        else:
-            plan = stage_plan(ds, params)
+        # ---- staged gauntlet (progressive=True) OR single pass (progressive=False,
+        # sized by the REQUIRED `single_stage` block — raises if absent) ----
+        plan: List[Tuple[str, Dict[str, Any], Optional[float]]] = resolve_sampling_plan(
+            ds, params, progressive=(coverage != "full")
+        )
 
         stage_summary: Dict[str, Any] = {}
         final_metrics: Dict[str, Any] = {}
@@ -306,9 +389,11 @@ async def run_gauntlet(
                 eliminated = True
                 break
 
-        stage_num = {"stage1": 1.0, "stage2": 2.0, "stage3": 3.0, "full": FULL_STAGE}.get(
-            reached, 0.0
-        )
+        stage_num = {
+            "stage1": 1.0, "stage2": 2.0, "stage3": 3.0,
+            "full": FULL_STAGE,     # legacy plan name (no other caller emits it anymore)
+            "single": FULL_STAGE,   # progressive=false single pass — same tier as "full"
+        }.get(reached, 0.0)
         final_metrics["stage"] = stage_num
         final_metrics["eliminated"] = eliminated
         if stages_writer is not None:

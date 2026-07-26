@@ -4,9 +4,23 @@
 dataset: locomo               # dynamicmem | locomo | longmemeval_s | longmemeval_m
 split: test                   # test | search
 progressive: false            # true = staged stage1->2->3 gauntlet; false = single pass
-sampling_seed: 42             # seed for the sampled subset — only used when progressive: true
-# stages: {...}               # optional: override family DEFAULT_STAGES (native YAML dict) when progressive
-# stage_spec: {n_samples: 1}  # optional: single-stage size override (native YAML dict)
+sampling_seed: 42             # seeds the sampled subset (honored by both paths; no-op at whole-split)
+
+# --- Sizing lives here in the config file only (there are no sizing CLI flags) ---
+# progressive: false REQUIRES `single_stage` — ONE pass sized by these fields.
+# A null (or omitted) field = the WHOLE split for that dimension.
+single_stage:
+  n_conversations: null       # locomo: null = all conversations in the split; e.g. 2 to cap
+  n_qa: null                  # null = all QA per conversation
+
+# progressive: true alternative — the staged gauntlet (overrides family DEFAULT_STAGES):
+# progressive: true
+# stages:
+#   sanity_check: {n_conversations: 1, n_qa: 3}
+#   stage1: {n_conversations: 2, n_qa: 20, threshold: 0.30}
+#   stage2: {n_conversations: 4, n_qa: 40, threshold: 0.35}
+#   stage3: {n_conversations: 6, n_qa: 60}
+
 memory_cache: true            # cross-stage Phase-1 memory reuse
 amem_llm_model: gpt-4o-mini   # A-mem internal LLM (4-series only)
 retrieve_k: 10

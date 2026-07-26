@@ -372,14 +372,17 @@ def test_run_cli_migrated_flags():
         assert args.progressive is True
         assert args.random_sample is True
         assert args.sampling_seed == 7
-        assert hasattr(args, "stages")
+        # `stages` / `single_stage` are config-file-only now — NOT CLI args.
+        assert not hasattr(args, "stages")
+        assert not hasattr(args, "single_stage")
 
         _sys.argv = ["run.py", "--no-progressive"]
         assert rm.parse_args().progressive is False
 
-        # removed flat flags are rejected (argparse -> SystemExit).
+        # removed flat flags AND the removed `--stages` sizing flag are rejected
+        # (argparse -> SystemExit); sizing now lives in the --config YAML.
         for bad in ("--eval_n_samples", "--check_n_samples",
-                    "--eval_n_qa", "--check_n_qa"):
+                    "--eval_n_qa", "--check_n_qa", "--stages", "--single_stage"):
             _sys.argv = ["run.py", bad, "6"]
             raised = False
             with contextlib.redirect_stderr(io.StringIO()):
@@ -420,7 +423,115 @@ def test_alma_default_config_roundtrips():
     d = DEFAULT_CONFIG
     assert d["progressive"] is True and d["random_sample"] is False and d["sampling_seed"] == 42
     assert d["steps"] == 10 and d["dataset"] == "dynamicmem"
+    # `stages`/`single_stage` are config-file-only knobs (None in DEFAULT_CONFIG);
+    # the removed `--stages` CLI flag no longer surfaces here.
+    assert d["stages"] is None and d["single_stage"] is None
     assert resolve_config(d, None, {k: None for k in d}) == d
+
+
+# ---------------- Task 4: single_stage sizing for the progressive=false pass ----------------
+#
+# launch.main mode=eval + progressive=false sizes its single pass from the
+# REQUIRED `single_stage` block (was the terminal `stage3` block). Mirrors the
+# harness reference tests (tests/test_baseline_gauntlet.py c2/c3/c4): sizes from
+# single_stage, ValueError when absent, ValueError on an unknown field.
+
+_STUB_MEMO_SRC = '''\
+from common.harness_base import MemoStructure
+
+
+class StubMemo(MemoStructure):
+    async def build_memory_from_data(self, recorder):
+        return None
+
+    async def retrieve_memory_for_query(self, recorder):
+        return {}
+'''
+
+
+class _StopEval(Exception):
+    """Sentinel raised by the fake _run_single_stage to halt launch.main just
+    before its terminal os._exit(0) (which would otherwise kill the test)."""
+
+
+def _run_launch_main_eval(single_stage, dataset="locomo"):
+    """Drive launch.main through the progressive=false (single-pass) routing with
+    a fake _run_single_stage that captures the (stage, spec) it is handed and
+    raises _StopEval to stop before the real workflow + os._exit(0). Returns the
+    captured dict; any routing-time ValueError (single_stage validation) is left
+    to propagate to the caller."""
+    import asyncio
+    import os as _os
+    import shutil as _shutil
+    import tempfile
+
+    import baselines.evolve.alma.launch as launch
+
+    captured = {}
+
+    async def _fake_single_stage(**kwargs):
+        captured["stage"] = kwargs.get("stage")
+        captured["spec"] = dict(kwargs.get("spec") or {})
+        raise _StopEval()
+
+    fd = tempfile.NamedTemporaryFile(
+        prefix="alma_stub_memo_", suffix=".py", delete=False, mode="w", encoding="utf-8"
+    )
+    fd.write(_STUB_MEMO_SRC)
+    fd.close()
+    memo_path = fd.name
+    out_dir = tempfile.mkdtemp(prefix="alma_launch_main_")
+    orig = launch._run_single_stage
+    launch._run_single_stage = _fake_single_stage
+    try:
+        asyncio.run(launch.main(
+            module_path=memo_path, memory_id="stub", output_run_dir=out_dir,
+            dataset=dataset, mode="eval", progressive=False,
+            single_stage=single_stage,
+        ))
+    except _StopEval:
+        pass
+    finally:
+        launch._run_single_stage = orig
+        _os.unlink(memo_path)
+        _shutil.rmtree(out_dir, ignore_errors=True)
+    return captured
+
+
+def test_alma_non_progressive_sizes_from_single_stage():
+    """mode=eval + progressive=false sizes the single pass from single_stage
+    (stage='single', spec == single_stage_wire_spec) — NOT from stage3."""
+    from common.staged_eval import single_stage_wire_spec
+    single_stage = {"n_conversations": 2, "n_qa": 5}
+    captured = _run_launch_main_eval(single_stage, dataset="locomo")
+    assert captured.get("stage") == "single", captured.get("stage")
+    expected = single_stage_wire_spec("locomo", single_stage)   # {"n_samples": 2, "n_qa": 5}
+    for k, v in expected.items():
+        assert captured["spec"].get(k) == v, (k, captured["spec"])
+
+
+def test_alma_non_progressive_requires_single_stage():
+    """progressive=false with NO single_stage → clear ValueError (no silent
+    whole-split, no stage3 fallback)."""
+    raised = None
+    try:
+        _run_launch_main_eval(None, dataset="locomo")
+    except ValueError as e:
+        raised = e
+    assert raised is not None, "expected ValueError when single_stage absent"
+    assert "single_stage" in str(raised), str(raised)
+
+
+def test_alma_non_progressive_rejects_unknown_single_stage_field():
+    """An unknown single_stage field is rejected via the shared validation
+    (_resolve_dataset_stages) — a typo can't silently mis-size."""
+    raised = None
+    try:
+        _run_launch_main_eval({"n_conversations": 2, "bogus": 1}, dataset="locomo")
+    except ValueError as e:
+        raised = e
+    assert raised is not None, "expected ValueError for an unknown single_stage field"
+    assert "bogus" in str(raised), str(raised)
 
 
 # ---------------- runner ----------------

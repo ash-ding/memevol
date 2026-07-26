@@ -352,10 +352,12 @@ async def main(
     sampling_seed: int = 42,
     step_index: int = 0,
     stages: Optional[dict] = None,
+    single_stage: Optional[dict] = None,
     memory_cache: bool = True,
 ):
     from common.staged_eval import (
-        DEFAULT_STAGES, _benchmark_family, _resolve_dataset_stages, stage_wire_spec,
+        DEFAULT_STAGES, _benchmark_family, _resolve_dataset_stages,
+        resolve_single_stage_spec, stage_wire_spec,
     )
     from common.sampling import derive_sample_seed
 
@@ -393,9 +395,13 @@ async def main(
     sample_seed = derive_sample_seed(sampling_seed, step_index, dataset) if random_sample else None
 
     # 4. Route the eval.
-    #  - mode=check  → cheap single sanity-size run (alma's sanity gate).
+    #  - mode=check  → cheap single sanity-size run (alma's sanity gate; sizes
+    #                  from `sanity_check`, ignores `single_stage`).
     #  - mode=eval + progressive → the shared stage1→2→3 gauntlet.
-    #  - mode=eval + not progressive → a single terminal (stage3-size) pass.
+    #  - mode=eval + not progressive → a single pass sized by the REQUIRED
+    #    `single_stage` block (same size fields as a stage; a null/omitted field
+    #    = the whole split for that dimension). No stage3 fallback — sizing is
+    #    config-driven and required (mirrors baselines/harness/eval_common.py).
     if mode == "eval" and progressive:
         await _run_progressive(
             workflow_cls=workflow_cls, env_module=env_module, dataset=dataset,
@@ -409,7 +415,10 @@ async def main(
         if mode == "check":
             stage, spec = "sanity", stage_wire_spec(dataset, stages_block["sanity_check"])
         else:
-            stage, spec = "stage3", stage_wire_spec(dataset, stages_block["stage3"])
+            # Shared resolver: presence-check (absent → ValueError, never silent
+            # whole-split; empty {} = present = whole), validate (reject unknown
+            # fields / a stray threshold), normalize null/full/all → None, size.
+            stage, spec = "single", resolve_single_stage_spec(dataset, single_stage)
         if sample_seed is not None:
             spec["sample_seed"] = sample_seed
         await _run_single_stage(
@@ -456,6 +465,10 @@ if __name__ == "__main__":
     parser.add_argument("--stages", type=str, default=None,
                         help="JSON stages-block override (sanity_check/stage1..3); "
                              "default = family DEFAULT_STAGES.")
+    parser.add_argument("--single_stage", type=str, default=None,
+                        help="JSON single-pass size block (progressive=false only; "
+                             "same size fields as a stage, no threshold). REQUIRED "
+                             "when --no-progressive; a null field = whole split.")
     parser.add_argument("--memory_cache", action=argparse.BooleanOptionalAction, default=True,
                         help="Cross-stage Phase-1 memory reuse in the gauntlet.")
 
@@ -476,6 +489,7 @@ if __name__ == "__main__":
         sampling_seed=args.sampling_seed,
         step_index=args.step_index,
         stages=json.loads(args.stages) if args.stages else None,
+        single_stage=json.loads(args.single_stage) if args.single_stage else None,
         memory_cache=args.memory_cache,
     ))
 

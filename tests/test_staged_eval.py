@@ -311,6 +311,50 @@ def test_full_wire_spec_shapes():
     assert full_wire_spec("longmemeval_s") == {"n_samples": None}
 
 
+def test_gauntlet_single_stage_from_single_stage_block():
+    """run_gauntlet(coverage='full') now resolves its plan via
+    resolve_sampling_plan: progressive=False (coverage != 'sample') sizes ONE
+    pass from the required `single_stage` block — replacing the old automatic
+    full_wire_spec whole-split."""
+    import asyncio
+    from common.staged_eval import run_gauntlet
+    seen = []
+
+    async def run_stage(ds, stage, spec):
+        seen.append((stage, spec)); return None
+
+    def read_metrics(ds, stage):
+        return {"raw_score": 1.0, "score_max": 1, "tokens": {}}
+
+    cfg = {"locomo": {"single_stage": {"n_conversations": 2, "n_qa": 20}}}
+    out = asyncio.run(run_gauntlet(
+        datasets_config=cfg, coverage="full", smoke=False,
+        sample_seed_for=lambda ds: None, run_stage_fn=run_stage, read_metrics_fn=read_metrics))
+    assert [s for s, _ in seen] == ["single"]                       # one pass, no gauntlet
+    assert seen[0][1] == {"n_samples": 2, "n_qa": 20}               # sized by single_stage
+    assert out["locomo"]["eliminated"] is False
+    assert out["locomo"]["stage"] == 4.0                            # "single" -> FULL_STAGE
+
+
+def test_gauntlet_coverage_full_missing_single_stage_raises():
+    """progressive=false (coverage='full') with no `single_stage` block must
+    raise — no silent automatic whole-split anymore."""
+    import asyncio
+    from common.staged_eval import run_gauntlet
+
+    async def run_stage(ds, stage, spec): return None
+
+    def read_metrics(ds, stage): return {"raw_score": 1.0, "score_max": 1, "tokens": {}}
+
+    raised = False
+    try:
+        asyncio.run(run_gauntlet(datasets_config={"locomo": {"stages": {}}}, coverage="full",
+            smoke=False, sample_seed_for=lambda ds: None, run_stage_fn=run_stage, read_metrics_fn=read_metrics))
+    except ValueError as e:
+        raised = "single_stage" in str(e)
+    assert raised
+
+
 def test_coverage_config_validation():
     import yaml
     from forge.orchestrator import build_arg_parser, _resolve_config

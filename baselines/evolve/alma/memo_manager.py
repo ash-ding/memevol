@@ -65,6 +65,7 @@ class Memo_Manager:
         sampling_seed: int = 42,
         step_index: int = 0,
         stages: Optional[dict] = None,
+        single_stage: Optional[dict] = None,
         memory_cache: bool = True,
     ):
         """
@@ -107,6 +108,7 @@ class Memo_Manager:
             sampling_seed=sampling_seed,
             step_index=step_index,
             stages=stages,
+            single_stage=single_stage,
             memory_cache=memory_cache,
             dataset=self.dataset,
         )
