@@ -175,6 +175,22 @@ forge uses:
   `common.staged_eval.resolve_sampling_plan` (`progressive` → `stage_plan`;
   `not progressive` → the `single_stage` wire spec, raising if the block is
   absent) — shared verbatim by forge and every baseline.
+- **Strict config — no silent defaults** (2026-07-26, default ON): when a
+  baseline is launched with `--config`, the config file MUST list EVERY
+  parameter (every key in that `run.py`'s `DEFAULT_CONFIG`) — a `null` value
+  counts as listed. A missing key aborts the run with a
+  `ConfigCompletenessError` naming exactly which keys are absent, so an
+  experiment can never silently pick up a hidden default (`sampling_seed`,
+  `judge_model`, `model`, `progressive`, …) you didn't choose. The shipped
+  `config.example.yaml` files are exhaustive templates that pass strict as-is —
+  copy one and edit. The active sizing block is checked to the LEAF (every
+  native size field must be listed; a null leaf = whole split for that
+  dimension). Escape hatch: `strict_config: false` in the YAML, or
+  `--no-strict-config` on the CLI, disables the check for that run. Strict
+  triggers ONLY with `--config` — pure-CLI runs are unaffected. (forge honors
+  the same `strict_config` knob for `--config` runs, validated against its own
+  nested required-schema; `forge.heldout` uses a smaller schema matching its
+  reduced config surface.)
 
 ```bash
 # alma — config file only
