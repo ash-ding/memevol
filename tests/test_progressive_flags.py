@@ -19,13 +19,18 @@ os.environ.setdefault("OPENAI_API_KEY", "test-dummy-key")
 def _resolve(yaml_text, extra_argv=None):
     """Run _resolve_config against a temp YAML with a CLI Namespace built the
     same way tests/test_staged_eval.py does: build_arg_parser().parse_args()
-    over an argv list (--config path [+ extra flags])."""
+    over an argv list (--config path [+ extra flags]).
+
+    Always passes --no-strict-config: this file's fixtures are deliberately
+    partial (only the progressive/coverage-relevant keys), and this file
+    tests progressive/coverage semantics, not strict-config completeness
+    (that's tests/test_strict_config_forge.py's job)."""
     from forge.orchestrator import _resolve_config, build_arg_parser
     with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
         f.write(yaml_text)
         path = f.name
     try:
-        argv = ["--config", path] + list(extra_argv or [])
+        argv = ["--config", path, "--no-strict-config"] + list(extra_argv or [])
         args = build_arg_parser().parse_args(argv)
         return _resolve_config(args)
     finally:
