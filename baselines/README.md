@@ -86,11 +86,13 @@ literal same `common/` modules forge uses:
   `false` — matching each side's historical behavior): drives the candidate
   through the shared stage1→2→3 gauntlet (`common.staged_eval.run_gauntlet`)
   instead of a single one-shot pass. Sizes come from the family
-  `DEFAULT_STAGES` (in `common/staged_eval.py`) unless overridden — alma via
-  `--stages '<json>'`, harness via a `stages:` block in its `--config` YAML
-  (harness has no sizing CLI flags; see "Configuration"). The harness
-  single-pass path (`--no-progressive`, the default) instead REQUIRES a
-  `single_stage:` block in the config. `run_gauntlet`'s promotion/elimination logic,
+  `DEFAULT_STAGES` (in `common/staged_eval.py`) unless overridden by a
+  `stages:` block in the `--config` YAML — for BOTH alma and harness, sizing
+  is config-file only (no `--stages`/`--stage-spec` JSON CLI flag anywhere;
+  see "Configuration"). The single-pass path (`--no-progressive`) instead
+  REQUIRES a `single_stage:` block in the config (a null/omitted field = the
+  whole split for that dimension; an absent block raises a clear `ValueError`,
+  never a silent whole-split). `run_gauntlet`'s promotion/elimination logic,
   `stages.json` shape, and cost accounting are IDENTICAL to forge's — only
   the stage-execution callback differs (forge: `singularity exec`; baselines:
   an in-process `run_all_users` runner).
@@ -163,12 +165,16 @@ forge uses:
 - **alma's entrypoint is `run.py`** (renamed from its old script name) —
   every baseline is now invoked the same way: `evolve/alma/run.py`,
   `harness/cc/run.py`, `harness/hipporag2/run.py`, `harness/amem/run.py`.
-- **alma's JSON-string field** (`--stages`) travels as a literal JSON string
-  on the CLI but as a native mapping in YAML (e.g. `stages: {stage1: {...}}`);
-  alma's `run.py` only parses the CLI string when it's actually given, so an
-  omitted `--stages` never overwrites a YAML dict. The `harness/*` runners
-  have NO sizing CLI flags — their `stages:` (progressive) and `single_stage:`
-  (one-shot) sizes are native YAML mappings in the `--config` file only.
+- **Sampling sizes are config-file only** across ALL four baselines (and
+  forge) — the old `--stages` / `--stage-spec` JSON-string CLI flags were
+  removed. Both `stages:` (progressive) and `single_stage:` (one-shot) are
+  native YAML mappings in the `--config` file: `stages: {stage1: {...}, ...}`
+  drives the gauntlet; `single_stage: {n_qa: null, ...}` sizes the single pass
+  (required when `progressive: false`; a null field = whole split for that
+  dimension). The unified resolver is
+  `common.staged_eval.resolve_sampling_plan` (`progressive` → `stage_plan`;
+  `not progressive` → the `single_stage` wire spec, raising if the block is
+  absent) — shared verbatim by forge and every baseline.
 
 ```bash
 # alma — config file only
