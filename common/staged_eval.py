@@ -109,6 +109,35 @@ def full_wire_spec(ds: str) -> Dict[str, Any]:
     return spec
 
 
+def single_stage_wire_spec(ds: str, single_stage_params: Dict[str, Any]) -> Dict[str, Any]:
+    """Wire spec for the progressive=false single pass — the `single_stage`
+    block, same size fields as a stage (NO threshold). null field → None (whole
+    split for that dimension)."""
+    family = _benchmark_family(ds)
+    sample_field, extras = _FAMILY_FIELDS[family]
+    spec: Dict[str, Any] = {"n_samples": _wire_size(single_stage_params.get(sample_field))}
+    for f in extras:
+        spec[f] = _wire_size(single_stage_params.get(f))
+    return spec
+
+
+def resolve_sampling_plan(ds: str, params: Dict[str, Any], progressive: bool
+                          ) -> List[Tuple[str, Dict[str, Any], Optional[float]]]:
+    """Unified sampling plan for one dataset, shared by forge + baselines.
+    progressive=True  → the staged gauntlet (stage1..3 + thresholds).
+    progressive=False → ONE pass sized by the REQUIRED `single_stage` block."""
+    if progressive:
+        return stage_plan(ds, params)
+    single = params.get("single_stage")
+    if not single:
+        raise ValueError(
+            f"datasets.{ds}: progressive=false requires a `single_stage` block "
+            f"(same size fields as a stage; use all-null for the whole split), "
+            f"e.g. single_stage: {{{_FAMILY_FIELDS[_benchmark_family(ds)][0]}: null}}"
+        )
+    return [("single", single_stage_wire_spec(ds, single), None)]
+
+
 def stage_plan(ds: str, ds_params: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any], Optional[float]]]:
     """Ordered promotion plan for one benchmark:
     [(stage_name, wire_spec, threshold_or_None), ...] for stage1..3."""
@@ -185,6 +214,26 @@ def _resolve_dataset_stages(ds: str, params: Dict[str, Any]) -> None:
                 f"a null/full field (= full coverage) may only be followed by "
                 f"another null/full field"
             )
+
+    # `single_stage` block (progressive=false sizing): same size fields as a
+    # stage, NO threshold. Validated when present; required-ness is enforced by
+    # resolve_sampling_plan (which knows `progressive`). null/"full"/"all" → None.
+    single = params.get("single_stage")
+    if single is not None:
+        if not isinstance(single, dict):
+            raise ValueError(f"datasets.{ds}.single_stage must be a mapping")
+        ss_allowed = {sample_field, *extras}   # NO threshold
+        unknown = set(single) - ss_allowed
+        if unknown:
+            raise ValueError(
+                f"datasets.{ds}.single_stage: unknown field(s) {sorted(unknown)} "
+                f"for family {family!r}; allowed: {sorted(ss_allowed)} (no threshold)"
+            )
+        for field in (sample_field, *extras):
+            v = single.get(field)
+            if isinstance(v, str) and v.strip().lower() in ("full", "all"):
+                single[field] = None
+            single.setdefault(field, None)   # omitted field → null = whole for that dim
 
 
 # ---------------------------------------------------------------------------
