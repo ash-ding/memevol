@@ -86,7 +86,9 @@ def test_require_present_keys_missing_raises():
     try:
         require_present_keys({"a", "b"}, {"a", "b", "c"}, context="x config")
     except ConfigCompletenessError as e:
-        raised = "c" in str(e) and "strict" in str(e).lower()
+        # Quoted-repr match (message renders sorted(missing) as a list repr)
+        # avoids a loose substring match masking a wrong/missing key.
+        raised = "'c'" in str(e) and "strict" in str(e).lower()
     assert raised
 
 def test_require_present_keys_null_counts_as_present():

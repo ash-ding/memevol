@@ -49,7 +49,7 @@ def _forge_min_cfg(agent="claude_code"):
         "model": "gpt-5-mini", "judge_model": "gpt-5-mini",
         "progressive": True, "random_sample": False, "sampling_seed": 42,
         "max_sample_concurrent": 3,
-        "memory_cache": True, "adopt_orphans": True,
+        "memory_cache": True, "data_isolation": True, "adopt_orphans": True,
         "agent": agent,
         "llm": {
             "anthropic_transport": "api",
@@ -94,6 +94,7 @@ def test_forge_search_example_passes_strict():
     from common.config import load_config_file
     fc = load_config_file(str(PROJECT_ROOT / "configs" / "search_example.yaml"))
     orch._forge_strict_validate(fc, resolved_cfg={**fc, "progressive": True})  # no raise
+    assert "data_isolation" in fc
 
 
 def test_forge_test_example_passes_strict():
@@ -240,8 +241,25 @@ def test_heldout_schema_missing_model_raises():
         orch._forge_strict_validate(fc, resolved_cfg={**fc, "progressive": False},
                                     schema=orch.HELDOUT_REQUIRED_SCHEMA)
     except ConfigCompletenessError as e:
-        raised = "model" in str(e)
+        # Quoted-repr match (the message renders sorted(missing) as a list
+        # repr) — avoids false-matching "judge_model", which also contains
+        # the substring "model".
+        raised = "'model'" in str(e)
     assert raised
+
+
+def test_forge_schema_covers_every_nonexempt_default_key():
+    # Guards against a new top-level DEFAULT_CONFIG key silently escaping
+    # strict-config (this is exactly how `data_isolation` slipped through).
+    orch = _load("_orch_cov", "forge/orchestrator.py")
+    META_EXEMPT = {"run_name", "coverage", "strict_config"}
+    top = set(orch.DEFAULT_CONFIG.keys())
+    required = set(orch.FORGE_REQUIRED_SCHEMA.keys())
+    missing = top - required - META_EXEMPT
+    assert not missing, (
+        f"top-level DEFAULT_CONFIG keys missing from FORGE_REQUIRED_SCHEMA "
+        f"(add to schema or META_EXEMPT): {sorted(missing)}"
+    )
 
 
 def main():

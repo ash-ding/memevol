@@ -254,6 +254,12 @@ gpu:
 # Pipeline toggles
 # -----------------------------------------------------------------------------
 
+# Search-mode data isolation. Default ON. On search runs, overlay-hide the
+# held-out test split (questions + gold answers) from the proposer AND eval
+# containers so the search can't optimize against held-out data. CLI:
+# --no-data-isolation. forge.heldout ignores this (it IS the test split).
+data_isolation: true
+
 # Cross-stage memory cache: persist each user's Phase-1 memory per
 # (harness, dataset) under harnesses/<id>/<ds>/memory_cache/ and reuse it at
 # deeper gauntlet stages (stage1..3 only; sanity/dev never touch it).

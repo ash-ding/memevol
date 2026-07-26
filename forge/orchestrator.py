@@ -296,7 +296,8 @@ FORGE_REQUIRED_SCHEMA = {
     "steps": REQUIRED, "smoke_test": REQUIRED, "model": REQUIRED,
     "judge_model": REQUIRED, "progressive": REQUIRED, "random_sample": REQUIRED,
     "sampling_seed": REQUIRED, "max_sample_concurrent": REQUIRED,
-    "memory_cache": REQUIRED, "adopt_orphans": REQUIRED, "agent": REQUIRED,
+    "memory_cache": REQUIRED, "data_isolation": REQUIRED,
+    "adopt_orphans": REQUIRED, "agent": REQUIRED,
     "llm": {
         "anthropic_transport": REQUIRED,
         "vertex": Cond(lambda c: c.get("llm", {}).get("anthropic_transport") == "vertex",
@@ -367,7 +368,25 @@ def _forge_strict_validate(provided_tree: Dict[str, Any], resolved_cfg: Dict[str
 
 
 def _forge_provided_tree(file_cfg: Dict[str, Any], args: argparse.Namespace) -> Dict[str, Any]:
-    """Raw YAML ∪ CLI-provided nested paths (deep-copied), for the strict check."""
+    """Raw YAML ∪ CLI-provided nested paths (deep-copied), for the strict check.
+
+    NOTE (2026-07-26, doc-only): only the CLI flags explicitly overlaid below
+    count as "provided" for strict-config purposes — steps/model/judge_model/
+    max_sample_concurrent/progressive/random_sample/sampling_seed/agent/
+    proposer.max_turns/proposer.timeout_s/prompts.version/proposer.*.model.
+    Other forge CLI flags that also mutate `cfg` in `_resolve_config` (e.g.
+    --datasets, --smoke-test, --gpu, --no-memory-cache, --no-data-isolation,
+    --k-per-step, --anthropic-transport, --sanity-max-retries,
+    --no-adopt-orphans, --no-seed/--seed-source, --claude-auth,
+    --proposer-disallowed-tools, --coverage) are NOT overlaid here. Under
+    strict mode (`--config` + strict_config not disabled), using one of those
+    flags WITHOUT also listing the corresponding key in the YAML still trips
+    the completeness gate (the flag's effect on `cfg` is real, but the
+    provided-tree used for the presence check won't reflect it) — set the key
+    explicitly in the YAML too, or pass `--no-strict-config`. This is a
+    known/accepted gap, not a bug: extending the overlay to every CLI flag is
+    future work, tracked separately.
+    """
     tree = copy.deepcopy(file_cfg)
 
     def setpath(path, val):

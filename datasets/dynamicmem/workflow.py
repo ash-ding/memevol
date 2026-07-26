@@ -55,9 +55,11 @@ class DynamicMemWorkflow(BaseWorkflow):
 
     def _qa_per_user_estimate(self, stage_spec: Optional[Dict]) -> int:
         spec = stage_spec or {}
-        if "n_checkpoints" in spec:
+        # A whole-split spec leaves size fields None (= all) — fall through to
+        # the per-user hint rather than int(None).
+        if spec.get("n_checkpoints") is not None:
             return int(spec["n_checkpoints"]) * (
-                int(spec.get("n_task_a", 0)) + int(spec.get("n_task_c", 0))
+                int(spec.get("n_task_a") or 0) + int(spec.get("n_task_c") or 0)
             )
         return super()._qa_per_user_estimate(stage_spec)
 
