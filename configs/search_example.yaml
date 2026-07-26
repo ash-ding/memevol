@@ -21,6 +21,16 @@
 # Top-level run settings
 # -----------------------------------------------------------------------------
 
+# Mandatory-complete config enforcement (2026-07-26): with `--config`, every
+# parameter in `forge.orchestrator.FORGE_REQUIRED_SCHEMA` must be listed
+# explicitly in the YAML (a `null` value counts as provided; an ABSENT key
+# does not) — silent fallback to a DEFAULT_CONFIG value is disallowed. A
+# missing key aborts the run with a ConfigCompletenessError naming exactly
+# what's absent. Default true; set `strict_config: false` (or pass
+# `--no-strict-config`) to opt out and allow partial configs again. This file
+# is an exhaustive template — it passes strict mode as-is.
+strict_config: true
+
 # Per-run workspace dir name → workspace/<run_name>/. If omitted at YAML AND
 # CLI, defaults to a YYYYMMDD_HHMMSS timestamp resolved at startup.
 run_name: my_first_search

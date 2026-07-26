@@ -36,8 +36,11 @@ def _load(mod_name, rel):
 
 # ---------------------------------------------------------------------------
 # Hand-built complete fixture — a full forge YAML dict satisfying
-# FORGE_REQUIRED_SCHEMA + the dynamic `datasets` sizing loop. Kept in-file
-# (NOT configs/search_example.yaml, which isn't repointed here until Task 5).
+# FORGE_REQUIRED_SCHEMA + the dynamic `datasets` sizing loop. Kept in-file for
+# the synthetic missing-key / codex-branch cases below (they need to mutate
+# individual leaves in isolation); the real-file anchors
+# (test_forge_search_example_passes_strict / test_forge_test_example_passes_strict,
+# Task 5) load configs/search_example.yaml + configs/test_example.yaml directly.
 # ---------------------------------------------------------------------------
 
 def _forge_min_cfg(agent="claude_code"):
@@ -85,10 +88,23 @@ def _forge_min_cfg(agent="claude_code"):
 
 
 def test_forge_search_example_passes_strict():
-    # repointed to real config in Task 5
+    """configs/search_example.yaml is the real, checked-in exhaustive forge
+    search template — it must pass FORGE_REQUIRED_SCHEMA as shipped."""
     orch = _load("_orch1", "forge/orchestrator.py")
-    fc = _forge_min_cfg()
-    orch._forge_strict_validate(fc, resolved_cfg=fc)  # no raise
+    from common.config import load_config_file
+    fc = load_config_file(str(PROJECT_ROOT / "configs" / "search_example.yaml"))
+    orch._forge_strict_validate(fc, resolved_cfg={**fc, "progressive": True})  # no raise
+
+
+def test_forge_test_example_passes_strict():
+    """configs/test_example.yaml is the real, checked-in exhaustive held-out
+    template — it must pass the smaller HELDOUT_REQUIRED_SCHEMA as shipped
+    (heldout is progressive=false)."""
+    orch = _load("_orch1b", "forge/orchestrator.py")
+    from common.config import load_config_file
+    fc = load_config_file(str(PROJECT_ROOT / "configs" / "test_example.yaml"))
+    orch._forge_strict_validate(fc, resolved_cfg={**fc, "progressive": False},
+                                schema=orch.HELDOUT_REQUIRED_SCHEMA)  # no raise
 
 
 def test_forge_missing_top_key_raises():
@@ -181,8 +197,10 @@ def test_forge_no_config_file_never_trips_strict():
 # adopt_orphans/agent/proposer.*/propose.*/sanity.*/seed.*/prompts.*), so
 # FORGE_REQUIRED_SCHEMA wrongly demanded them for heldout configs.
 # HELDOUT_REQUIRED_SCHEMA is the smaller schema forge.heldout passes via
-# _resolve_config's `required_schema` kwarg. NOT configs/test_example.yaml
-# here — that's Task 5; these use an in-file fixture.
+# _resolve_config's `required_schema` kwarg. These two synthetic cases use an
+# in-file fixture for isolated leaf-deletion; the real-file anchor
+# (test_forge_test_example_passes_strict, Task 5, above) covers
+# configs/test_example.yaml directly.
 # ---------------------------------------------------------------------------
 
 def _heldout_min_cfg():
