@@ -47,9 +47,11 @@ find_latest_ckpt() {
   ls -t "$CKPT_DIR"/check_dynamicmem_*.json 2>/dev/null | head -1
 }
 
-# Evaluation SIZES no longer live on flat --eval_n_*/--check_n_* flags (removed).
-# Each candidate is scored through the shared staged gauntlet (--progressive);
-# sizes come from the family DEFAULT_STAGES (override with --stages '<json>').
+# Evaluation SIZES live in the --config YAML only — there is NO sizing CLI flag
+# (the old flat --eval_n_*/--check_n_* and --stages flags were removed). Each
+# candidate is scored through the shared staged gauntlet (--progressive); sizes
+# come from the config's `stages` block (or the family DEFAULT_STAGES). Edit
+# baselines/evolve/alma/config.example.yaml (or a copy) to change sizes.
 COMMON_ARGS=(
   --config baselines/evolve/alma/config.example.yaml
   --status search

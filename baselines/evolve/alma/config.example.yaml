@@ -15,8 +15,30 @@ max_sample_concurrent: 3
 n_score_bins: 3
 samples_per_bin: 3
 judge_model: gpt-5-mini
-progressive: true             # staged gauntlet per candidate; false = single pass
+progressive: false            # true = staged stage1->2->3 gauntlet; false = single pass
 random_sample: false          # different subset each search step (seeded)
 sampling_seed: 42
-# stages: {...}               # override family DEFAULT_STAGES (native YAML dict)
-memory_cache: true
+memory_cache: true            # cross-stage Phase-1 memory reuse in the gauntlet
+
+# --- Evaluation SIZES live here in the config file only (the old --stages CLI
+# flag is gone; sizing is never a command-line flag anymore) ---
+# progressive: false REQUIRES `single_stage` — ONE pass sized by these fields
+# (same fields as a stage, NO threshold). A null (or omitted) field = the WHOLE
+# split for that dimension. Fields are the dataset family's native hierarchy
+# (dynamicmem: n_users/n_checkpoints/n_task_a/n_task_c;
+#  locomo: n_conversations/n_qa; longmemeval: n_questions).
+single_stage:
+  n_users: 2                  # dynamicmem: cap to 2 users (null = all users in split)
+  n_checkpoints: 3            # null = all checkpoints per user
+  n_task_a: 5                 # null = all Task A items per checkpoint
+  n_task_c: 5                 # null = all Task C items per checkpoint
+
+# progressive: true alternative — the staged gauntlet. Override the family
+# DEFAULT_STAGES here (native YAML dict; sizes must be non-decreasing across
+# stage1..3):
+# progressive: true
+# stages:
+#   sanity_check: {n_users: 1, n_checkpoints: 1, n_task_a: 1, n_task_c: 1}
+#   stage1: {n_users: 2, n_checkpoints: 1, n_task_a: 5, n_task_c: 5, threshold: 0.05}
+#   stage2: {n_users: 4, n_checkpoints: 3, n_task_a: 5, n_task_c: 5, threshold: 0.10}
+#   stage3: {n_users: 6, n_checkpoints: 5, n_task_a: 5, n_task_c: 5}

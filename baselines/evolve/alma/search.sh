@@ -4,14 +4,16 @@
 # alma baseline — Search examples (meta-learning memory designs)
 # Run from the project root. One benchmark per run via --dataset.
 #
-# Evaluation SIZES no longer live on flat --eval_n_samples/--eval_n_qa flags —
-# they were removed. Each candidate is now scored through the SHARED staged
-# gauntlet (common.staged_eval: stage1 -> stage2 -> stage3 with promotion
-# thresholds), identical to forge. Sizes come from the family DEFAULT_STAGES;
-# override with --stages '<json>'.
+# Evaluation SIZES live in the --config YAML only — there is NO sizing CLI flag
+# (the old --stages was removed). progressive: true scores each candidate
+# through the SHARED staged gauntlet (common.staged_eval: stage1 -> stage2 ->
+# stage3 with promotion thresholds), sized by the config's `stages` block (or
+# the family DEFAULT_STAGES). progressive: false does ONE pass sized by the
+# config's REQUIRED `single_stage` block. Edit
+# baselines/evolve/alma/config.example.yaml (or a copy) to change sizes.
 # ===========================================================================
 
-# --- Full progressive search (default stages) ---
+# --- Full progressive search (gauntlet; stages from the config) ---
 # stage1 -> stage2 -> stage3 gauntlet per candidate, 10 meta-learning steps.
 python baselines/evolve/alma/run.py \
     --config baselines/evolve/alma/config.example.yaml \
@@ -42,24 +44,11 @@ python baselines/evolve/alma/run.py \
     --steps 10 \
     --max_sample_concurrent 5
 
-# --- Quick smoke test (tiny sizes via --stages, verify end-to-end) ---
-# A minimal 1-user/1-checkpoint gauntlet, 2 steps. thresholds 0.0 so nothing is
-# eliminated early. (--stages must keep sizes non-decreasing across stage1..3.)
-SMOKE_STAGES='{"sanity_check":{"n_users":1,"n_checkpoints":1,"n_task_a":1,"n_task_c":1},"stage1":{"n_users":1,"n_checkpoints":1,"n_task_a":1,"n_task_c":1,"threshold":0.0},"stage2":{"n_users":1,"n_checkpoints":1,"n_task_a":1,"n_task_c":1,"threshold":0.0},"stage3":{"n_users":1,"n_checkpoints":1,"n_task_a":1,"n_task_c":1}}'
-python baselines/evolve/alma/run.py \
-    --config baselines/evolve/alma/config.example.yaml \
-    --meta_model gpt-5 \
-    --execution_model gpt-5-mini \
-    --judge_model gpt-5-mini \
-    --status search \
-    --dataset dynamicmem \
-    --progressive \
-    --stages "$SMOKE_STAGES" \
-    --steps 2 \
-    --max_sample_concurrent 3
-
-# --- Non-progressive search (single terminal-size pass per candidate) ---
-# --no-progressive skips the gauntlet: one stage3-size pass, no thresholds.
+# --- Non-progressive search (single pass per candidate, sized by single_stage) ---
+# --no-progressive skips the gauntlet: ONE pass, no thresholds. The pass is
+# sized by the config's REQUIRED `single_stage` block (a null field = whole
+# split for that dimension). For a quick smoke run, point --config at a config
+# whose `single_stage` uses tiny sizes.
 python baselines/evolve/alma/run.py \
     --config baselines/evolve/alma/config.example.yaml \
     --meta_model gpt-5 \

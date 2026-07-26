@@ -65,6 +65,7 @@ async def run_evaluation(
     sampling_seed: int = 42,
     step_index: int = 0,
     stages: Optional[dict] = None,
+    single_stage: Optional[dict] = None,
     memory_cache: bool = True,
     source_path: Optional[Path] = None,
     output_run_dir: Optional[Path] = None,
@@ -155,6 +156,8 @@ async def run_evaluation(
         launch_args += ["--max_logs", str(max_logs)]
     if stages is not None:
         launch_args += ["--stages", json.dumps(stages)]
+    if single_stage is not None:
+        launch_args += ["--single_stage", json.dumps(single_stage)]
 
     env = {
         **os.environ,
