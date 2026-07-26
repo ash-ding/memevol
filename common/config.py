@@ -55,7 +55,6 @@ class ConfigCompletenessError(ValueError):
 
 def load_config_file(path):
     """safe_load a YAML config to a mapping (shared by resolve_config + strict)."""
-    from pathlib import Path
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(f"config file not found: {p}")
