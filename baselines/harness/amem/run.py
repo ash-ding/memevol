@@ -1,9 +1,11 @@
 """A-mem baseline — evaluate on one benchmark's split, comparable to the main
 method (same split/judge/scoring via the per-dataset workflow).
 
-    baselines/venv/bin/python baselines/harness/amem/run.py --dataset locomo
-    baselines/venv/bin/python baselines/harness/amem/run.py --dataset dynamicmem \
-        --split search --stage-spec '{"n_samples": 1, "n_checkpoints": 1, "n_task_a": 1, "n_task_c": 1}'
+Sizing is config-file only (no sizing CLI flags): `single_stage` (progressive:
+false) or `stages` (progressive: true) — see config.example.yaml.
+
+    baselines/venv/bin/python baselines/harness/amem/run.py --config baselines/harness/amem/config.example.yaml
+    baselines/venv/bin/python baselines/harness/amem/run.py --config baselines/harness/amem/config.example.yaml --progressive
 """
 from __future__ import annotations
 import argparse, asyncio, sys
@@ -16,17 +18,20 @@ try:
 except ImportError:
     pass
 from baselines.registry import DATASETS
-from baselines.harness.eval_common import make_memo_class, run_baseline
+from baselines.harness.eval_common import make_memo_class, run_baseline, print_result
 from baselines.harness.amem.memo import AMemMemo
 from common.config import resolve_config
 
 DEFAULT_CONFIG = {
+    # Sizing lives in the config file only (native YAML dicts), never on the CLI:
+    #   single_stage: {...}  (progressive: false) — REQUIRED for the single pass
+    #   stages: {...}        (progressive: true)  — overrides family DEFAULT_STAGES
     "dataset": "locomo",
     "split": "test",
-    "stage_spec": None,          # native dict in YAML; JSON string on CLI
     "progressive": False,
     "sampling_seed": 42,
-    "stages": None,              # native dict in YAML; JSON string on CLI
+    "single_stage": None,        # native YAML dict; REQUIRED when progressive: false
+    "stages": None,              # native YAML dict; overrides DEFAULT_STAGES when progressive: true
     "memory_cache": True,
     "amem_llm_model": "gpt-4o-mini",
     "retrieve_k": 10,
@@ -41,10 +46,8 @@ def main():
     p.add_argument("--config", default=None, help="YAML config path (CLI flags override it)")
     p.add_argument("--dataset", default=None, choices=DATASETS)
     p.add_argument("--split", default=None, choices=["test", "search"])
-    p.add_argument("--stage-spec", dest="stage_spec", default=None)
     p.add_argument("--progressive", action=argparse.BooleanOptionalAction, default=None)
     p.add_argument("--sampling-seed", dest="sampling_seed", type=int, default=None)
-    p.add_argument("--stages", default=None)
     p.add_argument("--memory-cache", dest="memory_cache", action=argparse.BooleanOptionalAction, default=None,
                    help="Cross-stage Phase-1 memory reuse (default on). --no-memory-cache to disable.")
     p.add_argument("--amem_llm_model", default=None,
@@ -58,14 +61,10 @@ def main():
     p.add_argument("--max_sample_concurrent", type=int, default=None)
     a = p.parse_args()
 
-    def _json_or_none(s):
-        import json
-        return json.loads(s) if s else None
-
     cli = {
-        "dataset": a.dataset, "split": a.split, "stage_spec": _json_or_none(a.stage_spec),
+        "dataset": a.dataset, "split": a.split,
         "progressive": a.progressive, "sampling_seed": a.sampling_seed,
-        "stages": _json_or_none(a.stages), "memory_cache": a.memory_cache,
+        "memory_cache": a.memory_cache,
         "amem_llm_model": a.amem_llm_model, "retrieve_k": a.retrieve_k,
         "llm_model": a.llm_model, "judge_model": a.judge_model,
         "max_sample_concurrent": a.max_sample_concurrent,
@@ -76,14 +75,15 @@ def main():
         AMemMemo, amem_llm_model=cfg["amem_llm_model"], retrieve_k=cfg["retrieve_k"],
     )
     out_dir = Path(__file__).resolve().parent / "results" / cfg["dataset"] / cfg["split"]
-    score = asyncio.run(run_baseline(
-        dataset=cfg["dataset"], split=cfg["split"], user_stage_spec=cfg["stage_spec"] or {},
+    result = asyncio.run(run_baseline(
+        dataset=cfg["dataset"], split=cfg["split"],
+        single_stage=cfg["single_stage"], stages=cfg["stages"],
         memo_class=memo_class, qa_model=cfg["llm_model"], judge_model=cfg["judge_model"],
         out_dir=out_dir, max_sample_concurrent=cfg["max_sample_concurrent"],
         progressive=cfg["progressive"], sampling_seed=cfg["sampling_seed"],
-        stages=cfg["stages"], memory_cache=cfg["memory_cache"],
+        memory_cache=cfg["memory_cache"],
     ))
-    print("overall:", score["benchmark_eval_score"]["benchmark_overall_eval_score"], "→", out_dir)
+    print_result(cfg["dataset"], cfg["progressive"], result, out_dir)
 
 
 if __name__ == "__main__":

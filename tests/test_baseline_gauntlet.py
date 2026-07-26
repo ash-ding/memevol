@@ -79,7 +79,7 @@ def test_progressive_promotes_through_all_stages():
     try:
         result = _run_with_fake_run_all_users(
             reward=1.0, seen=seen,
-            dataset="locomo", split="test", user_stage_spec=None,
+            dataset="locomo", split="test",
             memo_class=_StubMemo, qa_model="gpt-5-mini", judge_model="gpt-5-mini",
             out_dir=out_dir, max_sample_concurrent=1,
             progressive=True, memory_cache=False,
@@ -116,7 +116,7 @@ def test_progressive_eliminates_below_threshold():
         # reward 0.0 → normalized 0.0 < locomo stage1 threshold 0.30 → eliminated
         result = _run_with_fake_run_all_users(
             reward=0.0, seen=seen,
-            dataset="locomo", split="test", user_stage_spec=None,
+            dataset="locomo", split="test",
             memo_class=_StubMemo, qa_model="gpt-5-mini", judge_model="gpt-5-mini",
             out_dir=out_dir, max_sample_concurrent=1,
             progressive=True, memory_cache=False,
@@ -135,22 +135,22 @@ def test_progressive_eliminates_below_threshold():
 
 
 # --------------------------------------------------------------------------
-# (c) progressive=False takes the single-stage path UNCHANGED
+# (c) progressive=False takes the single-stage path (stage label "single")
 # --------------------------------------------------------------------------
 
-def test_progressive_false_single_stage_unchanged():
+def test_progressive_false_single_stage_path():
     seen = []
     out_dir = Path(tempfile.mkdtemp(prefix="test_gauntlet_single_"))
     try:
         score = _run_with_fake_run_all_users(
             reward=1.0, seen=seen,
             dataset="locomo", split="test",
-            user_stage_spec={"n_samples": 1, "n_qa": 1},
+            single_stage={"n_conversations": 1, "n_qa": 1},
             memo_class=_StubMemo, qa_model="gpt-5-mini", judge_model="gpt-5-mini",
             out_dir=out_dir, max_sample_concurrent=1,
             # progressive defaults to False
         )
-        assert seen == ["full"], seen                   # single full pass
+        assert seen == ["single"], seen                 # single pass, stage label "single"
         # single-stage return is the _build_score_json shape, NOT the gauntlet dict
         assert "benchmark_eval_score" in score, score
         assert score["benchmark_eval_score"]["benchmark_overall_eval_score"] == 1.0
@@ -161,6 +161,80 @@ def test_progressive_false_single_stage_unchanged():
         assert not (out_dir / "stage1").exists()
     finally:
         shutil.rmtree(out_dir, ignore_errors=True)
+
+
+# --------------------------------------------------------------------------
+# (c2) progressive=False sizes the single pass from single_stage_wire_spec:
+#      the stage_spec handed to run_all_users == single_stage_wire_spec(...)
+#      plus the derived per-run sample_seed, and n_samples caps the task list.
+# --------------------------------------------------------------------------
+
+def test_progressive_false_sizes_from_single_stage():
+    from datasets.locomo.workflow import LoCoMoWorkflow
+    from baselines.harness.eval_common import run_baseline
+    from common.staged_eval import single_stage_wire_spec
+    from common.sampling import derive_sample_seed
+
+    captured = {}
+
+    async def _fake(self, task_list, *, stage="stage3", stage_spec=None,
+                    max_sample_concurrent=6):
+        captured["stage"] = stage
+        captured["stage_spec"] = dict(stage_spec or {})
+        captured["task_list"] = list(task_list)
+        recs = [_FakeRec(u, 1.0) for u in task_list]
+        return recs, len(recs)
+
+    single_stage = {"n_conversations": 2, "n_qa": 5}
+    out_dir = Path(tempfile.mkdtemp(prefix="test_gauntlet_single_sized_"))
+    orig = LoCoMoWorkflow.run_all_users
+    LoCoMoWorkflow.run_all_users = _fake
+    try:
+        score = asyncio.run(run_baseline(
+            dataset="locomo", split="test", single_stage=single_stage,
+            memo_class=_StubMemo, qa_model="gpt-5-mini", judge_model="gpt-5-mini",
+            out_dir=out_dir, max_sample_concurrent=1,
+            progressive=False, sampling_seed=42,
+        ))
+    finally:
+        LoCoMoWorkflow.run_all_users = orig
+        shutil.rmtree(out_dir, ignore_errors=True)
+
+    assert captured["stage"] == "single", captured["stage"]
+    expected = single_stage_wire_spec("locomo", single_stage)   # {"n_samples": 2, "n_qa": 5}
+    for k, v in expected.items():
+        assert captured["stage_spec"].get(k) == v, (k, captured["stage_spec"])
+    # the per-run seed rides along (fixed step 0, honoring sampling_seed)
+    assert captured["stage_spec"]["sample_seed"] == derive_sample_seed(42, 0, "locomo")
+    # n_samples caps the task list (2 conversations of the 4-conv locomo test split)
+    assert len(captured["task_list"]) == 2, captured["task_list"]
+    assert "benchmark_eval_score" in score, score
+
+
+# --------------------------------------------------------------------------
+# (c3) progressive=False with NO single_stage raises a clear ValueError
+#      (no silent whole-split — sizing is REQUIRED).
+# --------------------------------------------------------------------------
+
+def test_progressive_false_requires_single_stage():
+    from baselines.harness.eval_common import run_baseline
+
+    out_dir = Path(tempfile.mkdtemp(prefix="test_gauntlet_no_single_"))
+    raised = None
+    try:
+        try:
+            asyncio.run(run_baseline(
+                dataset="locomo", split="test", single_stage=None,
+                memo_class=_StubMemo, qa_model="gpt-5-mini", judge_model="gpt-5-mini",
+                out_dir=out_dir, max_sample_concurrent=1,
+                progressive=False,
+            ))
+        except ValueError as e:
+            raised = e
+    finally:
+        shutil.rmtree(out_dir, ignore_errors=True)
+    assert raised is not None, "expected ValueError when single_stage absent"
+    assert "single_stage" in str(raised), str(raised)
 
 
 # --------------------------------------------------------------------------
@@ -232,7 +306,7 @@ def test_progressive_real_memcache_reuse():
     out_dir = Path(tempfile.mkdtemp(prefix="test_gauntlet_memcache_"))
     try:
         result = asyncio.run(run_baseline(
-            dataset="locomo", split="test", user_stage_spec=None,
+            dataset="locomo", split="test",
             memo_class=memo_class, qa_model="gpt-5-mini", judge_model="gpt-5-mini",
             out_dir=out_dir, max_sample_concurrent=1,
             progressive=True, memory_cache=True, stages=stages,

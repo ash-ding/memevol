@@ -376,20 +376,27 @@ adjust the flags your system needs. Core shape:
 
 ```python
 from baselines.registry import DATASETS
-from baselines.harness.eval_common import make_memo_class, run_baseline, parse_stage_spec
+from baselines.harness.eval_common import make_memo_class, run_baseline, print_result
 from baselines.harness.<name>.memo import MyMemo
+from common.config import resolve_config
 
-p.add_argument("--dataset", required=True, choices=sorted(DATASETS))
-p.add_argument("--split", default="test", choices=["test", "search"])
-p.add_argument("--stage-spec", default=None)   # JSON size overrides, e.g. '{"n_samples": 2}'
+# Evaluation SIZES come from the --config YAML only (no sizing CLI flags):
+# single_stage (progressive: false) or stages (progressive: true).
+p.add_argument("--config", default=None)
+p.add_argument("--dataset", default=None, choices=sorted(DATASETS))
+p.add_argument("--split", default=None, choices=["test", "search"])
+p.add_argument("--progressive", action=argparse.BooleanOptionalAction, default=None)
 ...
-memo_cls = make_memo_class(MyMemo, top_k=a.top_k, ...)   # → sets _cfg
+cfg = resolve_config(DEFAULT_CONFIG, a.config, cli)   # defaults < YAML < CLI
+memo_cls = make_memo_class(MyMemo, top_k=cfg["top_k"], ...)   # → sets _cfg
 result = asyncio.run(run_baseline(
-    dataset=a.dataset, split=a.split,
-    user_stage_spec=parse_stage_spec(a.stage_spec),
-    memo_class=memo_cls, qa_model=a.model, judge_model=a.judge_model,
-    out_dir=Path(__file__).resolve().parent / "results" / a.dataset / a.split,
+    dataset=cfg["dataset"], split=cfg["split"],
+    single_stage=cfg["single_stage"], stages=cfg["stages"],   # native YAML dicts
+    memo_class=memo_cls, qa_model=cfg["model"], judge_model=cfg["judge_model"],
+    out_dir=Path(__file__).resolve().parent / "results" / cfg["dataset"] / cfg["split"],
+    progressive=cfg["progressive"], sampling_seed=cfg["sampling_seed"],
 ))
+print_result(cfg["dataset"], cfg["progressive"], result, out_dir)
 ```
 
 `make_memo_class` exists because the workflow instantiates the memo class

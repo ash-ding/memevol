@@ -27,23 +27,32 @@ baseline, so the answer side is already A-mem-shaped there).
 
 ## Usage
 
-    baselines/venv/bin/python baselines/harness/amem/run.py --dataset locomo
-    baselines/venv/bin/python baselines/harness/amem/run.py --dataset dynamicmem \
-        --split search --stage-spec '{"n_samples": 1, "n_checkpoints": 1, "n_task_a": 1, "n_task_c": 1}'
+    baselines/venv/bin/python baselines/harness/amem/run.py \
+        --config baselines/harness/amem/config.example.yaml
+    baselines/venv/bin/python baselines/harness/amem/run.py \
+        --config my_amem.yaml --dataset dynamicmem --split search
 
-Flags: `--amem_llm_model` (default `gpt-4o-mini`, A-mem's own default — its
-`OpenAIController` hardcodes `temperature=0.7` + `max_tokens=1000`, which the
-gpt-5 family rejects, so keep a 4-series model); `--retrieve_k` (default 10,
-upstream default); `--llm_model` / `--judge_model` (default `gpt-5-mini` —
-shared QA agent + judge, baseline convention); `--split`; `--stage-spec`.
+Flags: `--config` (YAML path; CLI flags override it); `--amem_llm_model`
+(default `gpt-4o-mini`, A-mem's own default — its `OpenAIController` hardcodes
+`temperature=0.7` + `max_tokens=1000`, which the gpt-5 family rejects, so keep
+a 4-series model); `--retrieve_k` (default 10, upstream default); `--llm_model`
+/ `--judge_model` (default `gpt-5-mini` — shared QA agent + judge, baseline
+convention); `--split`.
 
-Shared progressive-sampling flags (same as cc/hipporag2): `--progressive`
-(store_true, default off — run the staged stage1→2→3 gauntlet with
+Shared progressive-sampling flags (same as cc/hipporag2): `--progressive` /
+`--no-progressive` (default off — run the staged stage1→2→3 gauntlet with
 threshold elimination instead of one single-stage pass); `--sampling-seed`
-(default `42`, base seed for the fixed one-shot sample); `--stages '<json>'`
-(override the family `DEFAULT_STAGES` sizes when `--progressive` is set);
-`--no-memory-cache` (disable cross-stage Phase-1 memory reuse, on by
-default).
+(default `42`, base seed for the fixed step-0 sample; a no-op at whole-split);
+`--no-memory-cache` (disable cross-stage Phase-1 memory reuse, on by default).
+
+**Sizing is config-file only** (there are no sizing CLI flags).
+`progressive: false` (default) REQUIRES a `single_stage` block — ONE
+pass sized by its native fields (`n_conversations` / `n_qa` for locomo,
+`n_users` / `n_checkpoints` / `n_task_a` / `n_task_c` for dynamicmem,
+`n_questions` for longmemeval; a `null`/omitted field = the WHOLE split for
+that dimension). Omitting `single_stage` raises a clear `ValueError` (no silent
+whole-split). `progressive: true` sizes from a `stages` block (overrides the
+family `DEFAULT_STAGES`). See `config.example.yaml`.
 
 ## Faithfulness boundary
 
