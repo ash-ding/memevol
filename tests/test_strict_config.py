@@ -125,6 +125,18 @@ def test_cc_complete_passes():
     _strict_check_flat(cc.DEFAULT_CONFIG, fc, cli, fc["dataset"], fc["progressive"], "cc")  # no raise
 
 
+def test_cc_cli_provided_key_counts_as_present():
+    # A required top-level key omitted from the YAML but supplied via a
+    # non-None CLI value must still count as "provided" — exercises
+    # provided_keys's CLI-union branch (every other test's `cli` is all-None).
+    cc = _load("_cc_run_cli_present", "baselines/harness/cc/run.py")
+    fc = _complete_cc_cfg()
+    del fc["judge_model"]  # omitted from the "YAML" entirely
+    cli = {k: None for k in cc.DEFAULT_CONFIG}
+    cli["judge_model"] = "gpt-5-mini"  # supplied on the CLI instead
+    _strict_check_flat(cc.DEFAULT_CONFIG, fc, cli, fc["dataset"], fc["progressive"], "cc")  # no raise
+
+
 # ---------------------------------------------------------------------------
 # hipporag2
 # ---------------------------------------------------------------------------
@@ -173,6 +185,27 @@ def test_amem_complete_passes():
     fc = _complete_amem_cfg()
     cli = {k: None for k in am.DEFAULT_CONFIG}
     _strict_check_flat(am.DEFAULT_CONFIG, fc, cli, fc["dataset"], fc["progressive"], "amem")  # no raise
+
+
+def test_amem_missing_sizing_leaf_raises():
+    # Isolates the SECOND check (missing_sizing_config) firing on its own: every
+    # top-level key is present (require_present_keys passes clean), but the
+    # active `single_stage` block is missing one native sizing leaf (n_qa for
+    # the locomo family) — must still raise, naming the sizing path.
+    am = _load("_amem_run_sizing_missing", "baselines/harness/amem/run.py")
+    from common.config import ConfigCompletenessError
+    fc = _complete_amem_cfg()
+    del fc["single_stage"]["n_qa"]  # all top-level keys still present; one leaf missing
+    cli = {k: None for k in am.DEFAULT_CONFIG}
+    raised = False
+    msg = ""
+    try:
+        _strict_check_flat(am.DEFAULT_CONFIG, fc, cli, fc["dataset"], fc["progressive"], "amem")
+    except ConfigCompletenessError as e:
+        raised = True
+        msg = str(e)
+    assert raised
+    assert "single_stage" in msg
 
 
 # ---------------------------------------------------------------------------
