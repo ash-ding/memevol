@@ -404,6 +404,11 @@ def _fake_run_evaluation_factory(calls):
 
 
 def test_evaluate_harness_full_single_pass():
+    """coverage='full' (progressive=false) now resolves its plan via
+    resolve_sampling_plan: ONE pass named "single", sized by the REQUIRED
+    `single_stage` block (2026-07-26) — replacing the old automatic
+    full_wire_spec whole-split. Reached-stage telemetry still maps to
+    O.FULL_STAGE (the "single" plan name is the new full-ish tier)."""
     calls = []
     with tempfile.TemporaryDirectory() as td, _test_workspace():
         src = _mk_src_harness(td)
@@ -413,7 +418,7 @@ def test_evaluate_harness_full_single_pass():
         try:
             per_ds = asyncio.run(O.evaluate_harness(
                 hid, Path("/fake.sif"),
-                datasets_config={"locomo": {"stages": {}}},
+                datasets_config={"locomo": {"single_stage": {"n_conversations": None, "n_qa": None}}},
                 split="test", model="gpt-5-mini", judge_model="gpt-5-mini",
                 max_sample_concurrent=1,
                 memory_cache=False, coverage="full",
@@ -421,9 +426,9 @@ def test_evaluate_harness_full_single_pass():
         finally:
             O.run_evaluation = orig
 
-        # ONE call, stage "full", uncapped spec, test split
+        # ONE call, stage "single", uncapped spec (from single_stage), test split
         assert len(calls) == 1, calls
-        assert calls[0]["stage"] == "full"
+        assert calls[0]["stage"] == "single"
         assert calls[0]["split"] == "test"
         assert calls[0]["spec"] == {"n_samples": None, "n_qa": None}
 
@@ -434,11 +439,31 @@ def test_evaluate_harness_full_single_pass():
 
         stages = json.loads(
             (paths.harnesses_dir / hid / "locomo" / "stages.json").read_text())
-        assert stages["reached"] == "full"
-        assert list(stages["stages"]) == ["full"]
-        assert stages["stages"]["full"]["threshold"] is None
+        assert stages["reached"] == "single"
+        assert list(stages["stages"]) == ["single"]
+        assert stages["stages"]["single"]["threshold"] is None
         # final artifacts copied to the dataset root
         assert (paths.harnesses_dir / hid / "locomo" / "score.json").exists()
+
+
+def test_evaluate_harness_full_missing_single_stage_raises():
+    """coverage='full' with no `single_stage` block configured must raise —
+    no silent automatic whole-split anymore (single_stage is required)."""
+    with tempfile.TemporaryDirectory() as td, _test_workspace():
+        src = _mk_src_harness(td)
+        hid = H._stage_harness(src)
+        raised = False
+        try:
+            asyncio.run(O.evaluate_harness(
+                hid, Path("/fake.sif"),
+                datasets_config={"locomo": {"stages": {}}},
+                split="test", model="gpt-5-mini", judge_model="gpt-5-mini",
+                max_sample_concurrent=1,
+                memory_cache=False, coverage="full",
+            ))
+        except ValueError as e:
+            raised = "single_stage" in str(e)
+        assert raised
 
 
 def test_evaluate_harness_sample_unchanged():

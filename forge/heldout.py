@@ -26,7 +26,8 @@ Flow per harness:
 Outputs under workspace/<run_name>/:
   heldout_results.json   {harness_id: {objectives (accuracy_<ds>,
                           stage_<ds>, tokens_total, ...), per_ds}}
-  harnesses/<id>/<ds>/...  the usual per-stage artifacts (full/ for coverage=full)
+  harnesses/<id>/<ds>/...  the usual per-stage artifacts (single/ for coverage=full,
+                          sized by each dataset's REQUIRED single_stage config block)
   config.yaml, orchestrator.log — same bookkeeping as any run.
 
 The datasets / model / judge_model / llm-transport / gpu configuration is

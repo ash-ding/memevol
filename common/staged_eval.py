@@ -278,12 +278,18 @@ async def run_gauntlet(
 
     - ``smoke=True``: one ``sanity_check``-sized run per benchmark, no gating,
       telemetry ``stage=0.0`` / ``eliminated=False`` (stages_writer NOT called).
-    - ``coverage='full'``: a single ``('full', uncapped, None)`` plan (no
-      promotion gates); reached stage telemetry is ``FULL_STAGE``.
-    - ``coverage='sample'`` (default): the stage1 → stage2 → stage3 gauntlet;
-      after a gated stage the normalized score must be >= its threshold to
-      advance, else the benchmark stops ("eliminated"). A crashed stage (a
-      non-None ``run_stage_fn`` return) also eliminates and stops.
+    - ``coverage='full'`` (progressive=False): a single ``('single', spec, None)``
+      plan (no promotion gates), sized by the dataset's REQUIRED `single_stage`
+      config block via ``resolve_sampling_plan`` — raises ``ValueError`` if that
+      dataset has no `single_stage` block (no more automatic whole-split
+      `full_wire_spec`; sizing is config-file only). Reached stage telemetry is
+      ``FULL_STAGE`` (the "full" plan name is legacy and no longer emitted, but
+      still mapped for back-compat).
+    - ``coverage='sample'`` (default, progressive=True): the stage1 → stage2 →
+      stage3 gauntlet from the dataset's `stages` block; after a gated stage
+      the normalized score must be >= its threshold to advance, else the
+      benchmark stops ("eliminated"). A crashed stage (a non-None
+      ``run_stage_fn`` return) also eliminates and stops.
 
     Cost accounting sums tokens across ALL executed stages. Returns the same
     per-dataset metrics dict shape forge builds today (raw_score, score_max,
@@ -311,13 +317,11 @@ async def run_gauntlet(
             scores[ds] = m
             continue
 
-        # ---- staged gauntlet OR single full pass ----
-        if coverage == "full":
-            plan: List[Tuple[str, Dict[str, Any], Optional[float]]] = [
-                ("full", full_wire_spec(ds), None)
-            ]
-        else:
-            plan = stage_plan(ds, params)
+        # ---- staged gauntlet (progressive=True) OR single pass (progressive=False,
+        # sized by the REQUIRED `single_stage` block — raises if absent) ----
+        plan: List[Tuple[str, Dict[str, Any], Optional[float]]] = resolve_sampling_plan(
+            ds, params, progressive=(coverage != "full")
+        )
 
         stage_summary: Dict[str, Any] = {}
         final_metrics: Dict[str, Any] = {}
@@ -355,9 +359,11 @@ async def run_gauntlet(
                 eliminated = True
                 break
 
-        stage_num = {"stage1": 1.0, "stage2": 2.0, "stage3": 3.0, "full": FULL_STAGE}.get(
-            reached, 0.0
-        )
+        stage_num = {
+            "stage1": 1.0, "stage2": 2.0, "stage3": 3.0,
+            "full": FULL_STAGE,     # legacy plan name (no other caller emits it anymore)
+            "single": FULL_STAGE,   # progressive=false single pass — same tier as "full"
+        }.get(reached, 0.0)
         final_metrics["stage"] = stage_num
         final_metrics["eliminated"] = eliminated
         if stages_writer is not None:

@@ -52,7 +52,7 @@ harnesses:
 # entirely also resolves to full (heldout's own default when neither is
 # given anywhere).
 #   full — ONE whole-test-split pass per benchmark: no stage1/2, no
-#          threshold elimination; artifacts under <ds>/full/. Full
+#          threshold elimination; artifacts under <ds>/single/. Full
 #          test-split sizes for cost planning: DynamicMem 4 users ×
 #          ~400 items, LoCoMo 655 QA (cat 1-4), LongMemEval 200 questions.
 # -----------------------------------------------------------------------------
@@ -64,12 +64,22 @@ coverage: full
 # full coverage (progressive=false / coverage=full is enforced above), so
 # stage sizes/thresholds never apply; they only matter for the search loop's
 # gauntlet (see forge/orchestrator.py::DEFAULT_STAGES).
+#
+# progressive=false REQUIRES a `single_stage` block per dataset (2026-07-26)
+# — it's what sizes the ONE full pass (same size fields as a `stages` entry,
+# no `threshold`); there is no more automatic whole-split fallback. Every
+# field `null` (shown below) = whole test split for that dimension — the
+# usual held-out setting. Omitting `single_stage` entirely now raises
+# ValueError at eval time ("requires a `single_stage` block").
 # -----------------------------------------------------------------------------
 datasets:
   dynamicmem:
     judge_model: gpt-5.4-2026-03-05   # official TCE judge (downgrade to save cost)
-  locomo: {}
-  longmemeval_s: {}
+    single_stage: {n_users: null, n_checkpoints: null, n_task_a: null, n_task_c: null}
+  locomo:
+    single_stage: {n_conversations: null, n_qa: null}
+  longmemeval_s:
+    single_stage: {n_questions: null}
 
 # QA / retrieve agent model inside the harness eval. Provider-routed by name
 # (gpt-*/o* → OpenAI; claude-* → Anthropic via the llm block below); optional
