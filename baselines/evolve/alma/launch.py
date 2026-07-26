@@ -356,8 +356,8 @@ async def main(
     memory_cache: bool = True,
 ):
     from common.staged_eval import (
-        DEFAULT_STAGES, _FAMILY_FIELDS, _benchmark_family, _resolve_dataset_stages,
-        single_stage_wire_spec, stage_wire_spec,
+        DEFAULT_STAGES, _benchmark_family, _resolve_dataset_stages,
+        resolve_single_stage_spec, stage_wire_spec,
     )
     from common.sampling import derive_sample_seed
 
@@ -415,19 +415,10 @@ async def main(
         if mode == "check":
             stage, spec = "sanity", stage_wire_spec(dataset, stages_block["sanity_check"])
         else:
-            if not single_stage:
-                sample_field = _FAMILY_FIELDS[_benchmark_family(dataset)][0]
-                raise ValueError(
-                    f"{dataset}: progressive=false requires a `single_stage` block "
-                    f"(same size fields as a stage; use all-null for the whole split), "
-                    f"e.g. single_stage: {{{sample_field}: null}}"
-                )
-            # Validate + normalize `single_stage` through the SAME resolver the
-            # gauntlet path uses (rejects unknown fields / a stray threshold,
-            # normalizes null/full/all → None) on a throwaway copy.
-            _ss_params = {"single_stage": copy.deepcopy(single_stage)}
-            _resolve_dataset_stages(dataset, _ss_params)
-            stage, spec = "single", single_stage_wire_spec(dataset, _ss_params["single_stage"])
+            # Shared resolver: presence-check (absent → ValueError, never silent
+            # whole-split; empty {} = present = whole), validate (reject unknown
+            # fields / a stray threshold), normalize null/full/all → None, size.
+            stage, spec = "single", resolve_single_stage_spec(dataset, single_stage)
         if sample_seed is not None:
             spec["sample_seed"] = sample_seed
         await _run_single_stage(

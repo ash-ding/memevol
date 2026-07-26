@@ -4,6 +4,7 @@ run_gauntlet (Task 5) drives the promotion loop with an injected stage runner.
 Moved from forge/orchestrator.py 2026-07-25."""
 from __future__ import annotations
 
+import copy
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
@@ -121,21 +122,65 @@ def single_stage_wire_spec(ds: str, single_stage_params: Dict[str, Any]) -> Dict
     return spec
 
 
+def _resolve_single_stage_block(ds: str, params: Dict[str, Any]) -> None:
+    """Validate + normalize the `single_stage` block (progressive=false sizing)
+    in place, when present. Same size fields as a stage, NO threshold; a
+    null/"full"/"all" field → None (whole split for that dim); an omitted field
+    → None. A missing/None block is left as-is — required-ness is enforced by
+    resolve_single_stage_spec (which knows `progressive`)."""
+    family = _benchmark_family(ds)
+    sample_field, extras = _FAMILY_FIELDS[family]
+    single = params.get("single_stage")
+    if single is None:
+        return
+    if not isinstance(single, dict):
+        raise ValueError(f"datasets.{ds}.single_stage must be a mapping")
+    ss_allowed = {sample_field, *extras}   # NO threshold
+    unknown = set(single) - ss_allowed
+    if unknown:
+        raise ValueError(
+            f"datasets.{ds}.single_stage: unknown field(s) {sorted(unknown)} "
+            f"for family {family!r}; allowed: {sorted(ss_allowed)} (no threshold)"
+        )
+    for field in (sample_field, *extras):
+        v = single.get(field)
+        if isinstance(v, str) and v.strip().lower() in ("full", "all"):
+            single[field] = None
+        single.setdefault(field, None)   # omitted field → null = whole for that dim
+
+
+def resolve_single_stage_spec(ds: str, single_stage: Optional[Dict[str, Any]]
+                              ) -> Dict[str, Any]:
+    """Presence-check + validate + normalize the `single_stage` block for the
+    progressive=false single pass, returning its wire spec. Self-validating:
+    rejects unknown fields / a stray threshold even when called directly (does
+    NOT depend on a prior _resolve_dataset_stages call). An ABSENT block (None)
+    raises ValueError — but an empty `{}` counts as PRESENT (all-null = whole
+    split), NOT absent. The single source of the progressive=false sizing
+    semantics, shared by forge (resolve_sampling_plan) AND the baseline
+    single-pass paths (harness eval_common, alma launch)."""
+    if single_stage is None:
+        sample_field = _FAMILY_FIELDS[_benchmark_family(ds)][0]
+        raise ValueError(
+            f"datasets.{ds}: progressive=false requires a `single_stage` block "
+            f"(same size fields as a stage; use all-null for the whole split), "
+            f"e.g. single_stage: {{{sample_field}: null}}"
+        )
+    # Validate + normalize a throwaway copy so the caller's dict is untouched.
+    _ss = {"single_stage": copy.deepcopy(single_stage)}
+    _resolve_single_stage_block(ds, _ss)
+    return single_stage_wire_spec(ds, _ss["single_stage"])
+
+
 def resolve_sampling_plan(ds: str, params: Dict[str, Any], progressive: bool
                           ) -> List[Tuple[str, Dict[str, Any], Optional[float]]]:
     """Unified sampling plan for one dataset, shared by forge + baselines.
     progressive=True  → the staged gauntlet (stage1..3 + thresholds).
-    progressive=False → ONE pass sized by the REQUIRED `single_stage` block."""
+    progressive=False → ONE pass sized by the REQUIRED `single_stage` block
+    (via resolve_single_stage_spec: absent → ValueError; empty {} = whole)."""
     if progressive:
         return stage_plan(ds, params)
-    single = params.get("single_stage")
-    if not single:
-        raise ValueError(
-            f"datasets.{ds}: progressive=false requires a `single_stage` block "
-            f"(same size fields as a stage; use all-null for the whole split), "
-            f"e.g. single_stage: {{{_FAMILY_FIELDS[_benchmark_family(ds)][0]}: null}}"
-        )
-    return [("single", single_stage_wire_spec(ds, single), None)]
+    return [("single", resolve_single_stage_spec(ds, params.get("single_stage")), None)]
 
 
 def stage_plan(ds: str, ds_params: Dict[str, Any]) -> List[Tuple[str, Dict[str, Any], Optional[float]]]:
@@ -215,25 +260,10 @@ def _resolve_dataset_stages(ds: str, params: Dict[str, Any]) -> None:
                 f"another null/full field"
             )
 
-    # `single_stage` block (progressive=false sizing): same size fields as a
-    # stage, NO threshold. Validated when present; required-ness is enforced by
-    # resolve_sampling_plan (which knows `progressive`). null/"full"/"all" → None.
-    single = params.get("single_stage")
-    if single is not None:
-        if not isinstance(single, dict):
-            raise ValueError(f"datasets.{ds}.single_stage must be a mapping")
-        ss_allowed = {sample_field, *extras}   # NO threshold
-        unknown = set(single) - ss_allowed
-        if unknown:
-            raise ValueError(
-                f"datasets.{ds}.single_stage: unknown field(s) {sorted(unknown)} "
-                f"for family {family!r}; allowed: {sorted(ss_allowed)} (no threshold)"
-            )
-        for field in (sample_field, *extras):
-            v = single.get(field)
-            if isinstance(v, str) and v.strip().lower() in ("full", "all"):
-                single[field] = None
-            single.setdefault(field, None)   # omitted field → null = whole for that dim
+    # `single_stage` block (progressive=false sizing): validated + normalized in
+    # place when present. Required-ness is enforced by resolve_single_stage_spec
+    # (which knows `progressive`), not here.
+    _resolve_single_stage_block(ds, params)
 
 
 # ---------------------------------------------------------------------------

@@ -63,6 +63,45 @@ def test_resolve_dataset_stages_validates_single_stage_block():
     assert raised
 
 
+def test_resolve_plan_direct_caller_rejects_unknown_field():
+    # Minor-B fix (2026-07-26 review): resolve_sampling_plan self-validates the
+    # single_stage block — a field typo is rejected even WITHOUT a prior
+    # _resolve_dataset_stages call. Before the fix this silently returned a
+    # whole-split plan (the typo'd field → None → whole). Regression anchor.
+    from common.staged_eval import resolve_sampling_plan
+    raised = False
+    try:
+        # `n_conversation` (missing the trailing s) is not a locomo size field.
+        resolve_sampling_plan("locomo", {"single_stage": {"n_conversation": 2}}, progressive=False)
+    except ValueError as e:
+        raised = "unknown field" in str(e)
+    assert raised
+
+
+def test_resolve_plan_empty_single_stage_is_whole_not_error():
+    # Minor-C fix: an empty `{}` block counts as PRESENT (= all-null = whole
+    # split), NOT absent — consistent with forge's normalization. Before the fix
+    # the `if not single` check treated `{}` as absent and raised. Regression
+    # anchor for the whole-split-not-error behavior.
+    from common.staged_eval import resolve_sampling_plan
+    got = resolve_sampling_plan("locomo", {"single_stage": {}}, progressive=False)
+    assert got == [("single", {"n_samples": None, "n_qa": None}, None)]
+
+
+def test_resolve_single_stage_spec_absent_vs_empty():
+    # The shared resolver: None (truly absent) → ValueError; {} (present) → whole
+    # split. This is the single source both forge and the baselines call, so the
+    # absent-vs-empty distinction is uniform across every progressive=false path.
+    from common.staged_eval import resolve_single_stage_spec
+    raised = False
+    try:
+        resolve_single_stage_spec("locomo", None)
+    except ValueError as e:
+        raised = "single_stage" in str(e)
+    assert raised
+    assert resolve_single_stage_spec("locomo", {}) == {"n_samples": None, "n_qa": None}
+
+
 def main():
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = []

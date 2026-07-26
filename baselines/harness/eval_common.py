@@ -145,32 +145,19 @@ async def run_baseline(
         )
 
     # progressive=False: single pass sized by the REQUIRED single_stage block.
-    if not single_stage:
-        sample_field = _FAMILY_FIELDS[_family(dataset)][0]
-        raise ValueError(
-            f"{dataset}: progressive=false requires a `single_stage` block "
-            f"(same size fields as a stage; use all-null for the whole split), "
-            f"e.g. single_stage: {{{sample_field}: null}}"
-        )
-
+    # The shared resolver presence-checks (absent → ValueError, never silent
+    # whole-split; an empty {} counts as present = all-null = whole), validates
+    # (rejects unknown fields — a typo like `n_user` for `n_users` would
+    # otherwise be silently ignored → whole split — and a stray threshold),
+    # normalizes null/"full"/"all" → None, and returns the wire spec.
     from common.tokens import init_global_tracker
     from common.sampling import derive_sample_seed
-    from common.staged_eval import single_stage_wire_spec, _resolve_dataset_stages
-
-    # Validate + normalize the single_stage block through the SAME resolver the
-    # progressive path uses: rejects unknown fields (a typo like `n_user` for
-    # `n_users` would otherwise be silently ignored → whole split for that dim)
-    # and a stray `threshold`, and normalizes null/"full"/"all" → None. Validate
-    # a throwaway copy so the caller's dict is untouched, then size from the
-    # normalized copy.
-    _ss_params = {"single_stage": copy.deepcopy(single_stage)}
-    _resolve_dataset_stages(dataset, _ss_params)
-    normalized_single = _ss_params["single_stage"]
+    from common.staged_eval import resolve_single_stage_spec
 
     # Same fixed step-0 seed derivation as the gauntlet (no search steps here);
     # a no-op at whole-split n=None, only selecting a subset when a field caps.
     spec = {
-        **single_stage_wire_spec(dataset, normalized_single),
+        **resolve_single_stage_spec(dataset, single_stage),
         "sample_seed": derive_sample_seed(sampling_seed, 0, dataset),
     }
     workflow_cls, _env, _rec = resolve(dataset)
