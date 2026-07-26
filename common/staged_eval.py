@@ -195,6 +195,37 @@ def stage_plan(ds: str, ds_params: Dict[str, Any]) -> List[Tuple[str, Dict[str, 
     return plan
 
 
+def missing_sizing_config(dataset: str, params: Dict[str, Any], progressive: bool,
+                           path_prefix: str) -> List[str]:
+    """Missing sizing leaf paths (strict mode) for ONE dataset's RAW yaml
+    `params`. progressive → `stages` with all four entries, each listing its
+    full native size fields (+ `threshold` on stage1/stage2); else →
+    `single_stage` with its full native size fields. A null/absent block or any
+    missing leaf is a returned path (dotted, prefixed by path_prefix). [] when
+    complete. VALIDATION-ONLY — does not mutate params."""
+    sample_field, extras = _FAMILY_FIELDS[_benchmark_family(dataset)]
+    size_fields = [sample_field, *extras]
+    pre = f"{path_prefix}." if path_prefix else "."
+    missing = []
+    if progressive:
+        stages = (params or {}).get("stages")
+        if not isinstance(stages, dict):
+            return [f"{pre}stages"]
+        for entry in ("sanity_check", "stage1", "stage2", "stage3"):
+            block = stages.get(entry)
+            if not isinstance(block, dict):
+                missing.append(f"{pre}stages.{entry}")
+                continue
+            need = size_fields + (["threshold"] if entry in ("stage1", "stage2") else [])
+            missing += [f"{pre}stages.{entry}.{f}" for f in need if f not in block]
+    else:
+        single = (params or {}).get("single_stage")
+        if not isinstance(single, dict):
+            return [f"{pre}single_stage"]
+        missing += [f"{pre}single_stage.{f}" for f in size_fields if f not in single]
+    return missing
+
+
 def _resolve_dataset_stages(ds: str, params: Dict[str, Any]) -> None:
     """Fill defaults + validate the `stages` block of one dataset, in place."""
     family = _benchmark_family(ds)

@@ -80,6 +80,73 @@ def test_amem_default_config_roundtrips_to_argparse_defaults():
     assert resolve_config(d, None, none_over) == d
 
 
+def test_require_present_keys_missing_raises():
+    from common.config import require_present_keys, ConfigCompletenessError
+    raised = False
+    try:
+        require_present_keys({"a", "b"}, {"a", "b", "c"}, context="x config")
+    except ConfigCompletenessError as e:
+        raised = "c" in str(e) and "strict" in str(e).lower()
+    assert raised
+
+def test_require_present_keys_null_counts_as_present():
+    # provided is a KEY set — a key whose YAML value is null is still "provided".
+    from common.config import require_present_keys
+    require_present_keys({"a", "b", "c"}, {"a", "b", "c"}, context="x")  # no raise
+
+def test_provided_keys_unions_yaml_and_nonnull_cli():
+    from common.config import provided_keys
+    got = provided_keys({"a": 1, "b": None}, {"c": 5, "d": None})
+    assert got == {"a", "b", "c"}   # d is None → not provided
+
+def test_strict_on_gating():
+    from common.config import strict_on
+    assert strict_on("cfg.yaml", {"strict_config": True}) is True
+    assert strict_on(None, {"strict_config": True}) is False        # no --config
+    assert strict_on("cfg.yaml", {"strict_config": False}) is False # escape hatch
+    assert strict_on("cfg.yaml", {}) is True                        # default True
+
+def test_require_schema_nested_missing_and_conditional():
+    from common.config import require_schema, REQUIRED, Cond, ConfigCompletenessError
+    schema = {
+        "agent": REQUIRED,
+        "proposer": {
+            "codex": Cond(lambda c: c.get("agent") == "codex", {"model": REQUIRED}),
+            "claude_code": Cond(lambda c: c.get("agent", "claude_code") == "claude_code", {"model": REQUIRED}),
+        },
+    }
+    # agent=codex → codex.model required, claude_code branch inactive
+    file_cfg = {"agent": "codex", "proposer": {"codex": {}}}
+    raised = False
+    try:
+        require_schema(file_cfg, schema, resolved_cfg=file_cfg, context="forge")
+    except ConfigCompletenessError as e:
+        raised = "proposer.codex.model" in str(e)
+    assert raised
+    # complete + active branch only → passes (claude_code.model NOT required)
+    ok = {"agent": "codex", "proposer": {"codex": {"model": "gpt-5.5"}}}
+    require_schema(ok, schema, resolved_cfg=ok, context="forge")  # no raise
+
+def test_missing_sizing_config_progressive_false_and_true():
+    from common.staged_eval import missing_sizing_config
+    # progressive=false: single_stage must list every locomo leaf (null ok)
+    assert missing_sizing_config("locomo", {"single_stage": {"n_conversations": None, "n_qa": None}}, False, "") == []
+    assert missing_sizing_config("locomo", {"single_stage": {"n_conversations": None}}, False, "") == [".single_stage.n_qa"]
+    # null block → the block itself is missing
+    assert missing_sizing_config("locomo", {"single_stage": None}, False, "") == [".single_stage"]
+    # progressive=true: all 4 entries, full leaves, +threshold on stage1/2
+    full = {"stages": {
+        "sanity_check": {"n_conversations": 1, "n_qa": 3},
+        "stage1": {"n_conversations": 2, "n_qa": 20, "threshold": 0.3},
+        "stage2": {"n_conversations": 4, "n_qa": 40, "threshold": 0.35},
+        "stage3": {"n_conversations": 6, "n_qa": 60},
+    }}
+    assert missing_sizing_config("locomo", full, True, "datasets.locomo") == []
+    # missing threshold on stage1
+    bad = {"stages": dict(full["stages"], stage1={"n_conversations": 2, "n_qa": 20})}
+    assert missing_sizing_config("locomo", bad, True, "datasets.locomo") == ["datasets.locomo.stages.stage1.threshold"]
+
+
 def main():
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = []
