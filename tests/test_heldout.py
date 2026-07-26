@@ -10,9 +10,11 @@ Covers:
     errors
   - heldout._run: ensure_image + evaluate_harness wiring (fakes), coverage &
     dataset passthrough, heldout_results.json shape
-  - evaluate_harness coverage=full: single "full" stage plan (fake
-    run_evaluation writing score.json), stages.json reached="full",
-    stage metric = FULL_STAGE
+  - evaluate_harness coverage=full: single "single" stage plan sized by the
+    REQUIRED single_stage config block (fake run_evaluation writing
+    score.json), stages.json reached="single", stage metric = FULL_STAGE,
+    memcache_dir wired when memory_cache=True, ValueError when single_stage
+    is absent
 """
 import asyncio
 import contextlib
@@ -464,6 +466,61 @@ def test_evaluate_harness_full_missing_single_stage_raises():
         except ValueError as e:
             raised = "single_stage" in str(e)
         assert raised
+
+
+def test_evaluate_harness_full_wires_memcache_dir():
+    """CRITICAL regression (fix round 1, 2026-07-26 review): the HOST-side
+    memcache gate in evaluate_harness's `_run_stage_fn` closure must
+    recognize the "single" plan name resolve_sampling_plan emits for
+    progressive=false — otherwise `memory_cache=True` silently becomes a
+    no-op for every `forge.heldout` run (configs/test_example.yaml sets
+    `memory_cache: true`) and every progressive=false search config, since
+    `memcache_dir` is never passed to `run_evaluation` and `--memcache-dir`
+    is never forwarded to the container."""
+    calls = []
+
+    async def fake_run_evaluation(*, harness_dir, image_path, out_dir, dataset,
+                                  split, stage, stage_spec, memcache_dir=None, **kw):
+        calls.append({"stage": stage, "memcache_dir": memcache_dir})
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "score.json").write_text(json.dumps({
+            "benchmark_eval_score": {
+                "benchmark_overall_eval_score": 0.5,
+                "benchmark_overall_eval_standard_deviation": 0.0,
+                "score_max": 1,
+            },
+            "per_user": {"u1": {"reward": 0.5, "n_qa": 1, "failure_info": None}},
+            "invalid_users": [],
+        }))
+        (out_dir / "token_usage.json").write_text(json.dumps({}))
+        return out_dir
+
+    with tempfile.TemporaryDirectory() as td, _test_workspace():
+        src = _mk_src_harness(td)
+        hid = H._stage_harness(src)
+        orig = O.run_evaluation
+        O.run_evaluation = fake_run_evaluation
+        try:
+            asyncio.run(O.evaluate_harness(
+                hid, Path("/fake.sif"),
+                datasets_config={"locomo": {"single_stage": {"n_conversations": None, "n_qa": None}}},
+                split="test", model="gpt-5-mini", judge_model="gpt-5-mini",
+                max_sample_concurrent=1,
+                memory_cache=True, coverage="full",
+            ))
+        finally:
+            O.run_evaluation = orig
+
+        assert len(calls) == 1, calls
+        assert calls[0]["stage"] == "single"
+        assert calls[0]["memcache_dir"] is not None, (
+            "memory_cache=True must wire --memcache-dir for the 'single' "
+            "(progressive=false) stage too — the host-side gate must "
+            "include 'single', not just stage1/2/3/full"
+        )
+        expected_dir = paths.harnesses_dir / hid / "locomo" / "memory_cache"
+        assert calls[0]["memcache_dir"] == expected_dir
+        assert expected_dir.is_dir()
 
 
 def test_evaluate_harness_sample_unchanged():

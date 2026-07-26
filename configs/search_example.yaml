@@ -82,11 +82,13 @@ llm:
 #   true  (default) — staged gauntlet (stage1→2→3 nested sampling +
 #           threshold gates; artifacts under <ds>/<stageN>/, stage_<ds>
 #           records 1/2/3).
-#   false — ONE whole-split evaluation per benchmark: no stage1/2, no
-#           elimination; artifacts under <ds>/full/; stage_<ds> records 4.
+#   false — ONE evaluation per benchmark, sized by the REQUIRED
+#           `single_stage` config block (see `datasets:` below; null field =
+#           whole split for that dimension): no stage1/2, no elimination;
+#           artifacts under <ds>/single/; stage_<ds> records 4.
 #           Sanity gate and smoke_test are unaffected. Cost anchor (test
-#           split full sizes): DynamicMem 4 users × ~400 items, LoCoMo 655 QA
-#           (cat 1-4), LongMemEval 200 questions.
+#           split whole-split sizes): DynamicMem 4 users × ~400 items, LoCoMo
+#           655 QA (cat 1-4), LongMemEval 200 questions.
 # `python -m forge.heldout` (dedicated held-out entry) defaults to full
 # coverage (progressive=false-equivalent) regardless of this field.
 #
