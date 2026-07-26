@@ -1,32 +1,42 @@
-# HippoRAG2 baseline config. Launch:
-#   baselines/venv/bin/python baselines/harness/hipporag2/run.py --config baselines/harness/hipporag2/config.example.yaml
-# Any CLI flag overrides the matching key here (precedence: defaults < this file < CLI).
-dataset: dynamicmem           # dynamicmem | locomo | longmemeval_s | longmemeval_m
-split: test                   # test | search
-progressive: false            # true = staged stage1->2->3 gauntlet; false = single pass
-sampling_seed: 42             # seeds the sampled subset (honored by both paths; no-op at whole-split)
+# =============================================================================
+# hipporag2 (HippoRAG2 retrieval memory) baseline — exhaustive config reference.
+# Launch: baselines/venv/bin/python baselines/harness/hipporag2/run.py \
+#             --config baselines/harness/hipporag2/config.example.yaml
+# CLI flags override any key here (precedence: DEFAULT_CONFIG < this file < CLI).
+#
+# STRICT-CONFIG (default on): with --config, EVERY key below must be present
+# (a null value is allowed). Missing keys abort the run listing what's absent.
+# Set strict_config: false (or pass --no-strict-config) to opt out.
+# =============================================================================
 
-# --- Sizing lives here in the config file only (there are no sizing CLI flags) ---
-# progressive: false REQUIRES `single_stage` — ONE pass sized by these fields.
-# A null (or omitted) field = the WHOLE split for that dimension.
+strict_config: true            # require this file to list every parameter (default true)
+
+dataset: dynamicmem            # which benchmark: dynamicmem | locomo | longmemeval_s | longmemeval_m
+split: test                    # test | search (search = the training split used during evolution)
+progressive: false             # false = ONE single pass (sized by single_stage); true = staged stage1->2->3 gauntlet (sized by stages)
+sampling_seed: 42              # seeds the sampled subset (both paths; a no-op at whole-split)
+memory_cache: true             # cross-stage Phase-1 memory reuse (gauntlet only); --no-memory-cache to disable
+embedding: text-embedding-3-small   # OpenAI embedding model HippoRAG2 uses for its graph/vector index
+llm_model: gpt-5-mini           # shared QA agent AND HippoRAG2's internal LLM (NER, triple extraction, etc.)
+judge_model: gpt-5-mini        # LLM-as-judge model scoring predicted vs reference answers
+embedding_batch_size: null      # batch size for embedding calls; null = HippoRAG2 internal default
+embedding_dtype: null           # embedding tensor dtype (e.g. bfloat16); null = HippoRAG2 internal default
+max_sample_concurrent: 3       # asyncio concurrency across users/samples (higher = faster, more API load)
+
+# --- Sizing (config-file only; no CLI flags). BOTH keys must be present; the
+#     inactive one is null. Under strict mode the active block's leaves must all
+#     be listed (a null leaf = whole split for that dimension). ---
+# progressive: false → single_stage sizes the one pass:
 single_stage:
-  n_users: null               # dynamicmem: null = all users in the split; e.g. 2 to cap
-  n_checkpoints: null         # null = all checkpoints per user
-  n_task_a: null              # null = all Task A items per checkpoint
-  n_task_c: null              # null = all Task C items per checkpoint
-
-# progressive: true alternative — the staged gauntlet (overrides family DEFAULT_STAGES):
-# progressive: true
+  n_users: null                # dynamicmem: null = all users in the split; e.g. 2 to cap
+  n_checkpoints: null          # null = all checkpoints per user
+  n_task_a: null               # null = all Task A items per checkpoint
+  n_task_c: null               # null = all Task C items per checkpoint
+# progressive: true → stages sizes the gauntlet (set single_stage: null above and
+# fill this out; sizes must be non-decreasing across stage1..3):
+stages: null
 # stages:
 #   sanity_check: {n_users: 1, n_checkpoints: 1, n_task_a: 1, n_task_c: 1}
 #   stage1: {n_users: 2, n_checkpoints: 1, n_task_a: 5, n_task_c: 5, threshold: 0.05}
 #   stage2: {n_users: 4, n_checkpoints: 3, n_task_a: 5, n_task_c: 5, threshold: 0.10}
 #   stage3: {n_users: 6, n_checkpoints: 5, n_task_a: 5, n_task_c: 5}
-
-memory_cache: true            # cross-stage Phase-1 memory reuse
-embedding: text-embedding-3-small
-llm_model: gpt-5-mini         # QA agent + HippoRAG internal LLM
-judge_model: gpt-5-mini
-# embedding_batch_size: 32     # optional (default: HippoRAG internal default)
-# embedding_dtype: bfloat16    # optional (default: HippoRAG internal default)
-max_sample_concurrent: 3

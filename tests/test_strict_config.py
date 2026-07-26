@@ -14,17 +14,24 @@ mirror of the run.py block — see task-2-brief.md).
 Two kinds of cases per baseline:
   - test_<m>_missing_key_raises: an almost-empty raw file_cfg -> raises
     ConfigCompletenessError. Exercises real behavior, works today.
-  - test_<m>_complete_passes: a HAND-BUILT complete fixture dict (every
-    DEFAULT_CONFIG key present + full single_stage sizing leaves) -> does NOT
-    raise. Fixtures are hand-built here (NOT the real config.example.yaml,
-    which isn't exhaustive until Task 4) — each fixture carries a
-    `# repointed to the real config in Task 4` comment.
+  - test_<m>_complete_passes: loads the REAL `config.example.yaml` for that
+    baseline (via `common.config.load_config_file`) -> does NOT raise. This is
+    the Task 4 regression anchor that keeps the shipped example configs
+    exhaustive + strict-passing (every DEFAULT_CONFIG key present, full sizing
+    leaves on the active stages/single_stage block).
 """
 import sys, traceback, importlib.util
 from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+
+from common.config import load_config_file
+
+CC_EXAMPLE = PROJECT_ROOT / "baselines" / "harness" / "cc" / "config.example.yaml"
+HIPPORAG2_EXAMPLE = PROJECT_ROOT / "baselines" / "harness" / "hipporag2" / "config.example.yaml"
+AMEM_EXAMPLE = PROJECT_ROOT / "baselines" / "harness" / "amem" / "config.example.yaml"
+ALMA_EXAMPLE = PROJECT_ROOT / "baselines" / "evolve" / "alma" / "config.example.yaml"
 
 
 def _load(mod_name, rel):
@@ -43,12 +50,14 @@ def _strict_check_flat(default_cfg, file_cfg, cli, dataset, progressive, context
 
 
 # ---------------------------------------------------------------------------
-# Hand-built complete fixtures (Task 2 anchor; Task 4 repoints to the real
-# config.example.yaml once those are made exhaustive).
+# Hand-built complete fixtures — kept only where still used by a case OTHER
+# than test_<m>_complete_passes (which now loads the real config.example.yaml
+# directly; see the CC_EXAMPLE / HIPPORAG2_EXAMPLE / AMEM_EXAMPLE / ALMA_EXAMPLE
+# paths above). _complete_hipporag2_cfg / _complete_alma_cfg were dropped —
+# nothing else referenced them.
 # ---------------------------------------------------------------------------
 
 def _complete_cc_cfg():
-    # repointed to the real config in Task 4
     return {
         "dataset": "dynamicmem", "split": "test",
         "progressive": False, "sampling_seed": 42,
@@ -59,21 +68,7 @@ def _complete_cc_cfg():
     }
 
 
-def _complete_hipporag2_cfg():
-    # repointed to the real config in Task 4
-    return {
-        "dataset": "dynamicmem", "split": "test",
-        "progressive": False, "sampling_seed": 42,
-        "single_stage": {"n_users": None, "n_checkpoints": None, "n_task_a": None, "n_task_c": None},
-        "stages": None, "memory_cache": True,
-        "embedding": "text-embedding-3-small", "llm_model": "gpt-5-mini", "judge_model": "gpt-5-mini",
-        "embedding_batch_size": None, "embedding_dtype": None, "max_sample_concurrent": 3,
-        "strict_config": True,
-    }
-
-
 def _complete_amem_cfg():
-    # repointed to the real config in Task 4
     return {
         "dataset": "locomo", "split": "test",
         "progressive": False, "sampling_seed": 42,
@@ -82,21 +77,6 @@ def _complete_amem_cfg():
         "amem_llm_model": "gpt-4o-mini", "retrieve_k": 10,
         "llm_model": "gpt-5-mini", "judge_model": "gpt-5-mini",
         "max_sample_concurrent": 3, "strict_config": True,
-    }
-
-
-def _complete_alma_cfg():
-    # repointed to the real config in Task 4
-    return {
-        "meta_model": "gpt-5", "execution_model": "gpt-5-mini", "steps": 10,
-        "max_memo_concurrent": 2, "result_dir": "check", "status": "search",
-        "dataset": "dynamicmem", "memo_SHA": None, "history_ckpt_path": None,
-        "max_logs": None, "max_sample_concurrent": 3, "n_score_bins": 3,
-        "samples_per_bin": 3, "judge_model": "gpt-5-mini",
-        "progressive": False, "random_sample": False, "sampling_seed": 42,
-        "stages": None,
-        "single_stage": {"n_users": None, "n_checkpoints": None, "n_task_a": None, "n_task_c": None},
-        "memory_cache": True, "strict_config": True,
     }
 
 
@@ -117,10 +97,10 @@ def test_cc_missing_key_raises():
     assert raised
 
 
-# GREEN after Task 4 (hand-built fixture stands in for config.example.yaml)
+# Repointed (Task 4): loads the REAL config.example.yaml -> must pass strict.
 def test_cc_complete_passes():
     cc = _load("_cc_run_complete", "baselines/harness/cc/run.py")
-    fc = _complete_cc_cfg()
+    fc = load_config_file(CC_EXAMPLE)
     cli = {k: None for k in cc.DEFAULT_CONFIG}
     _strict_check_flat(cc.DEFAULT_CONFIG, fc, cli, fc["dataset"], fc["progressive"], "cc")  # no raise
 
@@ -154,10 +134,10 @@ def test_hipporag2_missing_key_raises():
     assert raised
 
 
-# GREEN after Task 4 (hand-built fixture stands in for config.example.yaml)
+# Repointed (Task 4): loads the REAL config.example.yaml -> must pass strict.
 def test_hipporag2_complete_passes():
     hp = _load("_hipporag2_run_complete", "baselines/harness/hipporag2/run.py")
-    fc = _complete_hipporag2_cfg()
+    fc = load_config_file(HIPPORAG2_EXAMPLE)
     cli = {k: None for k in hp.DEFAULT_CONFIG}
     _strict_check_flat(hp.DEFAULT_CONFIG, fc, cli, fc["dataset"], fc["progressive"], "hipporag2")  # no raise
 
@@ -179,10 +159,10 @@ def test_amem_missing_key_raises():
     assert raised
 
 
-# GREEN after Task 4 (hand-built fixture stands in for config.example.yaml)
+# Repointed (Task 4): loads the REAL config.example.yaml -> must pass strict.
 def test_amem_complete_passes():
     am = _load("_amem_run_complete", "baselines/harness/amem/run.py")
-    fc = _complete_amem_cfg()
+    fc = load_config_file(AMEM_EXAMPLE)
     cli = {k: None for k in am.DEFAULT_CONFIG}
     _strict_check_flat(am.DEFAULT_CONFIG, fc, cli, fc["dataset"], fc["progressive"], "amem")  # no raise
 
@@ -225,10 +205,10 @@ def test_alma_missing_key_raises():
     assert raised
 
 
-# GREEN after Task 4 (hand-built fixture stands in for config.example.yaml)
+# Repointed (Task 4): loads the REAL config.example.yaml -> must pass strict.
 def test_alma_complete_passes():
     alma = _load("_alma_run_complete", "baselines/evolve/alma/run.py")
-    fc = _complete_alma_cfg()
+    fc = load_config_file(ALMA_EXAMPLE)
     cli = {k: None for k in alma.DEFAULT_CONFIG}
     _strict_check_flat(alma.DEFAULT_CONFIG, fc, cli, fc["dataset"], fc["progressive"], "alma")  # no raise
 
