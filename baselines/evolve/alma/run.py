@@ -45,6 +45,7 @@ DEFAULT_CONFIG = {
     # progressive gauntlet's family DEFAULT_STAGES; `single_stage` sizes the
     # progressive=false single pass (REQUIRED when progressive=false).
     "stages": None, "single_stage": None, "memory_cache": True,
+    "strict_config": True,
 }
 
 
@@ -54,6 +55,10 @@ def parse_args():
 
     parser.add_argument("--config", type=str, default=None,
                         help="YAML config path (CLI flags override it).")
+    parser.add_argument("--strict-config", dest="strict_config",
+                        action=argparse.BooleanOptionalAction, default=None,
+                        help="Require the config to list every parameter (default on when --config is given). "
+                             "--no-strict-config to disable.")
 
     parser.add_argument("--meta_model", type=str, default=None)
     parser.add_argument("--execution_model", type=str, default=None)
@@ -111,7 +116,20 @@ def build_cfg(args):
     _config_only = {"stages", "single_stage"}
     cli = {k: getattr(args, k) for k in DEFAULT_CONFIG if k not in _config_only}
     cli.update({k: None for k in _config_only})
-    return resolve_config(DEFAULT_CONFIG, args.config, cli)
+    cfg = resolve_config(DEFAULT_CONFIG, args.config, cli)
+
+    from common.config import strict_on, load_config_file, provided_keys, require_present_keys, ConfigCompletenessError
+    from common.staged_eval import missing_sizing_config
+    if strict_on(args.config, cfg):
+        _fc = load_config_file(args.config)
+        require_present_keys(provided_keys(_fc, cli),
+                             set(DEFAULT_CONFIG) - {"strict_config"}, context="alma config")
+        _miss = missing_sizing_config(cfg["dataset"], _fc, cfg["progressive"], path_prefix="")
+        if _miss:
+            raise ConfigCompletenessError(f"alma config: missing sizing leaf(s): {sorted(_miss)} "
+                                          f"(strict-config mode; set strict_config: false to disable)")
+
+    return cfg
 
 
 async def main(cfg):
