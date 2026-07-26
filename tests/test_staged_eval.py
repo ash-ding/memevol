@@ -174,13 +174,18 @@ def test_longmemeval_split_stratified():
 # ---------------- Config schema ----------------
 
 def _resolve(yaml_text):
-    """Run _resolve_config against a temp YAML with an all-defaults Namespace."""
+    """Run _resolve_config against a temp YAML with an all-defaults Namespace.
+
+    Always passes --no-strict-config: this file's fixtures are deliberately
+    partial (only the stage-schema-relevant keys) — this file tests the
+    staged-evaluation config schema, not strict-config completeness (that's
+    tests/test_strict_config_forge.py's job)."""
     from forge.orchestrator import _resolve_config, build_arg_parser
     with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
         f.write(yaml_text)
         path = f.name
     try:
-        args = build_arg_parser().parse_args(["--config", path])
+        args = build_arg_parser().parse_args(["--config", path, "--no-strict-config"])
         return _resolve_config(args)
     finally:
         os.unlink(path)
@@ -370,10 +375,14 @@ def test_coverage_config_validation():
             raise AssertionError("bad coverage value accepted")
         with open(p, "w") as f:
             yaml.safe_dump({"datasets": {"locomo": {}}}, f)
+        # --no-strict-config: this fixture is deliberately partial (only the
+        # coverage-relevant keys) — this test is about coverage validation,
+        # not strict-config completeness.
         cfg = _resolve_config(build_arg_parser().parse_args(
-            ["--config", p, "--coverage", "full"]))
+            ["--config", p, "--coverage", "full", "--no-strict-config"]))
         assert cfg["coverage"] == "full"
-        cfg = _resolve_config(build_arg_parser().parse_args(["--config", p]))
+        cfg = _resolve_config(build_arg_parser().parse_args(
+            ["--config", p, "--no-strict-config"]))
         assert cfg["coverage"] == "sample"  # default unchanged
 
 
@@ -440,22 +449,29 @@ def test_mode_migration_guards():
 
 
 def test_smoke_test_flag():
+    # --no-strict-config: fixture is deliberately partial (only `datasets`) —
+    # this test is about smoke_test resolution, not strict-config completeness.
     import yaml
     from forge.orchestrator import build_arg_parser, _resolve_config
     with tempfile.TemporaryDirectory() as td:
         p = os.path.join(td, "c.yaml")
         with open(p, "w") as f:
             yaml.safe_dump({"datasets": {"locomo": {}}}, f)
-        cfg = _resolve_config(build_arg_parser().parse_args(["--config", p]))
+        cfg = _resolve_config(build_arg_parser().parse_args(
+            ["--config", p, "--no-strict-config"]))
         assert cfg["smoke_test"] is False
         cfg = _resolve_config(build_arg_parser().parse_args(
-            ["--config", p, "--smoke-test"]))
+            ["--config", p, "--smoke-test", "--no-strict-config"]))
         assert cfg["smoke_test"] is True
 
 
 def test_smoke_test_forces_single_step():
     """smoke_test (2026-07-16): steps/k_per_step forced to 1 unless the CLI
-    explicitly overrides — YAML values must not multiply a smoke run."""
+    explicitly overrides — YAML values must not multiply a smoke run.
+
+    --no-strict-config throughout: fixtures are deliberately partial (only
+    the steps/smoke_test-relevant keys) — this test is about smoke_test's
+    single-step forcing, not strict-config completeness."""
     import yaml
     from forge.orchestrator import build_arg_parser, _resolve_config
     with tempfile.TemporaryDirectory() as td:
@@ -465,24 +481,26 @@ def test_smoke_test_forces_single_step():
                             "datasets": {"locomo": {}}}, f)
         # --smoke-test overrides YAML steps/k
         cfg = _resolve_config(build_arg_parser().parse_args(
-            ["--config", p, "--smoke-test"]))
+            ["--config", p, "--smoke-test", "--no-strict-config"]))
         assert cfg["steps"] == 1 and cfg["propose"]["k_per_step"] == 1
         # explicit CLI values are respected (each independently)
         cfg = _resolve_config(build_arg_parser().parse_args(
-            ["--config", p, "--smoke-test", "--steps", "3"]))
+            ["--config", p, "--smoke-test", "--steps", "3", "--no-strict-config"]))
         assert cfg["steps"] == 3 and cfg["propose"]["k_per_step"] == 1
         cfg = _resolve_config(build_arg_parser().parse_args(
-            ["--config", p, "--smoke-test", "--k-per-step", "2"]))
+            ["--config", p, "--smoke-test", "--k-per-step", "2", "--no-strict-config"]))
         assert cfg["steps"] == 1 and cfg["propose"]["k_per_step"] == 2
         # smoke_test set via YAML forces the same way
         p2 = os.path.join(td, "c2.yaml")
         with open(p2, "w") as f:
             yaml.safe_dump({"steps": 5, "smoke_test": True,
                             "datasets": {"locomo": {}}}, f)
-        cfg = _resolve_config(build_arg_parser().parse_args(["--config", p2]))
+        cfg = _resolve_config(build_arg_parser().parse_args(
+            ["--config", p2, "--no-strict-config"]))
         assert cfg["steps"] == 1 and cfg["propose"]["k_per_step"] == 1
         # non-smoke runs keep YAML values untouched
-        cfg = _resolve_config(build_arg_parser().parse_args(["--config", p]))
+        cfg = _resolve_config(build_arg_parser().parse_args(
+            ["--config", p, "--no-strict-config"]))
         assert cfg["steps"] == 5 and cfg["propose"]["k_per_step"] == 2
 
 

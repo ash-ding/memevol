@@ -76,11 +76,16 @@ from forge.prompts import PromptVersionError, load_template_module, resolve_vers
 from forge.proposer import propose, propose_with_fix
 from forge.selection import Entry, Frontier
 
-from common.config import deep_merge as _deep_merge  # shared primitive (2026-07-25)
+from common.config import (
+    deep_merge as _deep_merge,  # shared primitive (2026-07-25)
+    strict_on, missing_schema_paths, raise_completeness,
+    REQUIRED, Cond, ConfigCompletenessError,
+)
 from common.staged_eval import (  # re-export: config moved to common/ 2026-07-25
     STAGE_ORDER, DEFAULT_STAGES, FULL_STAGE, _FAMILY_FIELDS,
     _benchmark_family, _wire_size, stage_wire_spec, full_wire_spec,
     stage_plan, _resolve_dataset_stages, run_gauntlet,
+    missing_sizing_config,
 )
 from common.sampling import derive_sample_seed
 
@@ -266,9 +271,150 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         # a specific prompt revision — required for clean A/B comparisons.
         "version": "latest",
     },
+    # Mandatory-complete config enforcement (2026-07-26): when a --config file
+    # is given, every key in FORGE_REQUIRED_SCHEMA (below) must be explicitly
+    # listed in the YAML (a `null` value counts as provided; an ABSENT key
+    # does not) — silent fallback to a DEFAULT_CONFIG value is disallowed.
+    # Default on; escape hatch: `strict_config: false` / --no-strict-config.
+    # In-process configs (no --config file) are never subject to this check.
+    "strict_config": True,
     # `run_name` defaults to a timestamp at resolve time (so the default isn't
     # frozen at import time). `datasets` intentionally omitted from defaults.
 }
+
+
+# ---------------------------------------------------------------------------
+# Strict-config completeness schema (2026-07-26) — see common/config.py for
+# the REQUIRED/Cond primitives + the walk/raise machinery. `datasets` is
+# validated separately (dynamic per-dataset keys) by _forge_strict_validate's
+# custom loop, not by this static schema.
+# Meta-exempt (NOT required): run_name, coverage (back-compat alias),
+# strict_config (the escape hatch itself).
+# ---------------------------------------------------------------------------
+
+FORGE_REQUIRED_SCHEMA = {
+    "steps": REQUIRED, "smoke_test": REQUIRED, "model": REQUIRED,
+    "judge_model": REQUIRED, "progressive": REQUIRED, "random_sample": REQUIRED,
+    "sampling_seed": REQUIRED, "max_sample_concurrent": REQUIRED,
+    "memory_cache": REQUIRED, "data_isolation": REQUIRED,
+    "adopt_orphans": REQUIRED, "agent": REQUIRED,
+    "llm": {
+        "anthropic_transport": REQUIRED,
+        "vertex": Cond(lambda c: c.get("llm", {}).get("anthropic_transport") == "vertex",
+                       {"project_id": REQUIRED, "region": REQUIRED, "credentials": REQUIRED}),
+    },
+    "proposer": {
+        "max_turns": REQUIRED, "timeout_s": REQUIRED,
+        "claude_code": Cond(lambda c: (c.get("agent", "claude_code")) == "claude_code", {
+            "model": REQUIRED, "effort": REQUIRED,
+            "disallowed_tools": REQUIRED, "auth": REQUIRED,
+            "vertex": Cond(lambda c: c.get("proposer", {}).get("claude_code", {}).get("auth") == "vertex",
+                           {"project_id": REQUIRED, "region": REQUIRED, "credentials": REQUIRED}),
+        }),
+        "codex": Cond(lambda c: c.get("agent") == "codex",
+                      {"model": REQUIRED, "reasoning_effort": REQUIRED}),
+    },
+    "propose": {"k_per_step": REQUIRED},
+    "sanity": {"enabled": REQUIRED, "max_retries": REQUIRED},
+    "seed": {"enabled": REQUIRED,
+             "source": Cond(lambda c: bool(c.get("seed", {}).get("enabled")), REQUIRED)},
+    "gpu": {"enabled": REQUIRED},
+    "prompts": {"version": REQUIRED},
+    # `datasets` validated by _forge_strict_validate's custom loop (dynamic keys).
+    # Meta-exempt (NOT required): run_name, coverage, strict_config.
+}
+
+# forge.heldout drives the SAME _resolve_config but never reads the
+# search-loop-only fields (steps/smoke_test/random_sample/sampling_seed/
+# adopt_orphans/agent/proposer.*/propose.*/sanity.*/seed.*/prompts.*) —
+# FORGE_REQUIRED_SCHEMA wrongly demanded them for heldout configs. Heldout's
+# real config surface (verified via forge/heldout.py's cfg[...] reads):
+# model, judge_model, max_sample_concurrent, memory_cache, gpu.enabled, llm,
+# datasets. `progressive` is intentionally absent here too — heldout forces
+# it via `_apply_heldout_coverage_default`/`_reject_progressive_on_heldout`,
+# not the operator's config.
+HELDOUT_REQUIRED_SCHEMA = {
+    "model": REQUIRED,
+    "judge_model": REQUIRED,
+    "max_sample_concurrent": REQUIRED,
+    "memory_cache": REQUIRED,
+    "gpu": {"enabled": REQUIRED},
+    "llm": {
+        "anthropic_transport": REQUIRED,
+        "vertex": Cond(lambda c: c.get("llm", {}).get("anthropic_transport") == "vertex",
+                       {"project_id": REQUIRED, "region": REQUIRED, "credentials": REQUIRED}),
+    },
+    # `datasets` validated by _forge_strict_validate's dataset loop (heldout is
+    # progressive=false → single_stage leaves). Meta-exempt: run_name, coverage,
+    # progressive, strict_config.
+}
+
+
+def _forge_strict_validate(provided_tree: Dict[str, Any], resolved_cfg: Dict[str, Any],
+                           schema: Dict[str, Any] = FORGE_REQUIRED_SCHEMA) -> None:
+    """Strict completeness for forge's nested config. Validates `schema` (the
+    search-loop schema by default; forge.heldout passes HELDOUT_REQUIRED_SCHEMA,
+    its smaller real config surface) AND the dynamic datasets block, collecting
+    ALL missing paths into ONE raise."""
+    missing = missing_schema_paths(provided_tree, schema, resolved_cfg)
+    ds = provided_tree.get("datasets")
+    if not isinstance(ds, dict) or not ds:
+        missing.append("datasets (non-empty)")
+    else:
+        progressive = bool(resolved_cfg.get("progressive", True))
+        for name, params in ds.items():
+            missing += missing_sizing_config(name, params or {}, progressive, path_prefix=f"datasets.{name}")
+    raise_completeness("forge config", missing)
+
+
+def _forge_provided_tree(file_cfg: Dict[str, Any], args: argparse.Namespace) -> Dict[str, Any]:
+    """Raw YAML ∪ CLI-provided nested paths (deep-copied), for the strict check.
+
+    NOTE (2026-07-26, doc-only): only the CLI flags explicitly overlaid below
+    count as "provided" for strict-config purposes — steps/model/judge_model/
+    max_sample_concurrent/progressive/random_sample/sampling_seed/agent/
+    proposer.max_turns/proposer.timeout_s/prompts.version/proposer.*.model.
+    Other forge CLI flags that also mutate `cfg` in `_resolve_config` (e.g.
+    --datasets, --smoke-test, --gpu, --no-memory-cache, --no-data-isolation,
+    --k-per-step, --anthropic-transport, --sanity-max-retries,
+    --no-adopt-orphans, --no-seed/--seed-source, --claude-auth,
+    --proposer-disallowed-tools, --coverage) are NOT overlaid here. Under
+    strict mode (`--config` + strict_config not disabled), using one of those
+    flags WITHOUT also listing the corresponding key in the YAML still trips
+    the completeness gate (the flag's effect on `cfg` is real, but the
+    provided-tree used for the presence check won't reflect it) — set the key
+    explicitly in the YAML too, or pass `--no-strict-config`. This is a
+    known/accepted gap, not a bug: extending the overlay to every CLI flag is
+    future work, tracked separately.
+    """
+    tree = copy.deepcopy(file_cfg)
+
+    def setpath(path, val):
+        if val is None:
+            return
+        d = tree
+        for k in path[:-1]:
+            d = d.setdefault(k, {})
+        d[path[-1]] = val
+
+    setpath(["steps"], getattr(args, "steps", None))
+    setpath(["model"], getattr(args, "model", None))
+    setpath(["judge_model"], getattr(args, "judge_model", None))
+    setpath(["max_sample_concurrent"], getattr(args, "max_sample_concurrent", None))
+    setpath(["progressive"], getattr(args, "progressive", None))
+    setpath(["random_sample"], getattr(args, "random_sample", None))
+    setpath(["sampling_seed"], getattr(args, "sampling_seed", None))
+    setpath(["agent"], getattr(args, "agent", None))
+    setpath(["proposer", "max_turns"], getattr(args, "proposer_max_turns", None))
+    setpath(["proposer", "timeout_s"], getattr(args, "proposer_timeout_s", None))
+    setpath(["prompts", "version"], getattr(args, "prompts_version", None))
+    # (proposer_model targets the ACTIVE agent's model — already required via the
+    #  claude_code/codex branch; overlay it onto both to be safe.)
+    pm = getattr(args, "proposer_model", None)
+    if pm is not None:
+        setpath(["proposer", "claude_code", "model"], pm)
+        setpath(["proposer", "codex", "model"], pm)
+    return tree
 
 
 def _sync_coverage_progressive(cfg: Dict[str, Any], *, source: str = "progressive") -> None:
@@ -293,13 +439,18 @@ def _sync_coverage_progressive(cfg: Dict[str, Any], *, source: str = "progressiv
         cfg["coverage"] = "sample" if cfg.get("progressive", True) else "full"
 
 
-def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
+def _resolve_config(args: argparse.Namespace, *,
+                    required_schema: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Build the effective run config from defaults, optional YAML, and CLI.
 
     Precedence (lowest → highest):
       1. DEFAULT_CONFIG (this module)
       2. YAML at --config path (if given)
       3. Explicit CLI args (only when not None)
+
+    `required_schema`: the strict-config schema to validate against (search
+    loop callers omit it → FORGE_REQUIRED_SCHEMA; forge.heldout passes
+    HELDOUT_REQUIRED_SCHEMA, its smaller real config surface).
     """
     cfg: Dict[str, Any] = copy.deepcopy(DEFAULT_CONFIG)
     # Raw YAML dict (empty when no --config given) — kept around so the
@@ -349,7 +500,7 @@ def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
     # Top-level CLI overrides (each applied only if explicitly provided)
     for key in (
         "steps", "model", "judge_model",
-        "max_sample_concurrent",
+        "max_sample_concurrent", "strict_config",
     ):
         val = getattr(args, key, None)
         if val is not None:
@@ -501,6 +652,18 @@ def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
                 "proposer.claude_code.auth=vertex requires proposer."
                 "claude_code.vertex.{project_id, region} to be set."
             )
+
+    # Mandatory-complete config gate (2026-07-26): only when --config was
+    # given AND strict_config (default True) is on. `cfg` already reflects
+    # the effective agent/progressive/llm-transport/auth settled above, so
+    # the schema's Cond predicates read the ACTUAL resolved values; `file_cfg`
+    # (raw YAML) ∪ CLI-provided nested paths is the presence source. Callers
+    # with a smaller real config surface (forge.heldout) pass their own
+    # `required_schema`; the search loop's own call sites (main() etc.) never
+    # pass one, so they get FORGE_REQUIRED_SCHEMA via the default.
+    if strict_on(args.config, cfg):
+        _forge_strict_validate(_forge_provided_tree(file_cfg, args), cfg,
+                               required_schema or FORGE_REQUIRED_SCHEMA)
 
     # Validation + stage-schema resolution
     if not cfg.get("datasets"):
@@ -1994,6 +2157,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--config",
         default=None,
         help="Path to a YAML config file. CLI flags override its values.",
+    )
+    parser.add_argument(
+        "--strict-config", dest="strict_config",
+        action=argparse.BooleanOptionalAction, default=None,
+        help="Require --config to list every forge parameter explicitly "
+             "(default on when --config is given; a null value still counts "
+             "as provided). --no-strict-config to disable.",
     )
     # Each override defaults to None so we can detect "explicitly set" vs "use config/default"
     parser.add_argument("--steps", type=int, default=None)

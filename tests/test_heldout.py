@@ -167,7 +167,14 @@ def test_no_harnesses_anywhere_errors():
 
 def test_test_example_yaml_parses():
     """configs/test_example.yaml must survive _resolve_config + carry the
-    heldout keys (placeholder harness paths are NOT existence-checked here)."""
+    heldout keys (placeholder harness paths are NOT existence-checked here).
+
+    --no-strict-config: this file intentionally omits every search-loop-only
+    field (steps, propose.*, proposer.*, sanity.*, seed.*, prompts.*, per its
+    own header comment) that FORGE_REQUIRED_SCHEMA otherwise requires — this
+    test is about coverage/dataset resolution, not strict-config
+    completeness of the example file (a follow-up task can decide whether to
+    make configs/test_example.yaml itself schema-complete)."""
     import yaml
     from forge.orchestrator import build_arg_parser, _resolve_config
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -175,7 +182,8 @@ def test_test_example_yaml_parses():
     raw = yaml.safe_load(open(cfg_path))
     assert isinstance(raw.get("harnesses"), list) and raw["harnesses"]
     assert raw.get("coverage") == "full"
-    cfg = _resolve_config(build_arg_parser().parse_args(["--config", cfg_path]))
+    cfg = _resolve_config(build_arg_parser().parse_args(
+        ["--config", cfg_path, "--no-strict-config"]))
     assert cfg["coverage"] == "full"
     assert set(cfg["datasets"]) == {"dynamicmem", "locomo", "longmemeval_s"}
 
@@ -212,7 +220,8 @@ def test_heldout_omitted_coverage_stays_consistent_with_progressive():
             "harnesses": ["a/b/1_x"],
             "datasets": {"locomo": {}},
         }))
-        args = H._heldout_arg_parser().parse_args(["--config", str(cfg_path)])
+        args = H._heldout_arg_parser().parse_args(
+            ["--config", str(cfg_path), "--no-strict-config"])
         cfg = _resolve_config(args)
         # Before the heldout-specific override: _resolve_config's own default
         # (progressive=True <-> coverage="sample") must already be consistent.
@@ -239,7 +248,7 @@ def test_heldout_explicit_coverage_cli_stays_consistent():
             "harnesses": ["a/b/1_x"], "datasets": {"locomo": {}},
         }))
         args = H._heldout_arg_parser().parse_args(
-            ["--config", str(cfg_path), "--coverage", "sample"])
+            ["--config", str(cfg_path), "--coverage", "sample", "--no-strict-config"])
         cfg = _resolve_config(args)
         raw_yaml = H._yaml_raw(args)
         H._apply_heldout_coverage_default(cfg, args, raw_yaml)
@@ -259,7 +268,8 @@ def test_heldout_yaml_coverage_full_stays_consistent():
             "harnesses": ["a/b/1_x"], "datasets": {"locomo": {}},
             "coverage": "full",
         }))
-        args = H._heldout_arg_parser().parse_args(["--config", str(cfg_path)])
+        args = H._heldout_arg_parser().parse_args(
+            ["--config", str(cfg_path), "--no-strict-config"])
         cfg = _resolve_config(args)
         raw_yaml = H._yaml_raw(args)
         H._apply_heldout_coverage_default(cfg, args, raw_yaml)
@@ -284,7 +294,8 @@ def test_heldout_yaml_progressive_true_no_coverage_not_forced_full():
             "harnesses": ["a/b/1_x"], "datasets": {"locomo": {}},
             "progressive": True,
         }))
-        args = H._heldout_arg_parser().parse_args(["--config", str(cfg_path)])
+        args = H._heldout_arg_parser().parse_args(
+            ["--config", str(cfg_path), "--no-strict-config"])
         cfg = _resolve_config(args)
         raw_yaml = H._yaml_raw(args)
         H._apply_heldout_coverage_default(cfg, args, raw_yaml)
@@ -307,7 +318,8 @@ def test_reject_progressive_on_heldout_raises():
             "harnesses": ["a/b/1_x"], "datasets": {"locomo": {}},
             "progressive": True,
         }))
-        args = H._heldout_arg_parser().parse_args(["--config", str(cfg_path)])
+        args = H._heldout_arg_parser().parse_args(
+            ["--config", str(cfg_path), "--no-strict-config"])
         cfg = _resolve_config(args)
         raw_yaml = H._yaml_raw(args)
         H._apply_heldout_coverage_default(cfg, args, raw_yaml)
@@ -332,7 +344,8 @@ def test_reject_progressive_on_heldout_via_coverage_sample_alias():
             "harnesses": ["a/b/1_x"], "datasets": {"locomo": {}},
             "coverage": "sample",
         }))
-        args = H._heldout_arg_parser().parse_args(["--config", str(cfg_path)])
+        args = H._heldout_arg_parser().parse_args(
+            ["--config", str(cfg_path), "--no-strict-config"])
         cfg = _resolve_config(args)
         raw_yaml = H._yaml_raw(args)
         H._apply_heldout_coverage_default(cfg, args, raw_yaml)
@@ -357,7 +370,8 @@ def test_reject_progressive_on_heldout_default_passes():
         cfg_path.write_text(yaml.safe_dump({
             "harnesses": ["a/b/1_x"], "datasets": {"locomo": {}},
         }))
-        args = H._heldout_arg_parser().parse_args(["--config", str(cfg_path)])
+        args = H._heldout_arg_parser().parse_args(
+            ["--config", str(cfg_path), "--no-strict-config"])
         cfg = _resolve_config(args)
         raw_yaml = H._yaml_raw(args)
         H._apply_heldout_coverage_default(cfg, args, raw_yaml)
@@ -376,7 +390,8 @@ def test_reject_progressive_on_heldout_explicit_full_passes():
             "harnesses": ["a/b/1_x"], "datasets": {"locomo": {}},
             "coverage": "full",
         }))
-        args = H._heldout_arg_parser().parse_args(["--config", str(cfg_path)])
+        args = H._heldout_arg_parser().parse_args(
+            ["--config", str(cfg_path), "--no-strict-config"])
         cfg = _resolve_config(args)
         raw_yaml = H._yaml_raw(args)
         H._apply_heldout_coverage_default(cfg, args, raw_yaml)

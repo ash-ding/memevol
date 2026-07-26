@@ -31,12 +31,17 @@ DEFAULT_CONFIG = {
     "single_stage": None, "stages": None, "memory_cache": True,
     "embedding": "text-embedding-3-small", "llm_model": "gpt-5-mini", "judge_model": "gpt-5-mini",
     "embedding_batch_size": None, "embedding_dtype": None, "max_sample_concurrent": 3,
+    "strict_config": True,
 }
 
 
 def main():
     p = argparse.ArgumentParser(description="HippoRAG2 baseline — multi-dataset")
     p.add_argument("--config", default=None, help="YAML config path (CLI flags override it)")
+    p.add_argument("--strict-config", dest="strict_config",
+                   action=argparse.BooleanOptionalAction, default=None,
+                   help="Require the config to list every parameter (default on when --config is given). "
+                        "--no-strict-config to disable.")
     p.add_argument("--dataset", default=None, choices=DATASETS)
     p.add_argument("--split", default=None, choices=["test", "search"])
     p.add_argument("--progressive", action=argparse.BooleanOptionalAction, default=None)
@@ -58,8 +63,20 @@ def main():
         "embedding": a.embedding, "llm_model": a.llm_model, "judge_model": a.judge_model,
         "embedding_batch_size": a.embedding_batch_size, "embedding_dtype": a.embedding_dtype,
         "max_sample_concurrent": a.max_sample_concurrent,
+        "strict_config": a.strict_config,
     }
     cfg = resolve_config(DEFAULT_CONFIG, a.config, cli)
+
+    from common.config import strict_on, load_config_file, provided_keys, require_present_keys, ConfigCompletenessError
+    from common.staged_eval import missing_sizing_config
+    if strict_on(a.config, cfg):
+        _fc = load_config_file(a.config)
+        require_present_keys(provided_keys(_fc, cli),
+                             set(DEFAULT_CONFIG) - {"strict_config"}, context="hipporag2 config")
+        _miss = missing_sizing_config(cfg["dataset"], _fc, cfg["progressive"], path_prefix="")
+        if _miss:
+            raise ConfigCompletenessError(f"hipporag2 config: missing sizing leaf(s): {sorted(_miss)} "
+                                          f"(strict-config mode; set strict_config: false to disable)")
 
     memo_class = make_memo_class(
         HippoRAGMemo, embedding=cfg["embedding"], llm_model=cfg["llm_model"],
