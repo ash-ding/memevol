@@ -155,12 +155,22 @@ async def run_baseline(
 
     from common.tokens import init_global_tracker
     from common.sampling import derive_sample_seed
-    from common.staged_eval import single_stage_wire_spec
+    from common.staged_eval import single_stage_wire_spec, _resolve_dataset_stages
+
+    # Validate + normalize the single_stage block through the SAME resolver the
+    # progressive path uses: rejects unknown fields (a typo like `n_user` for
+    # `n_users` would otherwise be silently ignored → whole split for that dim)
+    # and a stray `threshold`, and normalizes null/"full"/"all" → None. Validate
+    # a throwaway copy so the caller's dict is untouched, then size from the
+    # normalized copy.
+    _ss_params = {"single_stage": copy.deepcopy(single_stage)}
+    _resolve_dataset_stages(dataset, _ss_params)
+    normalized_single = _ss_params["single_stage"]
 
     # Same fixed step-0 seed derivation as the gauntlet (no search steps here);
     # a no-op at whole-split n=None, only selecting a subset when a field caps.
     spec = {
-        **single_stage_wire_spec(dataset, single_stage),
+        **single_stage_wire_spec(dataset, normalized_single),
         "sample_seed": derive_sample_seed(sampling_seed, 0, dataset),
     }
     workflow_cls, _env, _rec = resolve(dataset)

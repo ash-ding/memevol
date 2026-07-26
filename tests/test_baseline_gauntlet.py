@@ -238,6 +238,34 @@ def test_progressive_false_requires_single_stage():
 
 
 # --------------------------------------------------------------------------
+# (c4) progressive=False with an UNKNOWN single_stage field raises (typo guard)
+#      — validated through the SAME resolver the progressive path uses, so a
+#      mis-spelled size field errors instead of silently mis-sizing.
+# --------------------------------------------------------------------------
+
+def test_progressive_false_rejects_unknown_single_stage_field():
+    from baselines.harness.eval_common import run_baseline
+
+    out_dir = Path(tempfile.mkdtemp(prefix="test_gauntlet_bad_field_"))
+    raised = None
+    try:
+        try:
+            asyncio.run(run_baseline(
+                dataset="locomo", split="test",
+                single_stage={"n_conversations": 2, "bogus": 1},   # `bogus` is not a locomo size field
+                memo_class=_StubMemo, qa_model="gpt-5-mini", judge_model="gpt-5-mini",
+                out_dir=out_dir, max_sample_concurrent=1,
+                progressive=False,
+            ))
+        except ValueError as e:
+            raised = e
+    finally:
+        shutil.rmtree(out_dir, ignore_errors=True)
+    assert raised is not None, "expected ValueError for an unknown single_stage field"
+    assert "bogus" in str(raised), str(raised)
+
+
+# --------------------------------------------------------------------------
 # (d) whole-split seed no-op: at n=None the seeded task SET equals unseeded
 # --------------------------------------------------------------------------
 

@@ -86,8 +86,11 @@ literal same `common/` modules forge uses:
   `false` — matching each side's historical behavior): drives the candidate
   through the shared stage1→2→3 gauntlet (`common.staged_eval.run_gauntlet`)
   instead of a single one-shot pass. Sizes come from the family
-  `DEFAULT_STAGES` (in `common/staged_eval.py`) unless overridden with
-  `--stages '<json>'`. `run_gauntlet`'s promotion/elimination logic,
+  `DEFAULT_STAGES` (in `common/staged_eval.py`) unless overridden — alma via
+  `--stages '<json>'`, harness via a `stages:` block in its `--config` YAML
+  (harness has no sizing CLI flags; see "Configuration"). The harness
+  single-pass path (`--no-progressive`, the default) instead REQUIRES a
+  `single_stage:` block in the config. `run_gauntlet`'s promotion/elimination logic,
   `stages.json` shape, and cost accounting are IDENTICAL to forge's — only
   the stage-execution callback differs (forge: `singularity exec`; baselines:
   an in-process `run_all_users` runner).
@@ -115,10 +118,12 @@ literal same `common/` modules forge uses:
 CLI surface per side:
 
 ```bash
-# harness (cc / hipporag2 / amem run.py) — no --random_sample (no step loop)
+# harness (cc / hipporag2 / amem run.py) — no --random_sample (no step loop);
+# sizes (stages: for progressive, single_stage: for one-shot) live in the
+# --config YAML, never on the CLI
 baselines/venv/bin/python baselines/harness/hipporag2/run.py \
-    --dataset locomo --progressive --sampling-seed 42 \
-    --stages '{"stage1": {"n_conversations": 2, "n_qa": 10, "threshold": 0.2}}'
+    --config baselines/harness/hipporag2/config.example.yaml \
+    --dataset locomo --progressive --sampling-seed 42
 
 # alma (evolve/alma/run.py) — has a step loop, so random_sample applies
 baselines/venv/bin/python baselines/evolve/alma/run.py \
@@ -158,11 +163,12 @@ forge uses:
 - **alma's entrypoint is `run.py`** (renamed from its old script name) —
   every baseline is now invoked the same way: `evolve/alma/run.py`,
   `harness/cc/run.py`, `harness/hipporag2/run.py`, `harness/amem/run.py`.
-- **JSON-string fields** (`--stages` / `--stage-spec`) travel as literal
-  JSON strings on the CLI but as native mappings in YAML (e.g. `stages:
-  {stage1: {...}}`); each `run.py` only parses the CLI string when it's
-  actually given, so an omitted `--stages` never overwrites a YAML dict with
-  `{}`.
+- **alma's JSON-string field** (`--stages`) travels as a literal JSON string
+  on the CLI but as a native mapping in YAML (e.g. `stages: {stage1: {...}}`);
+  alma's `run.py` only parses the CLI string when it's actually given, so an
+  omitted `--stages` never overwrites a YAML dict. The `harness/*` runners
+  have NO sizing CLI flags — their `stages:` (progressive) and `single_stage:`
+  (one-shot) sizes are native YAML mappings in the `--config` file only.
 
 ```bash
 # alma — config file only
@@ -232,10 +238,12 @@ Skips memory-architecture design entirely. `CCMemo`
 
 ```bash
 baselines/venv/bin/python baselines/harness/cc/run.py \
+    --config baselines/harness/cc/config.example.yaml \
     --dataset locomo --model claude-sonnet-4-20250514
 
+# sizes live in the --config YAML (e.g. single_stage: {n_users: 2} for 2 dynamicmem users)
 baselines/venv/bin/python baselines/harness/cc/run.py \
-    --dataset dynamicmem --stage-spec '{"n_samples": 2}'
+    --config my_cc.yaml --dataset dynamicmem
 ```
 
 Useful as a reference point: how well does a strong agent do **with no
@@ -420,12 +428,14 @@ through `run_baseline`.)
 
 ```bash
 # One conversation, a handful of QAs — does the adapter run end-to-end?
+# Size via a --config YAML with `single_stage: {n_conversations: 1, n_qa: 3}`.
 baselines/venv/bin/python baselines/harness/<name>/run.py \
-    --dataset locomo --split search --stage-spec '{"n_samples": 1, "n_qa": 3}'
+    --config my_baseline.yaml --dataset locomo --split search
 
 # DynamicMem protocol check — 1 user exercises the checkpoint interleaving
+# (config YAML: `single_stage: {n_users: 1}`)
 baselines/venv/bin/python baselines/harness/<name>/run.py \
-    --dataset dynamicmem --split search --stage-spec '{"n_samples": 1}'
+    --config my_baseline.yaml --dataset dynamicmem --split search
 ```
 
 Iterate here as much as you like — this is the split the main method
