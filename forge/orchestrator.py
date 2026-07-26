@@ -323,11 +323,39 @@ FORGE_REQUIRED_SCHEMA = {
     # Meta-exempt (NOT required): run_name, coverage, strict_config.
 }
 
+# forge.heldout drives the SAME _resolve_config but never reads the
+# search-loop-only fields (steps/smoke_test/random_sample/sampling_seed/
+# adopt_orphans/agent/proposer.*/propose.*/sanity.*/seed.*/prompts.*) —
+# FORGE_REQUIRED_SCHEMA wrongly demanded them for heldout configs. Heldout's
+# real config surface (verified via forge/heldout.py's cfg[...] reads):
+# model, judge_model, max_sample_concurrent, memory_cache, gpu.enabled, llm,
+# datasets. `progressive` is intentionally absent here too — heldout forces
+# it via `_apply_heldout_coverage_default`/`_reject_progressive_on_heldout`,
+# not the operator's config.
+HELDOUT_REQUIRED_SCHEMA = {
+    "model": REQUIRED,
+    "judge_model": REQUIRED,
+    "max_sample_concurrent": REQUIRED,
+    "memory_cache": REQUIRED,
+    "gpu": {"enabled": REQUIRED},
+    "llm": {
+        "anthropic_transport": REQUIRED,
+        "vertex": Cond(lambda c: c.get("llm", {}).get("anthropic_transport") == "vertex",
+                       {"project_id": REQUIRED, "region": REQUIRED, "credentials": REQUIRED}),
+    },
+    # `datasets` validated by _forge_strict_validate's dataset loop (heldout is
+    # progressive=false → single_stage leaves). Meta-exempt: run_name, coverage,
+    # progressive, strict_config.
+}
 
-def _forge_strict_validate(provided_tree: Dict[str, Any], resolved_cfg: Dict[str, Any]) -> None:
-    """Strict completeness for forge's nested config. Validates the static schema
-    AND the dynamic datasets block, collecting ALL missing paths into ONE raise."""
-    missing = missing_schema_paths(provided_tree, FORGE_REQUIRED_SCHEMA, resolved_cfg)
+
+def _forge_strict_validate(provided_tree: Dict[str, Any], resolved_cfg: Dict[str, Any],
+                           schema: Dict[str, Any] = FORGE_REQUIRED_SCHEMA) -> None:
+    """Strict completeness for forge's nested config. Validates `schema` (the
+    search-loop schema by default; forge.heldout passes HELDOUT_REQUIRED_SCHEMA,
+    its smaller real config surface) AND the dynamic datasets block, collecting
+    ALL missing paths into ONE raise."""
+    missing = missing_schema_paths(provided_tree, schema, resolved_cfg)
     ds = provided_tree.get("datasets")
     if not isinstance(ds, dict) or not ds:
         missing.append("datasets (non-empty)")
@@ -392,13 +420,18 @@ def _sync_coverage_progressive(cfg: Dict[str, Any], *, source: str = "progressiv
         cfg["coverage"] = "sample" if cfg.get("progressive", True) else "full"
 
 
-def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
+def _resolve_config(args: argparse.Namespace, *,
+                    required_schema: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Build the effective run config from defaults, optional YAML, and CLI.
 
     Precedence (lowest → highest):
       1. DEFAULT_CONFIG (this module)
       2. YAML at --config path (if given)
       3. Explicit CLI args (only when not None)
+
+    `required_schema`: the strict-config schema to validate against (search
+    loop callers omit it → FORGE_REQUIRED_SCHEMA; forge.heldout passes
+    HELDOUT_REQUIRED_SCHEMA, its smaller real config surface).
     """
     cfg: Dict[str, Any] = copy.deepcopy(DEFAULT_CONFIG)
     # Raw YAML dict (empty when no --config given) — kept around so the
@@ -605,9 +638,13 @@ def _resolve_config(args: argparse.Namespace) -> Dict[str, Any]:
     # given AND strict_config (default True) is on. `cfg` already reflects
     # the effective agent/progressive/llm-transport/auth settled above, so
     # the schema's Cond predicates read the ACTUAL resolved values; `file_cfg`
-    # (raw YAML) ∪ CLI-provided nested paths is the presence source.
+    # (raw YAML) ∪ CLI-provided nested paths is the presence source. Callers
+    # with a smaller real config surface (forge.heldout) pass their own
+    # `required_schema`; the search loop's own call sites (main() etc.) never
+    # pass one, so they get FORGE_REQUIRED_SCHEMA via the default.
     if strict_on(args.config, cfg):
-        _forge_strict_validate(_forge_provided_tree(file_cfg, args), cfg)
+        _forge_strict_validate(_forge_provided_tree(file_cfg, args), cfg,
+                               required_schema or FORGE_REQUIRED_SCHEMA)
 
     # Validation + stage-schema resolution
     if not cfg.get("datasets"):

@@ -50,6 +50,7 @@ from typing import Any, Dict, List
 
 from forge.env_builder import EnvBuildError, ensure_image
 from forge.orchestrator import (
+    HELDOUT_REQUIRED_SCHEMA,
     _attach_run_log,
     _build_objectives,
     _resolve_config,
@@ -250,7 +251,7 @@ def main() -> None:
     args = _heldout_arg_parser().parse_args()
     _setup_logging(getattr(args, "verbose", False))
 
-    cfg = _resolve_config(args)
+    cfg = _resolve_config(args, required_schema=HELDOUT_REQUIRED_SCHEMA)
     raw_yaml = _yaml_raw(args)
     harnesses = _resolve_harnesses(args, raw_yaml)
     _apply_heldout_coverage_default(cfg, args, raw_yaml)

@@ -174,6 +174,58 @@ def test_forge_no_config_file_never_trips_strict():
     assert "locomo" in cfg["datasets"]
 
 
+# ---------------------------------------------------------------------------
+# forge.heldout's smaller real config surface (Task 3 Step 7 — plan gap
+# review): forge.heldout also drives _resolve_config, but never reads the
+# search-loop-only fields (steps/smoke_test/random_sample/sampling_seed/
+# adopt_orphans/agent/proposer.*/propose.*/sanity.*/seed.*/prompts.*), so
+# FORGE_REQUIRED_SCHEMA wrongly demanded them for heldout configs.
+# HELDOUT_REQUIRED_SCHEMA is the smaller schema forge.heldout passes via
+# _resolve_config's `required_schema` kwarg. NOT configs/test_example.yaml
+# here — that's Task 5; these use an in-file fixture.
+# ---------------------------------------------------------------------------
+
+def _heldout_min_cfg():
+    return {
+        "model": "gpt-5-mini", "judge_model": "gpt-5-mini",
+        "max_sample_concurrent": 3, "memory_cache": True,
+        "gpu": {"enabled": False},
+        "llm": {
+            "anthropic_transport": "api",
+            "vertex": {"project_id": "p", "region": "r", "credentials": None},
+        },
+        "datasets": {
+            "locomo": {
+                "single_stage": {"n_conversations": None, "n_qa": None},
+            },
+        },
+    }
+
+
+def test_heldout_schema_omits_search_fields():
+    """A cfg complete for HELDOUT_REQUIRED_SCHEMA but with NO proposer/sanity/
+    seed (search-loop-only fields heldout never reads) must NOT raise."""
+    orch = _load("_orch8", "forge/orchestrator.py")
+    fc = _heldout_min_cfg()
+    assert "proposer" not in fc and "sanity" not in fc and "seed" not in fc
+    orch._forge_strict_validate(fc, resolved_cfg={**fc, "progressive": False},
+                                schema=orch.HELDOUT_REQUIRED_SCHEMA)  # no raise
+
+
+def test_heldout_schema_missing_model_raises():
+    orch = _load("_orch9", "forge/orchestrator.py")
+    from common.config import ConfigCompletenessError
+    fc = _heldout_min_cfg()
+    del fc["model"]
+    raised = False
+    try:
+        orch._forge_strict_validate(fc, resolved_cfg={**fc, "progressive": False},
+                                    schema=orch.HELDOUT_REQUIRED_SCHEMA)
+    except ConfigCompletenessError as e:
+        raised = "model" in str(e)
+    assert raised
+
+
 def main():
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = []
