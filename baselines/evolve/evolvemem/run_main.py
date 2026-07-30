@@ -44,6 +44,13 @@ def parse_args():
     parser.add_argument("--dataset", type=str, default="dynamicmem", choices=DATASETS)
     parser.add_argument("--tag", type=str, default="default",
                         help="Evolution-state tag (separate concurrent experiments).")
+    parser.add_argument("--substrate", type=str, default="native",
+                        choices=["native", "simplemem"],
+                        help="Which memory system θ drives: native = EvolveMemMemo "
+                             "(paper-description approximation); simplemem = the "
+                             "vendored upstream substrate (paper-faithful setup; "
+                             "NOTE its read path makes 2-4 internal LLM calls per "
+                             "query — each round is several× the native cost).")
 
     # Evolution loop
     parser.add_argument("--rounds", type=int, default=8,
@@ -79,6 +86,10 @@ async def search(args) -> None:
 
     log = get_logger("main")
     tracker = init_global_tracker()
+    if args.substrate == "simplemem":
+        from baselines.evolve.evolvemem import action_space_simplemem as space
+    else:
+        from baselines.evolve.evolvemem import action_space as space
     state = EvolutionState(args.dataset, tag=args.tag)
 
     if state.completed >= args.rounds:
@@ -89,7 +100,7 @@ async def search(args) -> None:
         log.info(f"Resuming from round {state.completed} (target {args.rounds}).")
 
     for r in range(state.completed, args.rounds):
-        config = state.next_config()
+        config = state.next_config() if state.rounds else space.clamp_config({})
         log.info(f"[blue]━━━━━━━ EVOLUTION ROUND {r}/{args.rounds - 1} ━━━━━━━[/blue]")
 
         # EVALUATE
@@ -99,6 +110,7 @@ async def search(args) -> None:
             model=args.execution_model, judge_model=args.judge_model,
             eval_n_samples=args.eval_n_samples, eval_n_qa=args.eval_n_qa,
             max_logs=args.max_logs, max_sample_concurrent=args.max_sample_concurrent,
+            substrate=args.substrate,
         )
         score = read_score(run_dir)
         log.info(f"[ROUND {r}] score={score:.3f}")
@@ -109,6 +121,7 @@ async def search(args) -> None:
             proposal = await diagnose(
                 failure_log, config, state.rounds, args.dataset,
                 meta_model=args.meta_model,
+                space=space if args.substrate != "native" else None,
             )
         except Exception as exc:
             log.warning(f"[ROUND {r}] diagnosis failed ({exc}); recording empty proposal")
@@ -119,6 +132,7 @@ async def search(args) -> None:
         next_config, action, converged = guarded_update(
             state, config, score, proposal,
             tau_rev=args.tau_rev, epsilon=args.epsilon, explore_seed=r,
+            space=space if args.substrate != "native" else None,
         )
         state.record_round(config, score, proposal, action, next_config, run_dir)
 
@@ -160,6 +174,7 @@ async def test(args) -> None:
         model=args.execution_model, judge_model=args.judge_model,
         eval_n_samples=args.eval_n_samples, eval_n_qa=args.eval_n_qa,
         max_logs=args.max_logs, max_sample_concurrent=args.max_sample_concurrent,
+        substrate=args.substrate,
     )
     log.info(f"TEST score: {read_score(run_dir):.3f} → {run_dir}")
 

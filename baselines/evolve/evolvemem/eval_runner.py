@@ -61,6 +61,7 @@ async def run_evaluation(
     max_logs: Optional[int] = None,
     max_sample_concurrent: int = 3,
     output_run_dir: Optional[Path] = None,
+    substrate: str = "native",
 ) -> Path:
     """Stage `config` and run one full evaluation pass. Returns the run dir."""
     if output_run_dir is None:
@@ -92,6 +93,7 @@ async def run_evaluation(
         "--status", status,
         "--max_sample_concurrent", str(max_sample_concurrent),
         "--judge_model", judge_model,
+        "--substrate", substrate,
     ]
     if max_logs is not None:
         launch_args += ["--max_logs", str(max_logs)]

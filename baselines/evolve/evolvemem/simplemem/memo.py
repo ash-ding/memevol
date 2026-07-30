@@ -187,6 +187,14 @@ class SimpleMemMemo(MemoStructure):
     def _ensure_system(self):
         if self._system is not None:
             return
+        # θ wiring: when the evolution loop stages a config file (same
+        # $EVOLVEMEM_CONFIG channel the native memo uses), its dimensions
+        # override _cfg — this is what makes the substrate evolvable.
+        cfg_path = os.environ.get("EVOLVEMEM_CONFIG")
+        if cfg_path and Path(cfg_path).exists():
+            from baselines.evolve.evolvemem.action_space_simplemem import load_config
+            theta = load_config(Path(cfg_path))
+            self._cfg = {**self._cfg, **{k: v for k, v in theta.items() if k != "extras"}}
         # Run-level knobs → the vendored settings' env-var resolution path.
         # Same values for every instance in a run, so cross-instance env
         # writes are benign.

@@ -105,8 +105,15 @@ def guarded_update(
     tau_rev: float = 0.05,
     epsilon: float = 0.01,
     explore_seed: int = 0,
+    space=None,
 ) -> Tuple[Dict[str, Any], str, bool]:
-    """Return (θ_{r+1}, action, converged). Mutates state.stagnant_rounds."""
+    """Return (θ_{r+1}, action, converged). Mutates state.stagnant_rounds.
+
+    `space` — action-space module providing apply_adjustments / clamp_config /
+    perturb_config (e.g. action_space_simplemem for the real-substrate θ);
+    None = the native EvolveMemMemo space."""
+    if space is None:
+        from baselines.evolve.evolvemem import action_space as space
     prev_score = state.rounds[-1]["score"] if state.rounds else None
     best = state.best()
 
@@ -127,14 +134,14 @@ def guarded_update(
     if state.stagnant_rounds >= 2:
         state.stagnant_rounds = 0
         log.info("guard: EXPLORE (2 stagnant rounds) — random perturbation η_exp")
-        return perturb_config(current_config, seed=explore_seed), "explore", False
+        return space.perturb_config(current_config, seed=explore_seed), "explore", False
 
     # Branch 3 — apply the diagnosis proposal.
     adjustments = list(proposal.get("adjustments", []))
     per_cat = proposal.get("per_category")
-    next_cfg = apply_adjustments(current_config, adjustments)
+    next_cfg = space.apply_adjustments(current_config, adjustments)
     if isinstance(per_cat, list) and per_cat:
-        next_cfg = clamp_config({**next_cfg, "per_category": per_cat})
+        next_cfg = space.clamp_config({**next_cfg, "per_category": per_cat})
 
     # Plateau convergence: improvement below ε with nothing left to try this
     # round (Algorithm 1 line 17) — flag converged AFTER recording the apply.

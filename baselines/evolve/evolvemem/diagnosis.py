@@ -152,39 +152,56 @@ async def diagnose(
     round_history: List[Dict[str, Any]],
     dataset: str,
     meta_model: str = "gpt-5",
+    space=None,
 ) -> Dict[str, Any]:
-    """One diagnosis call → validated proposal dict (schema above)."""
-    from common.llm import Agent
-    from baselines.evolve.evolvemem.action_space import (
-        BOUNDS, DEFAULT_CONFIG, ENUM_KEYS, EXTRA_HOOKS,
-    )
+    """One diagnosis call → validated proposal dict (schema above).
 
-    space_desc = {
-        "dimensions": {k: v for k, v in DEFAULT_CONFIG.items() if k not in ("per_category", "extras")},
-        "numeric_bounds": {k: list(v) for k, v in BOUNDS.items()},
-        "enums": {k: list(v) for k, v in ENUM_KEYS.items()},
-        "extras_hooks_implemented": EXTRA_HOOKS,
-    }
+    `space` — an action-space module exposing `space_description()` and
+    `RUBRIC` (e.g. action_space_simplemem for the real-substrate θ).
+    None keeps the native EvolveMemMemo space (backward compatible)."""
+    from common.llm import Agent
+
+    if space is not None:
+        space_desc = space.space_description()
+        rubric = space.RUBRIC
+    else:
+        from baselines.evolve.evolvemem.action_space import (
+            BOUNDS, DEFAULT_CONFIG, ENUM_KEYS, EXTRA_HOOKS,
+        )
+        space_desc = {
+            "dimensions": {k: v for k, v in DEFAULT_CONFIG.items() if k not in ("per_category", "extras")},
+            "numeric_bounds": {k: list(v) for k, v in BOUNDS.items()},
+            "enums": {k: list(v) for k, v in ENUM_KEYS.items()},
+            "extras_hooks_implemented": EXTRA_HOOKS,
+        }
+        rubric = _RUBRIC
     history_view = [
         {"round": h["round"], "score": h["score"], "action": h["action"],
          "summary": h.get("diagnosis_summary", "")}
         for h in round_history[-6:]
     ]
 
-    system = (
-        "You are the diagnosis module of EvolveMem, a self-evolving memory "
-        "system. You read per-question failure logs from the last evaluation "
-        "round and propose a targeted retrieval-configuration adjustment Δθ.\n\n"
-        + _RUBRIC +
-        "\nRules:\n"
-        "- Ground every root cause in specific examples (quote the query).\n"
-        "- Propose FEW, TARGETED adjustments (1-4), not a shotgun rewrite.\n"
+    param_rules = (
         "- `parameter` must name a dimension of the action space, an "
         "`extras.<hook>` key from extras_hooks_implemented, or a genuinely "
         "new `extras.<name>` dimension (state its intended semantics in the "
         "rationale; unimplemented ones are recorded but inert).\n"
         "- Use `per_category` (regex on the question text) when a failure "
         "pattern is category-specific rather than global.\n"
+    ) if space is None else (
+        "- `parameter` must name a dimension of the action space exactly — "
+        "this substrate has NO extras hooks and NO per_category overrides "
+        "(leave `per_category` absent/empty).\n"
+    )
+    system = (
+        "You are the diagnosis module of EvolveMem, a self-evolving memory "
+        "system. You read per-question failure logs from the last evaluation "
+        "round and propose a targeted retrieval-configuration adjustment Δθ.\n\n"
+        + rubric +
+        "\nRules:\n"
+        "- Ground every root cause in specific examples (quote the query).\n"
+        "- Propose FEW, TARGETED adjustments (1-4), not a shotgun rewrite.\n"
+        + param_rules +
         "- Avoid re-proposing an adjustment that the history shows was "
         "already tried and reverted."
     )
