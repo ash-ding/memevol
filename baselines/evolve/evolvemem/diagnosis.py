@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from common.logger import get_logger
 
@@ -153,6 +153,7 @@ async def diagnose(
     dataset: str,
     meta_model: str = "gpt-5",
     space=None,
+    max_adjustments: Optional[int] = None,
 ) -> Dict[str, Any]:
     """One diagnosis call → validated proposal dict (schema above).
 
@@ -200,7 +201,11 @@ async def diagnose(
         + rubric +
         "\nRules:\n"
         "- Ground every root cause in specific examples (quote the query).\n"
-        "- Propose FEW, TARGETED adjustments (1-4), not a shotgun rewrite.\n"
+        + (f"- Propose AT MOST {max_adjustments} adjustments, ORDERED by "
+           f"expected impact (highest first) — only the top "
+           f"{max_adjustments} will be applied this round.\n"
+           if max_adjustments else
+           "- Propose FEW, TARGETED adjustments (1-4), not a shotgun rewrite.\n")
         + param_rules +
         "- Avoid re-proposing an adjustment that the history shows was "
         "already tried and reverted."

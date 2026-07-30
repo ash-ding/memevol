@@ -242,3 +242,26 @@ def load_config(path: Optional[Path]) -> Dict[str, Any]:
         return clamp_config({})
     with Path(path).open(encoding="utf-8") as f:
         return clamp_config(json.load(f))
+
+
+def weak_initial_config() -> Dict[str, Any]:
+    """Official weak_initial_config, mapped onto this space: a deliberately
+    under-powered BM25-only starting point (semantic + structured views off,
+    tight context, no augmentation, no recency shaping) so evolution has
+    room to climb — mirrors upstream's weak start ("we want the
+    evolved-minus-static delta to be the headline"). With only the keyword
+    view active the fusion mode is immaterial; weighted_sum with w_kw=1
+    reproduces upstream's keyword_only."""
+    return clamp_config({
+        "k_sem": 0,
+        "k_kw": 5,
+        "k_str": 0,
+        "b_ctx": 8,
+        "fusion_mode": "weighted_sum",
+        "w_sem": 0.0, "w_kw": 1.0, "w_str": 0.0,
+        "lambda_importance": 0.0,
+        "lambda_recency": 0.0,
+        "entity_swap": False,
+        "query_decomposition": False,
+        "answer_style": "concise",
+    })

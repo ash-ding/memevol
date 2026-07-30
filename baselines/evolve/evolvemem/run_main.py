@@ -56,10 +56,26 @@ def parse_args():
     parser.add_argument("--rounds", type=int, default=8,
                         help="Target TOTAL rounds (resumable; re-running with the "
                              "same value is a no-op).")
+    parser.add_argument("--guard", type=str, default="elitist",
+                        choices=["elitist", "paper"],
+                        help="elitist = official-code hill-climbing (incumbent, "
+                             "acceptance threshold, change cap; DEFAULT); "
+                             "paper = the paper's Eq.4 revert/explore/apply.")
+    parser.add_argument("--init", type=str, default="weak",
+                        choices=["weak", "default"],
+                        help="Round-0 θ: weak = official weak_initial_config "
+                             "(BM25-leaning minimal start; DEFAULT, matches the "
+                             "official evolution setup); default = the space's "
+                             "full defaults (strong start).")
+    # elitist-guard knobs (official EvolutionConfig defaults)
+    parser.add_argument("--acceptance_threshold", type=float, default=0.003)
+    parser.add_argument("--max_changes_per_round", type=int, default=2)
+    parser.add_argument("--max_consec_noaccept", type=int, default=5)
+    # paper-guard knobs
     parser.add_argument("--tau_rev", type=float, default=0.05,
-                        help="Revert threshold τ_rev on score drop.")
+                        help="paper guard: revert threshold τ_rev on score drop.")
     parser.add_argument("--epsilon", type=float, default=0.01,
-                        help="Stagnation/convergence threshold ε.")
+                        help="paper guard: stagnation/convergence threshold ε.")
     parser.add_argument("--meta_model", type=str, default="gpt-5",
                         help="Diagnosis LLM.")
 
@@ -82,7 +98,9 @@ async def search(args) -> None:
     from common.tokens import init_global_tracker
     from baselines.evolve.evolvemem.diagnosis import build_failure_log, diagnose
     from baselines.evolve.evolvemem.eval_runner import read_score, run_evaluation
-    from baselines.evolve.evolvemem.evolution import EvolutionState, guarded_update
+    from baselines.evolve.evolvemem.evolution import (
+        EvolutionState, elitist_update, guarded_update,
+    )
 
     log = get_logger("main")
     tracker = init_global_tracker()
@@ -100,7 +118,12 @@ async def search(args) -> None:
         log.info(f"Resuming from round {state.completed} (target {args.rounds}).")
 
     for r in range(state.completed, args.rounds):
-        config = state.next_config() if state.rounds else space.clamp_config({})
+        if state.rounds:
+            config = state.next_config()
+        elif args.init == "weak":
+            config = space.weak_initial_config()
+        else:
+            config = space.clamp_config({})
         log.info(f"[blue]━━━━━━━ EVOLUTION ROUND {r}/{args.rounds - 1} ━━━━━━━[/blue]")
 
         # EVALUATE
@@ -122,6 +145,8 @@ async def search(args) -> None:
                 failure_log, config, state.rounds, args.dataset,
                 meta_model=args.meta_model,
                 space=space if args.substrate != "native" else None,
+                max_adjustments=(args.max_changes_per_round
+                                 if args.guard == "elitist" else None),
             )
         except Exception as exc:
             log.warning(f"[ROUND {r}] diagnosis failed ({exc}); recording empty proposal")
@@ -129,11 +154,21 @@ async def search(args) -> None:
                         "summary": f"diagnosis failed: {exc}"}
 
         # PROPOSE + GUARD
-        next_config, action, converged = guarded_update(
-            state, config, score, proposal,
-            tau_rev=args.tau_rev, epsilon=args.epsilon, explore_seed=r,
-            space=space if args.substrate != "native" else None,
-        )
+        space_arg = space if args.substrate != "native" else None
+        if args.guard == "elitist":
+            next_config, action, converged = elitist_update(
+                state, config, score, proposal,
+                acceptance_threshold=args.acceptance_threshold,
+                max_changes_per_round=args.max_changes_per_round,
+                max_consec_noaccept=args.max_consec_noaccept,
+                space=space_arg,
+            )
+        else:
+            next_config, action, converged = guarded_update(
+                state, config, score, proposal,
+                tau_rev=args.tau_rev, epsilon=args.epsilon, explore_seed=r,
+                space=space_arg,
+            )
         state.record_round(config, score, proposal, action, next_config, run_dir)
 
         best = state.best()

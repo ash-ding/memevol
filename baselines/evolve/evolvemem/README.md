@@ -53,6 +53,30 @@ baselines/venv/bin/python baselines/evolve/evolvemem/run_main.py \
 memo (no `$EVOLVEMEM_CONFIG` → clamped defaults) — useful as the r=0
 "minimal baseline" reference the paper measures relative gains against.
 
+## Official-code alignment (2026-07-29 audit)
+
+Audited against the official implementation (`EvolveMem/evolvemem/` inside
+the SimpleMem repo). Key finding: the official code itself moved away from
+the paper's Eq. 4 guard to **elitist hill-climbing** (incumbent + 
+acceptance_threshold=0.003, ≤2 field changes/round, stop after 5
+consecutive rejections — its comments call this "the default going
+forward"), and deliberately starts evolution from a **weak initial config**
+(BM25-only, semantic off) so the evolved-minus-static delta is large.
+This implementation now defaults to the official behavior:
+
+- `--guard elitist` (default) reproduces the official update rule;
+  `--guard paper` keeps the paper's Eq. 4 revert/explore/apply.
+- `--init weak` (default) starts from the official weak_initial_config
+  mapped onto the active space; `--init default` starts from the space's
+  full defaults (the strong start used by the pre-audit lme100 runs).
+- In elitist mode the diagnosis is asked to order proposals by expected
+  impact and only the top `--max_changes_per_round` apply.
+
+Still deliberately NOT adopted from the official code: its dataset-tuned
+answer prompts / F1 scoring (we keep the shared QA agent + judge for
+cross-method comparability) and its diagnosis "cookbook" of
+lever→expected-gain hints (our rubric stays evidence-driven).
+
 ## Faithfulness notes (deviations from the paper, and why)
 
 1. **Entity reinforcement ρ accumulates at BUILD time** (co-occurrence

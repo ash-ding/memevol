@@ -1,13 +1,21 @@
-"""EvolveMem guarded meta-analyzer (§3.3, Eq. 4) + persistent evolution state.
+"""EvolveMem meta-analyzer — two guard modes + persistent evolution state.
 
-Update rule per round r (f_r = score of θ_r):
+ELITIST (default — matches the OFFICIAL EvolveMem code, whose
+EvolutionConfig ships elitist=True with acceptance_threshold=0.003,
+max_changes_per_round=2, max_consec_noaccept=5; its comments call this
+"the default going forward" over the paper's free-form update style):
+    a round's candidate θ is ADOPTED as incumbent only if its score
+    exceeds the incumbent's by > acceptance_threshold; otherwise it is
+    rejected and the next candidate is built from the incumbent again.
+    At most max_changes_per_round adjustments apply per round; evolution
+    stops after max_consec_noaccept consecutive rejections.
+
+PAPER (--guard paper — the paper's Eq. 4, which the official code moved
+away from):
     θ_{r+1} = θ*                      if f_{r-1} − f_r > τ_rev   (revert)
             = perturb(θ_r)            if |f_r − f_{r-1}| < ε for 2 rounds (explore)
             = clamp(θ_r ⊕ Δθ_r)       otherwise                  (apply)
-
-Convergence: stop after the improvement over the previous round falls below
-ε while no explore/revert fired (mirrors Algorithm 1's plateau break), or at
---rounds.
+    Convergence: improvement below ε with no pending adjustments.
 
 State lives in config_archive/<dataset>/evolution_log.json and is resumable:
 each round records θ, score, the diagnosis, the guard action, and the run
@@ -156,3 +164,78 @@ def guarded_update(
              + (f", {len(per_cat)} per-category rules" if isinstance(per_cat, list) and per_cat else "")
              + ")")
     return next_cfg, action, converged
+
+
+def elitist_update(
+    state: EvolutionState,
+    current_config: Dict[str, Any],
+    score: float,
+    proposal: Dict[str, Any],
+    acceptance_threshold: float = 0.003,
+    max_changes_per_round: int = 2,
+    max_consec_noaccept: int = 5,
+    space=None,
+) -> Tuple[Dict[str, Any], str, bool]:
+    """Official-code guard: strict hill-climbing with an incumbent.
+
+    Mirrors the upstream EvolutionConfig(elitist=True) semantics:
+      - round 0 is always accepted (it defines the first incumbent);
+      - a later round is accepted iff score > incumbent_score +
+        acceptance_threshold; otherwise rejected — the next candidate is
+        built from the INCUMBENT config, not the rejected one;
+      - at most `max_changes_per_round` adjustments are applied per round
+        (the diagnosis is asked to order proposals by expected impact);
+      - `max_consec_noaccept` consecutive rejections ⇒ converged.
+
+    Returns (θ_{r+1}, action, converged); action ∈ {accept, reject}.
+    Records rely on `action` to reconstruct the incumbent on resume.
+    """
+    if space is None:
+        from baselines.evolve.evolvemem import action_space as space
+
+    # Incumbent = the last ACCEPTED round (round 0 always counts).
+    incumbent_cfg, incumbent_score = current_config, score   # round-0 case
+    consec_noaccept = 0
+    accepted_this_round = True
+    if state.rounds:
+        accepted = [r for r in state.rounds
+                    if r["round"] == 0 or r.get("action") == "accept"]
+        inc = accepted[-1]
+        # Did THIS round's candidate beat the incumbent?
+        if score > inc["score"] + acceptance_threshold:
+            incumbent_cfg, incumbent_score = current_config, score
+        else:
+            incumbent_cfg, incumbent_score = inc["config"], inc["score"]
+            accepted_this_round = False
+        # Consecutive-rejection streak including this round.
+        for r in reversed(state.rounds):
+            if r["round"] == 0 or r.get("action") == "accept":
+                break
+            consec_noaccept += 1
+        if not accepted_this_round:
+            consec_noaccept += 1
+
+    action = "accept" if accepted_this_round else "reject"
+    if not accepted_this_round:
+        log.info(f"guard(elitist): REJECT (score {score:.3f} ≤ incumbent "
+                 f"{incumbent_score:.3f} + {acceptance_threshold}); "
+                 f"consec_noaccept={consec_noaccept}")
+    else:
+        log.info(f"guard(elitist): ACCEPT (incumbent score → {incumbent_score:.3f})")
+
+    if consec_noaccept >= max_consec_noaccept:
+        log.info(f"guard(elitist): CONVERGED ({consec_noaccept} consecutive rejections)")
+        return dict(incumbent_cfg), action, True
+
+    # Next candidate = incumbent ⊕ top-N adjustments (diagnosis orders them
+    # by expected impact; the cap is the official max_changes_per_round).
+    adjustments = list(proposal.get("adjustments", []))[:max_changes_per_round]
+    next_cfg = space.apply_adjustments(incumbent_cfg, adjustments)
+    per_cat = proposal.get("per_category")
+    if isinstance(per_cat, list) and per_cat:
+        next_cfg = space.clamp_config({**next_cfg, "per_category": per_cat})
+    if not adjustments and not per_cat:
+        # Nothing left to try — treat as terminal (mirrors official
+        # convergence when the diagnosis has no further proposals).
+        return dict(incumbent_cfg), action, True
+    return next_cfg, action, False

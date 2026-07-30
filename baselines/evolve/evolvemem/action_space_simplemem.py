@@ -152,3 +152,18 @@ evidence, not intuition):
 - COST WASTE: score fine but reflection/planning burning calls without
   changing outcomes. Levers: max_reflection_rounds down, enable_planning off.
 """
+
+
+def weak_initial_config() -> Dict[str, Any]:
+    """Official weak_initial_config mapped onto the substrate's knobs:
+    keyword-leaning small-k retrieval, planning/reflection off. Upstream
+    disables the semantic view outright (top_k=0); the vendored SimpleMem
+    retriever isn't guaranteed to accept 0, so 1 is the near-off floor."""
+    return clamp_config({
+        "semantic_top_k": 1,
+        "keyword_top_k": 5,
+        "structured_top_k": 0,
+        "enable_planning": False,
+        "enable_reflection": False,
+        "max_reflection_rounds": 0,
+    })
