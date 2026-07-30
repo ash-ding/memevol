@@ -9,23 +9,44 @@ method in memevol's root; it now lives here as a baseline so a new method
 
 Run from the **project root**:
 
-```bash
-# Smoke test — 2 users, 2 steps, 10 QA per user
-python baselines/evolve/alma/run_main.py \
-    --status search \
-    --eval_n_samples 2 --eval_n_qa 10 \
-    --steps 2
+Evaluation **sizes live in the `--config` YAML only** — there is NO sizing CLI
+flag (the flat `--eval_n_*/--check_n_*` and the `--stages` flags were removed).
+Two config keys drive sizing:
 
-# Full training — 6 users, 10 steps, 20 QA per user
-python baselines/evolve/alma/run_main.py \
-    --status search \
-    --eval_n_samples 6 --eval_n_qa 20 \
-    --steps 10
+- `stages` — overrides the family `DEFAULT_STAGES` for the `progressive: true`
+  gauntlet (stage1 → stage2 → stage3 with promotion thresholds).
+- `single_stage` — sizes the `progressive: false` single pass. **Required when
+  `progressive: false`** (a clear `ValueError` is raised if absent — no silent
+  whole-split). Same size fields as a stage, NO threshold; a `null` / omitted
+  field = the whole split for that dimension.
+
+alma is **config-first**: pass `--config <yaml>` for a reusable settings file and
+override individual fields on the CLI (precedence: `DEFAULT_CONFIG` < `--config`
+YAML < CLI flags). `config.example.yaml` is a documented, runnable example:
+
+```bash
+# Config-first: everything from the YAML, override --status / --steps on the CLI
+python baselines/evolve/alma/run.py \
+    --config baselines/evolve/alma/config.example.yaml \
+    --status search --steps 10
+```
+
+```bash
+# Smoke test — copy config.example.yaml, set tiny sizes in its `stages`
+# (progressive: true) or `single_stage` (progressive: false) block, then:
+python baselines/evolve/alma/run.py \
+    --config baselines/evolve/alma/config.smoke.yaml \
+    --status search --steps 2
+
+# Full training — stage1→2→3 gauntlet (stages from the config), 10 steps
+python baselines/evolve/alma/run.py \
+    --config baselines/evolve/alma/config.example.yaml \
+    --status search --progressive --steps 10
 
 # Evaluate a saved memo on held-out users (007–010)
-python baselines/evolve/alma/run_main.py \
-    --status test \
-    --memo_SHA <SHA>
+python baselines/evolve/alma/run.py \
+    --config baselines/evolve/alma/config.example.yaml \
+    --status test --memo_SHA <SHA> --progressive
 ```
 
 See `search.sh` for search-loop examples and `test.sh` for held-out evaluation examples.
@@ -34,7 +55,8 @@ See `search.sh` for search-loop examples and `test.sh` for held-out evaluation e
 
 ```
 baselines/evolve/alma/
-├── run_main.py         # CLI entry
+├── run.py              # CLI entry (config-first: --config <yaml> + CLI overrides)
+├── config.example.yaml # documented, runnable example config (DEFAULT_CONFIG < YAML < CLI)
 ├── meta_agent.py       # MetaAgent: analyze → generate → examine → evaluate
 ├── memo_manager.py     # memo lifecycle, reward, softmax selection
 ├── meta_agent_prompt.py  # meta-LLM prompts (shows common/harness_base.py as the contract)
@@ -104,13 +126,17 @@ see `tests/test_alma_multidataset.py::test_dynamicmem_prompts_byte_identical`).
 Example commands (mirroring "Quick start" above, run from the project root):
 
 ```bash
-# LoCoMo — smoke-size search loop, 1 step
-python baselines/evolve/alma/run_main.py \
+# LoCoMo — search loop, 1 step, per-step random subset. Sizes come from the
+# config's `stages` block (a LoCoMo config sets n_conversations/n_qa); the
+# CLI carries only the per-invocation knobs.
+python baselines/evolve/alma/run.py \
+    --config baselines/evolve/alma/config.locomo.yaml \
     --dataset locomo --status search --steps 1 \
-    --eval_n_samples 1 --eval_n_qa 3 --check_n_samples 1 --check_n_qa 2 \
+    --progressive --random_sample --sampling_seed 42 \
     --meta_model gpt-5-mini --execution_model gpt-5-mini --judge_model gpt-5-mini
 
 # LongMemEval (s or m variant) — evaluate a saved memo on the held-out split
-python baselines/evolve/alma/run_main.py \
-    --dataset longmemeval_s --status test --memo_SHA <SHA>
+python baselines/evolve/alma/run.py \
+    --config baselines/evolve/alma/config.example.yaml \
+    --dataset longmemeval_s --status test --memo_SHA <SHA> --progressive
 ```

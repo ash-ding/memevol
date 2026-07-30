@@ -42,10 +42,10 @@ class LongMemEvalWorkflow(BaseWorkflow):
     # ------------------------------------------------------------------
 
     async def load_user_data(
-        self, user_dir: str, eval_n_qa: Optional[int]
+        self, user_dir: str, eval_n_qa: Optional[int], sample_seed: Optional[str] = None
     ) -> Tuple[List[Dict], List[Dict]]:
         sessions, _profile, qa_pairs = load_user_data(
-            user_dir, eval_n_qa, variant=self._variant
+            user_dir, eval_n_qa, variant=self._variant, sample_seed=sample_seed
         )
         return sessions, qa_pairs
 

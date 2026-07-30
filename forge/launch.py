@@ -186,7 +186,9 @@ async def _async_main(args: argparse.Namespace) -> None:
     # n_samples None = no cap (coverage=full: the whole split).
     n_samples = stage_spec.get("n_samples")
     task_list = env_module.get_task_list(
-        status=args.split, eval_n_samples=None if n_samples is None else int(n_samples)
+        status=args.split,
+        eval_n_samples=None if n_samples is None else int(n_samples),
+        seed=stage_spec.get("sample_seed"),
     )
 
     workflow = workflow_cls(
@@ -199,10 +201,11 @@ async def _async_main(args: argparse.Namespace) -> None:
     workflow.status = args.split
     workflow.output_run_dir = out_dir
 
-    # Cross-stage memory cache: active only for the gauntlet tiers (stage1..3);
-    # sanity/dev runs never read or write it (harness code can still change
-    # during the sanity-fix retry loop).
-    if args.memcache_dir and args.stage in ("stage1", "stage2", "stage3", "full"):
+    # Cross-stage memory cache: active for the gauntlet tiers (stage1..3) and
+    # the progressive=false single pass ("single"; "full" kept for back-compat
+    # — no caller emits it anymore); sanity/dev runs never read or write it
+    # (harness code can still change during the sanity-fix retry loop).
+    if args.memcache_dir and args.stage in ("stage1", "stage2", "stage3", "full", "single"):
         from common.memory_cache import harness_fingerprint
         workflow.memory_cache_dir = Path(args.memcache_dir)
         workflow.harness_fingerprint = harness_fingerprint(harness_dir)
@@ -236,10 +239,13 @@ if __name__ == "__main__":
     parser.add_argument("--split", default="search", choices=["search", "test"],
                         help="Benchmark split (the user-facing `mode` maps search/test/dev onto this)")
     parser.add_argument("--stage", default="stage3",
-                        choices=["sanity", "stage1", "stage2", "stage3", "full"],
-                        help="Staged-evaluation tier this run belongs to. "
+                        choices=["sanity", "stage1", "stage2", "stage3", "full", "single"],
+                        help="Staged-evaluation tier this run belongs to "
+                             "('single' = the progressive=false one-pass tier, "
+                             "sized by the dataset's single_stage config block; "
+                             "'full' is a legacy alias, no longer emitted). "
                              "Gates the cross-stage memory cache (active for "
-                             "stage1..3 only); sizes come from --stage-spec.")
+                             "stage1..3 + single/full); sizes come from --stage-spec.")
     parser.add_argument("--stage-spec", required=True,
                         help='JSON stage spec, e.g. \'{"n_samples": 2, "n_qa": 20}\' '
                              '(dynamicmem: n_samples/n_checkpoints/n_task_a/n_task_c; '

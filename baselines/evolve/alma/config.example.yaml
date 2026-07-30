@@ -1,0 +1,53 @@
+# =============================================================================
+# alma (memory-structure evolution baseline) — exhaustive config reference.
+# Launch: baselines/venv/bin/python baselines/evolve/alma/run.py \
+#             --config baselines/evolve/alma/config.example.yaml
+# CLI flags override any key here (precedence: DEFAULT_CONFIG < this file < CLI).
+#
+# STRICT-CONFIG (default on): with --config, EVERY key below must be present
+# (a null value is allowed). Missing keys abort the run listing what's absent.
+# Set strict_config: false (or pass --no-strict-config) to opt out.
+# =============================================================================
+
+strict_config: true            # require this file to list every parameter (default true)
+
+meta_model: gpt-5               # the meta-agent LLM that WRITES candidate memory structures each step
+execution_model: gpt-5-mini     # LLM that RUNS the evolved harness during eval (QA agent inside the memo)
+steps: 10                       # outer-loop search iterations (--status search only)
+max_memo_concurrent: 2          # parallel candidate memo evals per step
+result_dir: check               # subdir (under alma's results tree) where this run's artifacts land
+status: search                  # search (meta-learning loop) | test (held-out eval of one memo_SHA)
+dataset: dynamicmem              # which benchmark to evolve on: dynamicmem | locomo | longmemeval_s | longmemeval_m (one per run)
+memo_SHA: null                   # set for --status test: the specific evolved memo's SHA to evaluate
+history_ckpt_path: null          # resume the search loop from a prior checkpoint file; null = start fresh
+max_logs: null                   # cap ingested logs per user (dynamicmem); null = all logs visible at that checkpoint
+max_sample_concurrent: 3         # asyncio concurrency across users/samples within one candidate's eval
+n_score_bins: 3                  # number of score-stratified bins used when sampling parent candidates
+samples_per_bin: 3               # how many candidates are kept per score bin
+judge_model: gpt-5-mini          # LLM-as-judge model scoring predicted vs reference answers
+progressive: true                # true (alma default) = staged stage1->2->3 gauntlet (sized by stages); false = ONE single pass (sized by single_stage)
+random_sample: false             # true = each search step samples a different seeded subset; false = same fixed subset every step
+sampling_seed: 42                # base seed combined with (step_index, dataset) to derive each step's sample
+memory_cache: true               # cross-stage Phase-1 memory reuse (gauntlet only); --no-memory_cache to disable
+
+# --- Sizing (config-file only; no CLI flags). BOTH keys must be present; the
+#     inactive one is null. Under strict mode the active block's leaves must all
+#     be listed (a null leaf = whole split for that dimension). alma's default
+#     is progressive: true, so `stages` is the ACTIVE block below and
+#     `single_stage` is null. ---
+# progressive: false alternative → single_stage would size the one pass
+# (dynamicmem native fields; set stages: null and fill this out instead):
+single_stage: null
+# single_stage:
+#   n_users: null               # dynamicmem: null = all users in the split; e.g. 2 to cap
+#   n_checkpoints: null         # null = all checkpoints per user
+#   n_task_a: null              # null = all Task A items per checkpoint
+#   n_task_c: null              # null = all Task C items per checkpoint
+
+# progressive: true → stages sizes the gauntlet (ACTIVE — sizes must be
+# non-decreasing across stage1..3; threshold gates promotion on stage1/stage2):
+stages:
+  sanity_check: {n_users: 1, n_checkpoints: 1, n_task_a: 1, n_task_c: 1}
+  stage1: {n_users: 2, n_checkpoints: 1, n_task_a: 5, n_task_c: 5, threshold: 0.05}
+  stage2: {n_users: 4, n_checkpoints: 3, n_task_a: 5, n_task_c: 5, threshold: 0.10}
+  stage3: {n_users: 6, n_checkpoints: 5, n_task_a: 5, n_task_c: 5}

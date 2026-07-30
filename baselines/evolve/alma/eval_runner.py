@@ -11,6 +11,7 @@ hard kill + RuntimeError when exceeded.
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import shutil
 import sys
@@ -55,14 +56,17 @@ async def run_evaluation(
     memory_SHA: str,
     mode: str = "eval",
     model: str = "gpt-5-mini",
-    eval_n_samples: int = 6,
     status: str = "search",
     max_logs: Optional[int] = None,
-    eval_n_qa: Optional[int] = None,
     max_sample_concurrent: int = 6,
     judge_model: str = "gpt-5-mini",
-    check_n_samples: int = 6,
-    check_n_qa: int = 3,
+    progressive: bool = True,
+    random_sample: bool = False,
+    sampling_seed: int = 42,
+    step_index: int = 0,
+    stages: Optional[dict] = None,
+    single_stage: Optional[dict] = None,
+    memory_cache: bool = True,
     source_path: Optional[Path] = None,
     output_run_dir: Optional[Path] = None,
     dataset: str = "dynamicmem",
@@ -136,19 +140,24 @@ async def run_evaluation(
         "--memory_id", memory_SHA,
         "--output_run_dir", str(output_run_dir),
         "--model", model,
-        "--eval_n_samples", str(eval_n_samples),
         "--status", status,
         "--max_sample_concurrent", str(max_sample_concurrent),
         "--mode", mode,
         "--judge_model", judge_model,
-        "--check_n_samples", str(check_n_samples),
-        "--check_n_qa", str(check_n_qa),
         "--dataset", dataset,
+        # Progressive gauntlet + per-step deterministic sampling (Task 9).
+        "--progressive" if progressive else "--no-progressive",
+        "--random_sample" if random_sample else "--no-random_sample",
+        "--sampling_seed", str(sampling_seed),
+        "--step_index", str(step_index),
+        "--memory_cache" if memory_cache else "--no-memory_cache",
     ]
     if max_logs is not None:
         launch_args += ["--max_logs", str(max_logs)]
-    if eval_n_qa is not None:
-        launch_args += ["--eval_n_qa", str(eval_n_qa)]
+    if stages is not None:
+        launch_args += ["--stages", json.dumps(stages)]
+    if single_stage is not None:
+        launch_args += ["--single_stage", json.dumps(single_stage)]
 
     env = {
         **os.environ,
@@ -170,7 +179,13 @@ async def run_evaluation(
         stderr=asyncio.subprocess.PIPE,
     )
 
-    timeout_s = SUBPROCESS_TIMEOUT.get(mode, 8 * 3600)
+    # A progressive eval runs stage1→2→3 in ONE subprocess, so it needs more
+    # wall-clock headroom than a single flat pass (forge's per-stage caps sum to
+    # 2h+4h+8h). check stays at 2h; a single non-progressive eval keeps 8h.
+    if mode == "eval" and progressive:
+        timeout_s = 14 * 3600
+    else:
+        timeout_s = SUBPROCESS_TIMEOUT.get(mode, 8 * 3600)
     score_path = output_run_dir / "score.json"
 
     # Dual-signal wait — race between:

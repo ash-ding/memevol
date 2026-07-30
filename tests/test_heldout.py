@@ -10,9 +10,11 @@ Covers:
     errors
   - heldout._run: ensure_image + evaluate_harness wiring (fakes), coverage &
     dataset passthrough, heldout_results.json shape
-  - evaluate_harness coverage=full: single "full" stage plan (fake
-    run_evaluation writing score.json), stages.json reached="full",
-    stage metric = FULL_STAGE
+  - evaluate_harness coverage=full: single "single" stage plan sized by the
+    REQUIRED single_stage config block (fake run_evaluation writing
+    score.json), stages.json reached="single", stage metric = FULL_STAGE,
+    memcache_dir wired when memory_cache=True, ValueError when single_stage
+    is absent
 """
 import asyncio
 import contextlib
@@ -165,7 +167,14 @@ def test_no_harnesses_anywhere_errors():
 
 def test_test_example_yaml_parses():
     """configs/test_example.yaml must survive _resolve_config + carry the
-    heldout keys (placeholder harness paths are NOT existence-checked here)."""
+    heldout keys (placeholder harness paths are NOT existence-checked here).
+
+    --no-strict-config: this file intentionally omits every search-loop-only
+    field (steps, propose.*, proposer.*, sanity.*, seed.*, prompts.*, per its
+    own header comment) that FORGE_REQUIRED_SCHEMA otherwise requires — this
+    test is about coverage/dataset resolution, not strict-config
+    completeness of the example file (a follow-up task can decide whether to
+    make configs/test_example.yaml itself schema-complete)."""
     import yaml
     from forge.orchestrator import build_arg_parser, _resolve_config
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -173,7 +182,8 @@ def test_test_example_yaml_parses():
     raw = yaml.safe_load(open(cfg_path))
     assert isinstance(raw.get("harnesses"), list) and raw["harnesses"]
     assert raw.get("coverage") == "full"
-    cfg = _resolve_config(build_arg_parser().parse_args(["--config", cfg_path]))
+    cfg = _resolve_config(build_arg_parser().parse_args(
+        ["--config", cfg_path, "--no-strict-config"]))
     assert cfg["coverage"] == "full"
     assert set(cfg["datasets"]) == {"dynamicmem", "locomo", "longmemeval_s"}
 
@@ -184,6 +194,208 @@ def test_search_example_yaml_parses():
     cfg_path = os.path.join(repo, "configs", "search_example.yaml")
     cfg = _resolve_config(build_arg_parser().parse_args(["--config", cfg_path]))
     assert cfg["coverage"] == "sample"
+
+
+# ---------------- progressive/coverage consistency (fix-round finding 1) ----------------
+
+def _consistent(cfg):
+    """progressive=True must always mean coverage=='sample' and vice versa —
+    the persisted config.yaml snapshot must never show a contradictory pair."""
+    return cfg["progressive"] == (cfg["coverage"] == "sample")
+
+
+def test_heldout_omitted_coverage_stays_consistent_with_progressive():
+    """Regression for fix-round finding 1: a heldout YAML that omits
+    `coverage:` entirely used to leave cfg["progressive"] at _resolve_config's
+    default (True) while _apply_heldout_coverage_default forced
+    cfg["coverage"] to "full" — a self-contradictory pair persisted into
+    config.yaml. Must now resync to progressive=False (matching the "full"
+    that heldout defaults to when coverage is omitted everywhere)."""
+    import argparse, yaml
+    from forge.orchestrator import build_arg_parser, _resolve_config
+    with tempfile.TemporaryDirectory() as td:
+        cfg_path = Path(td) / "no_coverage.yaml"
+        # No `coverage:` key AND no `progressive:` key — purely defaults.
+        cfg_path.write_text(yaml.safe_dump({
+            "harnesses": ["a/b/1_x"],
+            "datasets": {"locomo": {}},
+        }))
+        args = H._heldout_arg_parser().parse_args(
+            ["--config", str(cfg_path), "--no-strict-config"])
+        cfg = _resolve_config(args)
+        # Before the heldout-specific override: _resolve_config's own default
+        # (progressive=True <-> coverage="sample") must already be consistent.
+        assert _consistent(cfg)
+        assert cfg["progressive"] is True and cfg["coverage"] == "sample"
+
+        raw_yaml = H._yaml_raw(args)
+        H._apply_heldout_coverage_default(cfg, args, raw_yaml)
+        # heldout's "default to full when omitted" kicks in...
+        assert cfg["coverage"] == "full"
+        # ...and progressive MUST be resynced to match — no contradictory pair.
+        assert _consistent(cfg)
+        assert cfg["progressive"] is False
+
+
+def test_heldout_explicit_coverage_cli_stays_consistent():
+    """--coverage sample on the CLI is honored as-is (not forced to full),
+    and progressive/coverage stay consistent."""
+    import yaml
+    from forge.orchestrator import _resolve_config
+    with tempfile.TemporaryDirectory() as td:
+        cfg_path = Path(td) / "c.yaml"
+        cfg_path.write_text(yaml.safe_dump({
+            "harnesses": ["a/b/1_x"], "datasets": {"locomo": {}},
+        }))
+        args = H._heldout_arg_parser().parse_args(
+            ["--config", str(cfg_path), "--coverage", "sample", "--no-strict-config"])
+        cfg = _resolve_config(args)
+        raw_yaml = H._yaml_raw(args)
+        H._apply_heldout_coverage_default(cfg, args, raw_yaml)
+        assert cfg["coverage"] == "sample"
+        assert _consistent(cfg)
+        assert cfg["progressive"] is True
+
+
+def test_heldout_yaml_coverage_full_stays_consistent():
+    """An explicit `coverage: full` in the heldout YAML (no CLI flag) is
+    honored, and progressive resyncs to False."""
+    import yaml
+    from forge.orchestrator import _resolve_config
+    with tempfile.TemporaryDirectory() as td:
+        cfg_path = Path(td) / "c.yaml"
+        cfg_path.write_text(yaml.safe_dump({
+            "harnesses": ["a/b/1_x"], "datasets": {"locomo": {}},
+            "coverage": "full",
+        }))
+        args = H._heldout_arg_parser().parse_args(
+            ["--config", str(cfg_path), "--no-strict-config"])
+        cfg = _resolve_config(args)
+        raw_yaml = H._yaml_raw(args)
+        H._apply_heldout_coverage_default(cfg, args, raw_yaml)
+        assert cfg["coverage"] == "full"
+        assert _consistent(cfg)
+        assert cfg["progressive"] is False
+
+
+def test_heldout_yaml_progressive_true_no_coverage_not_forced_full():
+    """Fix-round finding: a heldout YAML that sets `progressive: true` and
+    OMITS `coverage:` used to be silently forced to coverage="full" (and
+    progressive resynced to False) by the "default to full" override, which
+    only checked for an explicit `coverage:` key. `progressive` is the
+    canonical knob, so an explicit `progressive: true` (with no `coverage:`
+    anywhere) must resolve to progressive=True / coverage="sample" — NOT
+    full — same as it would for the search-loop orchestrator."""
+    import yaml
+    from forge.orchestrator import _resolve_config
+    with tempfile.TemporaryDirectory() as td:
+        cfg_path = Path(td) / "c.yaml"
+        cfg_path.write_text(yaml.safe_dump({
+            "harnesses": ["a/b/1_x"], "datasets": {"locomo": {}},
+            "progressive": True,
+        }))
+        args = H._heldout_arg_parser().parse_args(
+            ["--config", str(cfg_path), "--no-strict-config"])
+        cfg = _resolve_config(args)
+        raw_yaml = H._yaml_raw(args)
+        H._apply_heldout_coverage_default(cfg, args, raw_yaml)
+        assert cfg["progressive"] is True
+        assert cfg["coverage"] == "sample"
+        assert _consistent(cfg)
+
+
+# ---------------- guardrail: reject progressive/coverage=sample on heldout --
+
+def test_reject_progressive_on_heldout_raises():
+    """A heldout config resolving to progressive=True (the staged gauntlet)
+    must be rejected before any harness runs — held-out numbers require a
+    full, uniform pass, not a stage-eliminated subset score."""
+    import yaml
+    from forge.orchestrator import _resolve_config
+    with tempfile.TemporaryDirectory() as td:
+        cfg_path = Path(td) / "c.yaml"
+        cfg_path.write_text(yaml.safe_dump({
+            "harnesses": ["a/b/1_x"], "datasets": {"locomo": {}},
+            "progressive": True,
+        }))
+        args = H._heldout_arg_parser().parse_args(
+            ["--config", str(cfg_path), "--no-strict-config"])
+        cfg = _resolve_config(args)
+        raw_yaml = H._yaml_raw(args)
+        H._apply_heldout_coverage_default(cfg, args, raw_yaml)
+        assert cfg["progressive"] is True  # sanity: this IS the gauntlet case
+        try:
+            H._reject_progressive_on_heldout(cfg)
+        except SystemExit as exc:
+            assert exc.code == 2
+        else:
+            raise AssertionError("expected SystemExit(2)")
+
+
+def test_reject_progressive_on_heldout_via_coverage_sample_alias():
+    """`coverage: sample` (the back-compat alias) must also be rejected —
+    after `_sync_coverage_progressive` this implies progressive=True too,
+    but the guard checks `coverage` directly regardless, defensively."""
+    import yaml
+    from forge.orchestrator import _resolve_config
+    with tempfile.TemporaryDirectory() as td:
+        cfg_path = Path(td) / "c.yaml"
+        cfg_path.write_text(yaml.safe_dump({
+            "harnesses": ["a/b/1_x"], "datasets": {"locomo": {}},
+            "coverage": "sample",
+        }))
+        args = H._heldout_arg_parser().parse_args(
+            ["--config", str(cfg_path), "--no-strict-config"])
+        cfg = _resolve_config(args)
+        raw_yaml = H._yaml_raw(args)
+        H._apply_heldout_coverage_default(cfg, args, raw_yaml)
+        assert cfg["coverage"] == "sample"
+        try:
+            H._reject_progressive_on_heldout(cfg)
+        except SystemExit as exc:
+            assert exc.code == 2
+        else:
+            raise AssertionError("expected SystemExit(2)")
+
+
+def test_reject_progressive_on_heldout_default_passes():
+    """The normal/default heldout case (neither `coverage` nor `progressive`
+    given anywhere → coverage='full' / progressive=False) must NOT raise —
+    the guardrail only fires when the user explicitly opted into the
+    gauntlet."""
+    import yaml
+    from forge.orchestrator import _resolve_config
+    with tempfile.TemporaryDirectory() as td:
+        cfg_path = Path(td) / "c.yaml"
+        cfg_path.write_text(yaml.safe_dump({
+            "harnesses": ["a/b/1_x"], "datasets": {"locomo": {}},
+        }))
+        args = H._heldout_arg_parser().parse_args(
+            ["--config", str(cfg_path), "--no-strict-config"])
+        cfg = _resolve_config(args)
+        raw_yaml = H._yaml_raw(args)
+        H._apply_heldout_coverage_default(cfg, args, raw_yaml)
+        assert cfg["coverage"] == "full" and cfg["progressive"] is False
+        H._reject_progressive_on_heldout(cfg)  # must not raise
+
+
+def test_reject_progressive_on_heldout_explicit_full_passes():
+    """An explicit `coverage: full` (no `progressive` key) also must not
+    raise — matches configs/test_example.yaml's documented default."""
+    import yaml
+    from forge.orchestrator import _resolve_config
+    with tempfile.TemporaryDirectory() as td:
+        cfg_path = Path(td) / "c.yaml"
+        cfg_path.write_text(yaml.safe_dump({
+            "harnesses": ["a/b/1_x"], "datasets": {"locomo": {}},
+            "coverage": "full",
+        }))
+        args = H._heldout_arg_parser().parse_args(
+            ["--config", str(cfg_path), "--no-strict-config"])
+        cfg = _resolve_config(args)
+        raw_yaml = H._yaml_raw(args)
+        H._apply_heldout_coverage_default(cfg, args, raw_yaml)
+        H._reject_progressive_on_heldout(cfg)  # must not raise
 
 
 # ---------------- evaluate_harness coverage=full integration ----------------
@@ -209,6 +421,11 @@ def _fake_run_evaluation_factory(calls):
 
 
 def test_evaluate_harness_full_single_pass():
+    """coverage='full' (progressive=false) now resolves its plan via
+    resolve_sampling_plan: ONE pass named "single", sized by the REQUIRED
+    `single_stage` block (2026-07-26) — replacing the old automatic
+    full_wire_spec whole-split. Reached-stage telemetry still maps to
+    O.FULL_STAGE (the "single" plan name is the new full-ish tier)."""
     calls = []
     with tempfile.TemporaryDirectory() as td, _test_workspace():
         src = _mk_src_harness(td)
@@ -218,7 +435,7 @@ def test_evaluate_harness_full_single_pass():
         try:
             per_ds = asyncio.run(O.evaluate_harness(
                 hid, Path("/fake.sif"),
-                datasets_config={"locomo": {"stages": {}}},
+                datasets_config={"locomo": {"single_stage": {"n_conversations": None, "n_qa": None}}},
                 split="test", model="gpt-5-mini", judge_model="gpt-5-mini",
                 max_sample_concurrent=1,
                 memory_cache=False, coverage="full",
@@ -226,9 +443,9 @@ def test_evaluate_harness_full_single_pass():
         finally:
             O.run_evaluation = orig
 
-        # ONE call, stage "full", uncapped spec, test split
+        # ONE call, stage "single", uncapped spec (from single_stage), test split
         assert len(calls) == 1, calls
-        assert calls[0]["stage"] == "full"
+        assert calls[0]["stage"] == "single"
         assert calls[0]["split"] == "test"
         assert calls[0]["spec"] == {"n_samples": None, "n_qa": None}
 
@@ -239,11 +456,86 @@ def test_evaluate_harness_full_single_pass():
 
         stages = json.loads(
             (paths.harnesses_dir / hid / "locomo" / "stages.json").read_text())
-        assert stages["reached"] == "full"
-        assert list(stages["stages"]) == ["full"]
-        assert stages["stages"]["full"]["threshold"] is None
+        assert stages["reached"] == "single"
+        assert list(stages["stages"]) == ["single"]
+        assert stages["stages"]["single"]["threshold"] is None
         # final artifacts copied to the dataset root
         assert (paths.harnesses_dir / hid / "locomo" / "score.json").exists()
+
+
+def test_evaluate_harness_full_missing_single_stage_raises():
+    """coverage='full' with no `single_stage` block configured must raise —
+    no silent automatic whole-split anymore (single_stage is required)."""
+    with tempfile.TemporaryDirectory() as td, _test_workspace():
+        src = _mk_src_harness(td)
+        hid = H._stage_harness(src)
+        raised = False
+        try:
+            asyncio.run(O.evaluate_harness(
+                hid, Path("/fake.sif"),
+                datasets_config={"locomo": {"stages": {}}},
+                split="test", model="gpt-5-mini", judge_model="gpt-5-mini",
+                max_sample_concurrent=1,
+                memory_cache=False, coverage="full",
+            ))
+        except ValueError as e:
+            raised = "single_stage" in str(e)
+        assert raised
+
+
+def test_evaluate_harness_full_wires_memcache_dir():
+    """CRITICAL regression (fix round 1, 2026-07-26 review): the HOST-side
+    memcache gate in evaluate_harness's `_run_stage_fn` closure must
+    recognize the "single" plan name resolve_sampling_plan emits for
+    progressive=false — otherwise `memory_cache=True` silently becomes a
+    no-op for every `forge.heldout` run (configs/test_example.yaml sets
+    `memory_cache: true`) and every progressive=false search config, since
+    `memcache_dir` is never passed to `run_evaluation` and `--memcache-dir`
+    is never forwarded to the container."""
+    calls = []
+
+    async def fake_run_evaluation(*, harness_dir, image_path, out_dir, dataset,
+                                  split, stage, stage_spec, memcache_dir=None, **kw):
+        calls.append({"stage": stage, "memcache_dir": memcache_dir})
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "score.json").write_text(json.dumps({
+            "benchmark_eval_score": {
+                "benchmark_overall_eval_score": 0.5,
+                "benchmark_overall_eval_standard_deviation": 0.0,
+                "score_max": 1,
+            },
+            "per_user": {"u1": {"reward": 0.5, "n_qa": 1, "failure_info": None}},
+            "invalid_users": [],
+        }))
+        (out_dir / "token_usage.json").write_text(json.dumps({}))
+        return out_dir
+
+    with tempfile.TemporaryDirectory() as td, _test_workspace():
+        src = _mk_src_harness(td)
+        hid = H._stage_harness(src)
+        orig = O.run_evaluation
+        O.run_evaluation = fake_run_evaluation
+        try:
+            asyncio.run(O.evaluate_harness(
+                hid, Path("/fake.sif"),
+                datasets_config={"locomo": {"single_stage": {"n_conversations": None, "n_qa": None}}},
+                split="test", model="gpt-5-mini", judge_model="gpt-5-mini",
+                max_sample_concurrent=1,
+                memory_cache=True, coverage="full",
+            ))
+        finally:
+            O.run_evaluation = orig
+
+        assert len(calls) == 1, calls
+        assert calls[0]["stage"] == "single"
+        assert calls[0]["memcache_dir"] is not None, (
+            "memory_cache=True must wire --memcache-dir for the 'single' "
+            "(progressive=false) stage too — the host-side gate must "
+            "include 'single', not just stage1/2/3/full"
+        )
+        expected_dir = paths.harnesses_dir / hid / "locomo" / "memory_cache"
+        assert calls[0]["memcache_dir"] == expected_dir
+        assert expected_dir.is_dir()
 
 
 def test_evaluate_harness_sample_unchanged():

@@ -46,6 +46,7 @@ baselines/evolve/alma/memo_test/memo_test_*.py
 baselines/evolve/alma/results/
 baselines/harness/cc/results/
 baselines/harness/hipporag2/results/
+baselines/harness/amem/results/
 
 # --- Other baselines' runtime artifacts (evolve/<name>/ + harness/<name>/) ---
 baselines/*/*/outputs/

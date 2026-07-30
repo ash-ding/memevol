@@ -2,7 +2,7 @@
 
 Log directory resolution (lazy — happens inside `get_logger`, not at import):
   1. `EVALS_LOG_DIR` env var if set (forge sets this to the per-eval out_dir
-     via the Singularity --env binding; alma's run_main.py sets it to
+     via the Singularity --env binding; alma's run.py sets it to
      `baselines/evolve/alma/logs/`). Inside containers, `/out` is bound R/W.
   2. `<project_root>/baselines/evolve/alma/logs/` IF that directory is
      reachable and writable (host-side use; on stripped-bind containers it

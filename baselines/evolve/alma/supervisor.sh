@@ -1,5 +1,5 @@
 #!/bin/bash
-# Alma search supervisor — launches run_main.py, auto-resumes from checkpoint
+# Alma search supervisor — launches run.py, auto-resumes from checkpoint
 # if it exits before reaching the target number of evolution steps.
 #
 # The underlying `--steps N` is now idempotent ("target total N"), so we just
@@ -47,13 +47,17 @@ find_latest_ckpt() {
   ls -t "$CKPT_DIR"/check_dynamicmem_*.json 2>/dev/null | head -1
 }
 
+# Evaluation SIZES live in the --config YAML only — there is NO sizing CLI flag
+# (the old flat --eval_n_*/--check_n_* and --stages flags were removed). Each
+# candidate is scored through the shared staged gauntlet (--progressive); sizes
+# come from the config's `stages` block (or the family DEFAULT_STAGES). Edit
+# baselines/evolve/alma/config.example.yaml (or a copy) to change sizes.
 COMMON_ARGS=(
+  --config baselines/evolve/alma/config.example.yaml
   --status search
+  --dataset dynamicmem
+  --progressive
   --steps "$TARGET_STEPS"
-  --eval_n_samples 6
-  --eval_n_qa 20
-  --check_n_samples 6
-  --check_n_qa 3
 )
 
 log "=== Supervisor start | target_steps=$TARGET_STEPS | max_reattempts=$MAX_REATTEMPTS ==="
@@ -86,13 +90,13 @@ while :; do
   CHILD_OUT="/tmp/alma_search_attempt${attempt}_${SUP_TS}.out"
   if [ -n "$CKPT_NAME" ]; then
     log "resuming from ckpt=$CKPT_NAME ; child stdout/stderr -> $CHILD_OUT"
-    "$PYTHON" "$PROJECT_ROOT/baselines/evolve/alma/run_main.py" \
+    "$PYTHON" "$PROJECT_ROOT/baselines/evolve/alma/run.py" \
       "${COMMON_ARGS[@]}" \
       --history_ckpt_path "$CKPT_NAME" \
       > "$CHILD_OUT" 2>&1
   else
     log "starting fresh ; child stdout/stderr -> $CHILD_OUT"
-    "$PYTHON" "$PROJECT_ROOT/baselines/evolve/alma/run_main.py" \
+    "$PYTHON" "$PROJECT_ROOT/baselines/evolve/alma/run.py" \
       "${COMMON_ARGS[@]}" \
       > "$CHILD_OUT" 2>&1
   fi

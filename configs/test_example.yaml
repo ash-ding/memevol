@@ -18,6 +18,18 @@
 #     seed.*, selection.*, prompts.*) are ignored
 # =============================================================================
 
+# Mandatory-complete config enforcement (2026-07-26): with `--config`, every
+# parameter in `forge.orchestrator.HELDOUT_REQUIRED_SCHEMA` (the smaller
+# held-out surface — no proposer/sanity/seed/prompts/steps) must be listed
+# explicitly in the YAML (a `null` value counts as provided; an ABSENT key
+# does not) — silent fallback to a DEFAULT_CONFIG value is disallowed. A
+# missing key aborts the run with a ConfigCompletenessError naming exactly
+# what's absent. Default true; set `strict_config: false` (or pass
+# `--no-strict-config`) to opt out. This file is an exhaustive held-out
+# template — it passes strict mode (validated against HELDOUT_REQUIRED_SCHEMA)
+# as-is.
+strict_config: true
+
 # Per-run workspace dir → workspace/heldout_<run_name>/ (the heldout_ prefix
 # is added automatically unless the name already starts with "heldout").
 run_name: my_heldout
@@ -34,25 +46,52 @@ harnesses:
 
 # -----------------------------------------------------------------------------
 # HOW MUCH to evaluate.
-#   full   — ONE whole-test-split pass per benchmark (heldout default): no
-#            stage1/2, no threshold elimination; artifacts under <ds>/full/.
-#            Full test-split sizes for cost planning: DynamicMem 4 users ×
-#            ~400 items, LoCoMo 655 QA (cat 1-4), LongMemEval 200 questions.
-#   sample — the staged gauntlet on the test split (stage sizes/thresholds
-#            from the `datasets` block).
+#
+# Held-out test evaluation is ALWAYS a full, uniform pass over the whole
+# test split — that's the only way its numbers are valid as final results.
+# `progressive` (the canonical knob, superseding `coverage` 2026-07-25) /
+# the back-compat `coverage: sample` alias select the staged stage1→2→3
+# gauntlet with threshold elimination — that's for the SEARCH loop, where
+# bad candidates should die cheap. Applied to held-out test it would mean a
+# harness eliminated at stage1 gets scored on a ~20-item subset instead of
+# the full split, which is not a comparable held-out number. So
+# `forge.heldout` REJECTS `progressive: true` / `coverage: sample` outright
+# (SystemExit(2), before any harness runs) — see
+# `forge/heldout.py::_reject_progressive_on_heldout`.
+#
+# The only valid setting here is full coverage: `coverage: full` (shown
+# below) or, equivalently, `progressive: false`. Omitting both fields
+# entirely also resolves to full (heldout's own default when neither is
+# given anywhere).
+#   full — ONE whole-test-split pass per benchmark: no stage1/2, no
+#          threshold elimination; artifacts under <ds>/single/. Full
+#          test-split sizes for cost planning: DynamicMem 4 users ×
+#          ~400 items, LoCoMo 655 QA (cat 1-4), LongMemEval 200 questions.
 # -----------------------------------------------------------------------------
 coverage: full
 
 # -----------------------------------------------------------------------------
-# Benchmarks to evaluate on. Same schema as the search configs; the `stages`
-# blocks are consumed only when coverage=sample (omitted → family defaults,
-# see forge/orchestrator.py::DEFAULT_STAGES).
+# Benchmarks to evaluate on. Same schema as the search configs. Any per-
+# benchmark `stages` block is IGNORED here — held-out evaluation is always
+# full coverage (progressive=false / coverage=full is enforced above), so
+# stage sizes/thresholds never apply; they only matter for the search loop's
+# gauntlet (see forge/orchestrator.py::DEFAULT_STAGES).
+#
+# progressive=false REQUIRES a `single_stage` block per dataset (2026-07-26)
+# — it's what sizes the ONE full pass (same size fields as a `stages` entry,
+# no `threshold`); there is no more automatic whole-split fallback. Every
+# field `null` (shown below) = whole test split for that dimension — the
+# usual held-out setting. Omitting `single_stage` entirely now raises
+# ValueError at eval time ("requires a `single_stage` block").
 # -----------------------------------------------------------------------------
 datasets:
   dynamicmem:
     judge_model: gpt-5.4-2026-03-05   # official TCE judge (downgrade to save cost)
-  locomo: {}
-  longmemeval_s: {}
+    single_stage: {n_users: null, n_checkpoints: null, n_task_a: null, n_task_c: null}
+  locomo:
+    single_stage: {n_conversations: null, n_qa: null}
+  longmemeval_s:
+    single_stage: {n_questions: null}
 
 # QA / retrieve agent model inside the harness eval. Provider-routed by name
 # (gpt-*/o* → OpenAI; claude-* → Anthropic via the llm block below); optional

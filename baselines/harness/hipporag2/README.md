@@ -37,23 +37,26 @@ calls.
 
 ```bash
 baselines/venv/bin/python baselines/harness/hipporag2/run.py \
-    --dataset {dynamicmem,locomo,longmemeval_s,longmemeval_m} \
+    --config baselines/harness/hipporag2/config.example.yaml \
+    [--dataset {dynamicmem,locomo,longmemeval_s,longmemeval_m}] \
     [--split test|search] \
-    [--stage-spec '<json>'] \
+    [--progressive|--no-progressive] \
+    [--sampling-seed 42] \
     [--embedding text-embedding-3-small|nvidia/NV-Embed-v2|...] \
     [--llm_model gpt-5-mini] \
     [--judge_model gpt-5-mini] \
     [--embedding_batch_size N] [--embedding_dtype float16|auto] \
-    [--max_sample_concurrent 3]
+    [--max_sample_concurrent 3] \
+    [--no-memory-cache]
 ```
 
+- `--config` — YAML config path (CLI flags override it). **Evaluation SIZES
+  live in the config file only** (`single_stage` / `stages` — see "Sizing"
+  below); there are no sizing CLI flags.
 - `--dataset` (defaults to `dynamicmem`) — one of the four registered
   benchmarks (`baselines.registry.DATASETS`).
 - `--split` (default `test`) — `test` = held-out split, `search` = the
   split the main method's search loop sees.
-- `--stage-spec` (default `None` = **whole test split, full coverage** —
-  byte-identical to the main method's `forge.heldout` default; see "Stage
-  spec fields" below).
 - `--embedding` — any OpenAI embedding model name (API, no GPU needed) or a
   local HF/NV embedding model (GPU, loaded in-process by HippoRAG).
 - `--llm_model` — used BOTH as HippoRAG's internal OpenIE/triple-extraction
@@ -64,41 +67,66 @@ baselines/venv/bin/python baselines/harness/hipporag2/run.py \
   local embeddings → batch 4, dtype float16 — computed automatically in
   `_ensure_hippo`.
 - `--max_sample_concurrent` — per-eval user/sample concurrency (default 3).
+- `--progressive` / `--no-progressive` (default off, matching this baseline's
+  historical single-pass behavior) — run the staged stage1→2→3 gauntlet
+  (with threshold elimination) instead of one single-stage pass. Sizes come
+  from the config `stages` block (or family `DEFAULT_STAGES`).
+- `--sampling-seed` (default `42`) — base seed for the (fixed step-0) sample
+  this baseline evaluates. A no-op at whole-split (`null` sizes); it only
+  selects a subset when a size field caps.
+- `--no-memory-cache` — disable cross-stage Phase-1 memory reuse (on by
+  default).
 
 Examples:
 
 ```bash
-# OpenAI API embedding (no GPU needed), full held-out eval
+# OpenAI API embedding (no GPU needed), config-driven eval
 baselines/venv/bin/python baselines/harness/hipporag2/run.py \
-    --dataset locomo --embedding text-embedding-3-small
+    --config baselines/harness/hipporag2/config.example.yaml \
+    --embedding text-embedding-3-small
 
 # Local GPU embedding (NVIDIA)
 baselines/venv/bin/python baselines/harness/hipporag2/run.py \
-    --dataset longmemeval_s --embedding nvidia/NV-Embed-v2 \
+    --config my_hr.yaml --dataset longmemeval_s --embedding nvidia/NV-Embed-v2 \
     --embedding_batch_size 2 --embedding_dtype float16
 
-# Quick check, capped to 2 units
+# Quick check (size via a config with single_stage: {n_users: 2})
 baselines/venv/bin/python baselines/harness/hipporag2/run.py \
-    --dataset dynamicmem --stage-spec '{"n_samples": 2}'
+    --config my_hr.yaml --dataset dynamicmem
 ```
 
-## Stage-spec fields
+## Sizing (config file only)
 
-`--stage-spec` is a raw JSON object of USER OVERRIDES merged over the
-family's full-coverage base (`baselines.harness.eval_common.family_full_spec` /
-`effective_stage_spec` — mirrors `forge.orchestrator.full_wire_spec`
-exactly, so an omitted field stays `null` = uncapped, not zero). All units
-are PER-RUN counts (no gauntlet/staging here — this is a single pass, same
-as `forge.heldout`'s `coverage=full`):
+There are **no sizing CLI flags** — evaluation sizes are config-file keys
+resolved through the shared `common.staged_eval` layer (the same one forge
+uses):
+
+- **`progressive: false` (default)** REQUIRES a `single_stage` block — ONE pass
+  sized by its fields (`common.staged_eval.single_stage_wire_spec`; a `null`
+  or omitted field = the WHOLE split for that dimension, byte-identical to the
+  main method's `forge.heldout` `coverage=full` when all-null). Omitting
+  `single_stage` raises a clear `ValueError` (no silent whole-split).
+- **`progressive: true`** runs the staged stage1→2→3 gauntlet; a `stages` block
+  overrides the family `DEFAULT_STAGES`.
+
+Both blocks use the family's NATIVE size fields (PER-UNIT counts):
 
 | Field | Applies to | Meaning |
 |---|---|---|
-| `n_samples` | all datasets | Generic wire field for the unit count: **users** for dynamicmem, **conversations** for locomo, **questions** for longmemeval. `null`/omitted = whole split. |
+| `n_users` | dynamicmem | Users sampled from the split. `null`/omitted = whole split. |
+| `n_conversations` | locomo | Conversations sampled from the split. `null`/omitted = whole split. |
+| `n_questions` | longmemeval | Questions sampled from the split. `null`/omitted = whole split. |
 | `n_checkpoints` | dynamicmem only | DynamicMem TCE checkpoints per user (of 5 quarterly checkpoints). `null` = all 5. |
 | `n_task_a` | dynamicmem only | Task-A (`state_completion`) items sampled per checkpoint. `null` = full bucket. |
 | `n_task_c` | dynamicmem only | Task-C (`apply_service`) items sampled per checkpoint. `null` = full bucket. |
 | `n_qa` | locomo only | QA pairs sampled per conversation. `null` = all (categories 1-4 only; cat-5 excluded). |
-| — | longmemeval | No extra field — one question is one unit, so `n_samples` alone controls both. |
+
+```yaml
+# my_hr.yaml — 2 DynamicMem users, whole checkpoint/item buckets
+dataset: dynamicmem
+progressive: false
+single_stage: {n_users: 2}
+```
 
 ## Output
 

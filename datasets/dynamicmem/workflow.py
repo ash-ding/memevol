@@ -30,6 +30,7 @@ from typing import Any, Dict, List, Optional, Tuple, Type
 
 import httpx
 
+from common.sampling import combine_seed
 from common.workflow import BaseWorkflow, _QAProgressTracker, log
 from datasets.dynamicmem.env import (
     Basic_Recorder,
@@ -54,9 +55,11 @@ class DynamicMemWorkflow(BaseWorkflow):
 
     def _qa_per_user_estimate(self, stage_spec: Optional[Dict]) -> int:
         spec = stage_spec or {}
-        if "n_checkpoints" in spec:
+        # A whole-split spec leaves size fields None (= all) — fall through to
+        # the per-user hint rather than int(None).
+        if spec.get("n_checkpoints") is not None:
             return int(spec["n_checkpoints"]) * (
-                int(spec.get("n_task_a", 0)) + int(spec.get("n_task_c", 0))
+                int(spec.get("n_task_a") or 0) + int(spec.get("n_task_c") or 0)
             )
         return super()._qa_per_user_estimate(stage_spec)
 
@@ -90,14 +93,15 @@ class DynamicMemWorkflow(BaseWorkflow):
                 n_checkpoints=_n(n_cp),
                 n_task_a=_n(spec.get("n_task_a", 0)),
                 n_task_c=_n(spec.get("n_task_c", 0)),
-                seed=user_dir,
+                seed=combine_seed(spec.get("sample_seed"), user_dir),
             )
         else:
             # Legacy total-count spec (alma baseline path): n_qa items
             # stratified across checkpoints; sanity stage = first cp only.
             checkpoints_used = checkpoints[:1] if stage == "sanity" else checkpoints
             sampled = sample_items(
-                checkpoints_used, spec.get("n_qa", self.eval_n_qa), seed=user_dir
+                checkpoints_used, spec.get("n_qa", self.eval_n_qa),
+                seed=combine_seed(spec.get("sample_seed"), user_dir),
             )
 
         sampled_by_cp: Dict[str, List[Dict]] = {}
@@ -410,8 +414,13 @@ class DynamicMemWorkflow(BaseWorkflow):
     # ------------------------------------------------------------------
 
     async def load_user_data(
-        self, user_dir: str, eval_n_qa: Optional[int]
+        self, user_dir: str, eval_n_qa: Optional[int], sample_seed: Optional[str] = None
     ) -> Tuple[List[Dict], List[Dict]]:
+        # DynamicMemWorkflow overrides run_single_user wholesale (checkpoint
+        # interleaving) and never calls this hook — it exists only to keep
+        # the BaseWorkflow ABC satisfied. Real sampling happens via
+        # run_single_user / sample_items_staged; `sample_seed` is accepted
+        # (matching the base signature) but unused here.
         app_logs, checkpoints = load_user_checkpoints(user_dir)
         return app_logs, sample_items(checkpoints, eval_n_qa, seed=user_dir)
 

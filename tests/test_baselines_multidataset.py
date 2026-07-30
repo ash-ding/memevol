@@ -61,7 +61,7 @@ def test_base_workflow_default_answer_call_signature():
     class _W(BaseWorkflow):
         recorder_class = _Rec
         judge_score_max = 1
-        async def load_user_data(self, user_dir, eval_n_qa):
+        async def load_user_data(self, user_dir, eval_n_qa, sample_seed=None):
             return [], [{"query": "USR", "reference": "r", "metadata": {}}]
         async def phase1_log_init(self, recorder, chunk): return None
         def build_query_recorder_init(self, init_data, qa): return {}
@@ -151,41 +151,37 @@ def test_dynamicmem_default_answer_call_signature():
 
 # -------------------- eval_common (shared runner + data-alignment) --------------------
 
-def test_parse_stage_spec_raw_user_overrides():
-    from baselines.harness.eval_common import parse_stage_spec
-    assert parse_stage_spec(None) == {}
-    assert parse_stage_spec('{"n_samples": 3, "n_qa": 5}') == {"n_samples": 3, "n_qa": 5}
-
-
-def test_family_full_spec_matches_main_method():
-    """The default (no --stage-spec) effective spec MUST equal the main
+def test_single_stage_whole_split_matches_main_method():
+    """An all-null (or omitted-field) `single_stage` MUST size to the main
     method's coverage=full wire spec — otherwise DynamicMem silently drops out
-    of the TCE checkpoint path (its branch keys on the n_checkpoints KEY)."""
-    from baselines.harness.eval_common import family_full_spec, effective_stage_spec
+    of the TCE checkpoint path (its branch keys on the n_checkpoints KEY).
+    Both sides go through common.staged_eval (shared with forge)."""
+    from common.staged_eval import single_stage_wire_spec
     from forge.orchestrator import full_wire_spec   # test-only import (baselines never import forge)
     for ds in ("dynamicmem", "locomo", "longmemeval_s", "longmemeval_m"):
-        assert family_full_spec(ds) == full_wire_spec(ds), ds
-        assert effective_stage_spec(ds, None) == full_wire_spec(ds), ds
-    # dynamicmem full spec carries the n_checkpoints KEY → TCE path
-    assert "n_checkpoints" in family_full_spec("dynamicmem")
-    # user override merges over the family-full base (keeps the TCE keys present)
-    merged = effective_stage_spec("dynamicmem", {"n_samples": 2})
-    assert merged["n_samples"] == 2 and "n_checkpoints" in merged
+        assert single_stage_wire_spec(ds, {}) == full_wire_spec(ds), ds
+    # dynamicmem single_stage carries the n_checkpoints KEY → TCE path
+    assert "n_checkpoints" in single_stage_wire_spec("dynamicmem", {})
+    # a sized single_stage keeps the TCE keys present (native field n_users → n_samples)
+    sized = single_stage_wire_spec("dynamicmem", {"n_users": 2})
+    assert sized["n_samples"] == 2 and "n_checkpoints" in sized
 
 
 def test_task_list_identical_to_main_method():
     """The baseline's split derivation MUST equal the main method's
-    (forge/launch.py:185-189 calls the SAME env.get_task_list)."""
-    from baselines.harness.eval_common import resolve_task_list, effective_stage_spec
+    (forge/launch.py:185-189 calls the SAME env.get_task_list). Sized here via
+    the shared single_stage_wire_spec (no seed → deterministic prefix)."""
+    from baselines.harness.eval_common import resolve_task_list
+    from common.staged_eval import single_stage_wire_spec
     from datasets.locomo import env as locomo_env
     from datasets.longmemeval import env as lme_env
     from datasets.dynamicmem import env as dm_env
-    # whole test split (default) == get_task_list("test", None) == the heldout split
-    assert resolve_task_list("locomo", "test", effective_stage_spec("locomo", None)) == locomo_env.get_task_list("test", None)
-    assert resolve_task_list("longmemeval_s", "test", effective_stage_spec("longmemeval_s", None)) == lme_env.get_task_list("test", None)
-    assert resolve_task_list("dynamicmem", "test", effective_stage_spec("dynamicmem", None)) == dm_env.get_task_list("test", None)
+    # whole test split (all-null single_stage) == get_task_list("test", None) == heldout split
+    assert resolve_task_list("locomo", "test", single_stage_wire_spec("locomo", {})) == locomo_env.get_task_list("test", None)
+    assert resolve_task_list("longmemeval_s", "test", single_stage_wire_spec("longmemeval_s", {})) == lme_env.get_task_list("test", None)
+    assert resolve_task_list("dynamicmem", "test", single_stage_wire_spec("dynamicmem", {})) == dm_env.get_task_list("test", None)
     # capped units == get_task_list("test", N)
-    assert resolve_task_list("locomo", "test", effective_stage_spec("locomo", {"n_samples": 2})) == locomo_env.get_task_list("test", 2)
+    assert resolve_task_list("locomo", "test", single_stage_wire_spec("locomo", {"n_conversations": 2})) == locomo_env.get_task_list("test", 2)
 
 
 def test_make_memo_class_no_arg_instantiable():
@@ -315,8 +311,10 @@ def test_run_baseline_locomo_end_to_end():
     from pathlib import Path
 
     import common.llm as llm_mod
-    from baselines.harness.eval_common import effective_stage_spec, resolve_task_list, run_baseline
+    from baselines.harness.eval_common import resolve_task_list, run_baseline
     from common.harness_base import MemoStructure
+    from common.staged_eval import single_stage_wire_spec
+    from common.sampling import derive_sample_seed
     from datasets.locomo.workflow import LoCoMoWorkflow
 
     class _StubMemo(MemoStructure):
@@ -332,11 +330,16 @@ def test_run_baseline_locomo_end_to_end():
     async def _fake_judge(self, query, predicted, reference, qa_metadata=None):
         return 1, "fake-judge: forced pass"
 
-    # Sanity-check the exact unit this test is deterministic over — a
-    # regression in the split logic would silently change WHICH sample gets
-    # exercised, so pin it explicitly rather than only trusting resolve_task_list.
-    expected = resolve_task_list("locomo", "test", effective_stage_spec("locomo", {"n_samples": 1}))
-    assert expected == ["conv-47"], expected
+    # progressive=False sizes from single_stage; run_baseline threads a fixed
+    # step-0 sample_seed (honoring sampling_seed=42) into the split derivation,
+    # so pin the exact deterministic unit via the SAME seeded spec run_baseline
+    # builds internally — a split-logic regression still changes WHICH unit runs.
+    single_stage = {"n_conversations": 1, "n_qa": 1}
+    seed = derive_sample_seed(42, 0, "locomo")
+    spec = {**single_stage_wire_spec("locomo", single_stage), "sample_seed": seed}
+    expected = resolve_task_list("locomo", "test", spec)
+    assert len(expected) == 1, expected
+    the_user = expected[0]
 
     orig_ask, orig_judge = llm_mod.Agent.ask, LoCoMoWorkflow.judge
     llm_mod.Agent.ask, LoCoMoWorkflow.judge = _fake_ask, _fake_judge
@@ -345,10 +348,11 @@ def test_run_baseline_locomo_end_to_end():
         try:
             score = asyncio.run(run_baseline(
                 dataset="locomo", split="test",
-                user_stage_spec={"n_samples": 1, "n_qa": 1},
+                single_stage=single_stage,
                 memo_class=_StubMemo,
                 qa_model="gpt-5-mini", judge_model="gpt-5-mini",
                 out_dir=out_dir, max_sample_concurrent=1,
+                progressive=False, sampling_seed=42,
             ))
         finally:
             llm_mod.Agent.ask, LoCoMoWorkflow.judge = orig_ask, orig_judge
@@ -358,14 +362,14 @@ def test_run_baseline_locomo_end_to_end():
         trace_files = sorted((out_dir / "traces").glob("*.json"))
         assert len(trace_files) == 1, trace_files
         trace = json.loads(trace_files[0].read_text())
-        assert trace["user_id"] == "conv-47"
+        assert trace["user_id"] == the_user
         assert trace["n_qa"] == 1
         assert trace["failure_info"] is None
         assert trace["steps"][0]["predicted"] == "a canned answer"
         assert trace["steps"][0]["score"] == 1
 
         assert score["benchmark_eval_score"]["benchmark_overall_eval_score"] == 1.0
-        assert score["per_user"]["conv-47"]["n_qa"] == 1
+        assert score["per_user"][the_user]["n_qa"] == 1
         assert score["invalid_users"] == []
     finally:
         shutil.rmtree(out_dir, ignore_errors=True)
