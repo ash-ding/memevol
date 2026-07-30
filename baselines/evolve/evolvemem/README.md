@@ -78,3 +78,11 @@ memo (no `$EVOLVEMEM_CONFIG` → clamped defaults) — useful as the r=0
    coverage-verifier re-extraction pass is not implemented.
 6. **Evolution scores are the benchmark judges' 0–1 rewards** (same as
    every other method here), not the paper's F1.
+
+## simplemem/ — vendored upstream substrate
+
+`simplemem/` vendors the real SimpleMem text core (the paper's actual base
+system) as an evolvemem-internal substrate — fidelity reference for the
+native `memo_evolvemem.py` approximation, and the future target for wiring
+θ onto the genuine architecture. Evaluate it standalone via
+`launch.py --substrate simplemem`. See [simplemem/README.md](simplemem/README.md).

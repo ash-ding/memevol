@@ -106,16 +106,25 @@ async def main(
     eval_n_qa: Optional[int] = None,
     max_sample_concurrent: int = 6,
     judge_model: str = "gpt-5-mini",
+    substrate: str = "native",
 ):
     run_dir = Path(output_run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Load the fixed memo class (θ arrives via $EVOLVEMEM_CONFIG).
+    # 1. Load the memo class.
+    #    native    — EvolveMemMemo, the paper-description approximation whose
+    #                θ arrives via $EVOLVEMEM_CONFIG (the evolution target).
+    #    simplemem — the vendored upstream SimpleMem substrate (fixed default
+    #                config; θ NOT wired yet) — evolvemem-internal fidelity
+    #                reference, evaluated through this same launch path.
     try:
-        from baselines.evolve.evolvemem.memo_evolvemem import EvolveMemMemo
+        if substrate == "simplemem":
+            from baselines.evolve.evolvemem.simplemem.memo import SimpleMemMemo as MemoCls
+        else:
+            from baselines.evolve.evolvemem.memo_evolvemem import EvolveMemMemo as MemoCls
     except Exception as exc:
         err = f"[{type(exc).__name__}] {exc}\n{traceback.format_exc()}"
-        log.warning(f"Failed to load EvolveMemMemo: {exc}")
+        log.warning(f"Failed to load memo class (substrate={substrate}): {exc}")
         _write_error_score(run_dir, err)
         return
 
@@ -131,7 +140,7 @@ async def main(
     log.info(f"Task list ({status}, size={len(task_list)}): {[t[-15:] for t in task_list]}")
 
     workflow = workflow_cls(
-        memo_class=EvolveMemMemo,
+        memo_class=MemoCls,
         model=model,
         max_logs=max_logs,
         eval_n_qa=eval_n_qa,
@@ -183,6 +192,9 @@ if __name__ == "__main__":
     parser.add_argument("--eval_n_qa", type=int, default=None)
     parser.add_argument("--max_sample_concurrent", type=int, default=3)
     parser.add_argument("--judge_model", default="gpt-5-mini")
+    parser.add_argument("--substrate", default="native", choices=["native", "simplemem"],
+                        help="native = EvolveMemMemo (θ-driven); simplemem = vendored "
+                             "upstream substrate at fixed defaults (fidelity reference)")
 
     args = parser.parse_args()
     asyncio.run(main(
@@ -196,5 +208,6 @@ if __name__ == "__main__":
         eval_n_qa=args.eval_n_qa,
         max_sample_concurrent=args.max_sample_concurrent,
         judge_model=args.judge_model,
+        substrate=args.substrate,
     ))
     os._exit(0)
