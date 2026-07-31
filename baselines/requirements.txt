@@ -12,3 +12,13 @@ claude-code-sdk
 anthropic[vertex]
 nltk
 rank_bm25
+lancedb
+pyarrow
+dateparser
+sentence-transformers
+transformers
+accelerate
+torch
+tantivy
+pydantic
+datasets
