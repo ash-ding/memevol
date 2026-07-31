@@ -1,9 +1,0 @@
-# SimpleMem smoke — longmemeval_s (sessions branch). strict off: unlisted keys
-# use run.py DEFAULT_CONFIG.
-strict_config: false
-dataset: longmemeval_s
-split: search
-progressive: false
-single_stage:
-  n_questions: 1
-stages: null
