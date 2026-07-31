@@ -12,3 +12,7 @@ claude-code-sdk
 anthropic[vertex]
 nltk
 rank_bm25
+
+sentence-transformers
+llmlingua==0.2.2
+qdrant-client==1.15.1

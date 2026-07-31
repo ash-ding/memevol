@@ -210,6 +210,7 @@ baselines/venv/bin/python baselines/harness/hipporag2/run.py \
 | **[evolve/alma](evolve/alma/)** | search method | LLM-meta-agent search loop | Yes — propose / select / evolve over harness code | Established baseline; the framework's "v1" memory-architecture search |
 | **[harness/cc](harness/cc/)** | ready-made harness | Claude Code as direct QA agent (native answer, multi-dataset) | None (zero-shot) | What-if: just give CC the raw user data + tools and let it answer |
 | **[harness/hipporag2](harness/hipporag2/)** | ready-made harness | Graph-based RAG pipeline as retrieval memory (OpenIE → KG → PPR retrieval → passages; shared QA agent answers) | None (fixed pipeline) | Hand-designed memory architecture comparison point, multi-dataset |
+| **[harness/lightmem](harness/lightmem/)** | ready-made harness | LightMem compression + offline-update memory (LLMlingua-2 pre-compression → topic segmentation → LLM metadata/summary extraction → Qdrant index → per-entry LLM offline update; `LightMemory.retrieve` → passages; shared QA agent answers) | None (fixed pipeline) | Compression + offline-refinement memory comparison point, multi-dataset |
 
 ### evolve/alma — meta-learning loop
 
@@ -299,6 +300,39 @@ baselines/venv/bin/python baselines/harness/hipporag2/run.py \
 ```
 
 Artifacts: `baselines/harness/hipporag2/{outputs/, results/<dataset>/<split>/}`.
+
+### harness/lightmem — compression + offline-update memory as retrieval memory
+
+`LightMemMemo` ([harness/lightmem/memo.py](harness/lightmem/memo.py)) wraps
+[LightMem](https://github.com/zjunlp/LightMem)'s vendored text pipeline
+(`vendor/lightmem/{configs,factory,memory}`, byte-identical @ `34410f4`):
+
+- **BUILD**: maps the visible data to LightMem turns (a `[user, assistant]` pair
+  per unit) and feeds them one turn at a time to `add_memory` — LLMlingua-2
+  pre-compression → attention topic segmentation → LLM metadata/summary
+  extraction (`gpt-4o-mini`) → HF embedding → per-user Qdrant index
+  (`update="offline"`). Additive across DynamicMem checkpoints. When
+  `offline_update` is on (default), the LoCoMo-paper refinement
+  (`construct_update_queue_all_entries` + `offline_update_all_entries`) runs after
+  the last turn of a build call.
+- **RETRIEVE**: `LightMemory.retrieve(query, limit)` — embed + Qdrant search,
+  returned as `{"passages": [...]}`. The **shared QA agent** answers — a fair
+  "LightMem-as-memory" comparison.
+
+```bash
+# faithful defaults (LLMlingua-2 pre-compress + topic-seg, MiniLM embedder; needs a GPU)
+baselines/venv/bin/python baselines/harness/lightmem/run.py \
+    --config baselines/harness/lightmem/config.example.yaml --dataset locomo
+
+# CPU (slow) — move the local models off the GPU
+baselines/venv/bin/python baselines/harness/lightmem/run.py \
+    --config my_lightmem.yaml --dataset dynamicmem \
+    --llmlingua_device cpu --embedding_device cpu
+```
+
+Artifacts: `baselines/harness/lightmem/{outputs/, results/<dataset>/<split>/}`.
+See [harness/lightmem/README.md](harness/lightmem/README.md) for the faithfulness
+boundary and provenance.
 
 ---
 
