@@ -47,6 +47,7 @@ baselines/evolve/alma/results/
 baselines/harness/cc/results/
 baselines/harness/hipporag2/results/
 baselines/harness/amem/results/
+baselines/harness/zep/results/
 
 # --- Other baselines' runtime artifacts (evolve/<name>/ + harness/<name>/) ---
 baselines/*/*/outputs/

@@ -12,3 +12,13 @@ claude-code-sdk
 anthropic[vertex]
 nltk
 rank_bm25
+tiktoken
+datasets
+pydantic
+neo4j>=5.26.0            # graphiti core dep (lazily imported; zep uses FalkorDB, not Neo4j)
+tenacity>=9.0.0
+posthog>=3.0.0
+falkordblite>=0.5.0; python_version>='3.12'   # embedded FalkorDB (no server)
+redis<9                 # redis-py 8.x breaks falkordblite's embedded server startup
+sentence-transformers>=3.2.1                    # BGE-m3 embedder + BGE reranker (paper-faithful)
+python-dateutil         # episode reference_time parsing across dataset timestamp formats

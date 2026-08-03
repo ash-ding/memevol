@@ -210,6 +210,7 @@ baselines/venv/bin/python baselines/harness/hipporag2/run.py \
 | **[evolve/alma](evolve/alma/)** | search method | LLM-meta-agent search loop | Yes — propose / select / evolve over harness code | Established baseline; the framework's "v1" memory-architecture search |
 | **[harness/cc](harness/cc/)** | ready-made harness | Claude Code as direct QA agent (native answer, multi-dataset) | None (zero-shot) | What-if: just give CC the raw user data + tools and let it answer |
 | **[harness/hipporag2](harness/hipporag2/)** | ready-made harness | Graph-based RAG pipeline as retrieval memory (OpenIE → KG → PPR retrieval → passages; shared QA agent answers) | None (fixed pipeline) | Hand-designed memory architecture comparison point, multi-dataset |
+| **[harness/zep](harness/zep/)** | ready-made harness | Zep/Graphiti temporal knowledge-graph memory (episodes → LLM entity/fact/temporal-edge extraction; hybrid BM25+cosine+BFS search, BGE cross-encoder rerank; shared QA agent answers) | None (fixed pipeline) | Temporal-KG memory comparison point; embedded FalkorDB Lite backend, multi-dataset |
 
 ### evolve/alma — meta-learning loop
 
@@ -299,6 +300,38 @@ baselines/venv/bin/python baselines/harness/hipporag2/run.py \
 ```
 
 Artifacts: `baselines/harness/hipporag2/{outputs/, results/<dataset>/<split>/}`.
+
+### harness/zep — Zep/Graphiti temporal knowledge-graph memory
+
+`ZepMemo` ([harness/zep/memo.py](harness/zep/memo.py)) vendors and drives
+[Graphiti](https://github.com/getzep/graphiti) (@ `4f62cfe`, byte-identical under
+`vendor/graphiti_core/`), the engine behind [Zep](harness/zep/zep.pdf)
+(arXiv:2501.13956):
+
+- **BUILD**: each ingestion unit becomes one Graphiti *episode* via `add_episode`
+  — LLM entity/fact extraction, entity resolution/dedup, bi-temporal edge
+  extraction + invalidation, BGE-m3 embedding. Additive across calls (persistent
+  per-user store), so DynamicMem's per-checkpoint deltas accumulate.
+- **RETRIEVE**: `search_` with the paper's `COMBINED_HYBRID_SEARCH_CROSS_ENCODER`
+  recipe (BM25 + cosine + BFS over edges & nodes, BGE cross-encoder rerank), top-20
+  facts + entity summaries formatted into the paper's FACTS/ENTITIES context string
+  (`{"inline_memory_blocks": [...]}`). The **shared QA agent** answers.
+
+Backend is **embedded FalkorDB Lite** (`falkordblite`, in-process, on-disk, no
+server) scoped per-user by uuid — the amem/simplemem/lightmem operational model,
+not Graphiti's default Neo4j server. Embedder/reranker default to paper-faithful
+**BGE-m3** (config-toggleable to OpenAI). Requires **Python 3.12+**.
+
+```bash
+baselines/venv/bin/python baselines/harness/zep/run.py \
+    --config baselines/harness/zep/config.example.yaml --dataset locomo
+# CPU-only box: add device: cpu in the config (or --device cpu)
+```
+
+Artifacts: `baselines/harness/zep/{outputs/, results/<dataset>/<split>/}`. See
+[harness/zep/README.md](harness/zep/README.md) for the faithfulness boundary
+(FalkorDB Lite vs Neo4j-Lucene, the custom BGE-m3 embedder adapter) and cost
+caveats (Graphiti's internal gpt-4o-mini calls bypass `common.tokens`).
 
 ---
 
