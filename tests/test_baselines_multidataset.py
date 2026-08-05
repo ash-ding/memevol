@@ -1,5 +1,9 @@
-"""Tests for cc + hipporag2 multi-dataset support (shared registry, runner,
-memo structures). Zero-dependency runner:
+"""Shared-contract tests for the baseline harness layer (registry resolution,
+BaseWorkflow/DynamicMemWorkflow default-answer signature, sizing wire specs,
+task-list derivation, eval_common's make_memo_class + run_baseline). This file
+is BASELINE-FREE — it must NOT import any concrete baseline's memo (cc,
+hipporag2, amem); those live in their own tests/test_<name>_baseline.py, run
+in that baseline's own venv. This file runs in the shared dev/test env:
 
     baselines/venv/bin/python tests/test_baselines_multidataset.py
     venv/bin/python tests/test_baselines_multidataset.py
@@ -194,93 +198,6 @@ def test_make_memo_class_no_arg_instantiable():
     inst = Cls()  # workflow instantiates with NO args
     assert inst._cfg == {"model": "x", "k": 3}
     assert isinstance(inst, MemoStructure)
-
-
-# -------------------- hipporag2 (retrieval MemoStructure) --------------------
-
-def test_hipporag_memo_passage_conversion():
-    from baselines.harness.hipporag2.memo import _init_to_passages
-    # dynamicmem
-    ap = _init_to_passages({"app_logs": [{"timestamp": "T", "app_name": "A",
-          "api_name": "x", "request": {}, "response": {}, "metadata": {"domain": "d"}}]})
-    assert len(ap) == 1 and "App: A" in ap[0]
-    # locomo
-    lp = _init_to_passages({"conversation": {"speaker_a": "Amy", "speaker_b": "Bob",
-          "session_1": [{"speaker": "Amy", "dia_id": "D1:1", "text": "hi"}],
-          "session_1_date_time": "2023/01/01"}})
-    assert any("hi" in p for p in lp)
-    # longmemeval
-    sp = _init_to_passages({"sessions": [{"session_id": "s1", "date": "2023/05/20",
-          "messages": [{"role": "user", "content": "hello"}]}]})
-    assert any("hello" in p for p in sp)
-
-
-def test_hipporag_memo_retrieve_returns_passages(monkeypatch=None):
-    """retrieve_memory_for_query returns retrieved passages as the context dict; the
-    shared QA agent (not HippoRAG's own reader) answers."""
-    import asyncio
-    from baselines.harness.hipporag2.memo import HippoRAGMemo
-    from baselines.harness.eval_common import make_memo_class
-
-    class _FakeHippo:
-        def __init__(self, **kw): pass
-        def index(self, docs): self._docs = docs
-        def retrieve(self, queries, num_to_retrieve=5):
-            class _S: docs = ["passage about hi"]
-            return [_S()]
-    Cls = make_memo_class(HippoRAGMemo, embedding="e", llm_model="m", judge_model="j",
-                          _hippo_factory=lambda **kw: _FakeHippo())
-    memo = Cls()
-    class _Rec:  # minimal recorder
-        user_id = "u1"
-        init = {"conversation": {"speaker_a": "A", "speaker_b": "B",
-                "session_1": [{"speaker": "A", "dia_id": "D1:1", "text": "hi"}],
-                "session_1_date_time": "d"}}
-    loop = asyncio.new_event_loop()
-    loop.run_until_complete(memo.build_memory_from_data(_Rec()))
-    _Rec.init = {"conversation": _Rec.init["conversation"], "query": "what did A say?"}
-    out = loop.run_until_complete(memo.retrieve_memory_for_query(_Rec()))
-    assert "passages" in out and out["passages"]
-
-
-# -------------------- cc (native-answer MemoStructure) --------------------
-
-def test_cc_use_memory_to_answer_runs_cc():
-    import asyncio
-    from baselines.harness.cc.memo import CCMemo
-    from baselines.harness.eval_common import make_memo_class
-    async def _fake_ask(question, tmp_dir, model, max_turns, system_prompt=None):
-        return ("CCANS:" + question, {}, [])
-    Cls = make_memo_class(CCMemo, model="sonnet", max_turns=5, _ask_cc=_fake_ask)
-    memo = Cls()
-    class _Rec:
-        user_id = ""
-        init = {"sessions": [{"session_id": "s", "date": "d",
-                "messages": [{"role": "user", "content": "hi"}]}], "query": "q?"}
-    loop = asyncio.new_event_loop()
-    loop.run_until_complete(memo.build_memory_from_data(_Rec()))   # writes context to tmp_dir
-    ans = loop.run_until_complete(memo.use_memory_to_answer(_Rec(), {}, "FORMATTED PROMPT"))
-    assert ans == "CCANS:FORMATTED PROMPT"
-
-
-def test_cc_memo_retrieve_empty_and_run_cc_answers():
-    import asyncio
-    from baselines.harness.cc.memo import CCMemo
-    from baselines.harness.eval_common import make_memo_class
-    async def _fake_ask(question, tmp_dir, model, max_turns, system_prompt=None):
-        return ("STUB:" + question, {}, [])
-    Cls = make_memo_class(CCMemo, model="sonnet", max_turns=5, _ask_cc=_fake_ask)
-    memo = Cls()
-    class _Rec:
-        user_id = ""
-        init = {"sessions": [{"session_id": "s", "date": "d",
-                "messages": [{"role": "user", "content": "hi"}]}], "query": "q?"}
-    loop = asyncio.new_event_loop()
-    loop.run_until_complete(memo.build_memory_from_data(_Rec()))
-    out = loop.run_until_complete(memo.retrieve_memory_for_query(_Rec()))
-    assert out == {}                                   # cc injects no memory; answers via files
-    ans, _u, _t = loop.run_until_complete(memo._run_cc("FORMATTED PROMPT"))
-    assert ans == "STUB:FORMATTED PROMPT"
 
 
 # -------------------- integration: run_baseline end-to-end (locomo) --------------------
