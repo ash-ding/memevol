@@ -1,7 +1,7 @@
 # =============================================================================
 # zep (Zep / Graphiti temporal knowledge-graph memory) baseline — exhaustive
 # config reference. Backend: embedded FalkorDB Lite (no server needed).
-# Launch: baselines/venv/bin/python baselines/harness/zep/run.py \
+# Launch: baselines/harness/zep/venv/bin/python baselines/harness/zep/run.py \
 #             --config baselines/harness/zep/config.example.yaml
 # CLI flags override any key here (precedence: DEFAULT_CONFIG < this file < CLI).
 #

@@ -1,6 +1,6 @@
 # =============================================================================
 # cc (Claude Code) baseline — exhaustive config reference.
-# Launch: baselines/venv/bin/python baselines/harness/cc/run.py \
+# Launch: baselines/harness/cc/venv/bin/python baselines/harness/cc/run.py \
 #             --config baselines/harness/cc/config.example.yaml
 # CLI flags override any key here (precedence: DEFAULT_CONFIG < this file < CLI).
 #

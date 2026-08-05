@@ -1,6 +1,6 @@
 # =============================================================================
 # simplemem (SimpleMem semantic-compression memory) baseline — exhaustive config.
-# Launch: baselines/venv/bin/python baselines/harness/simplemem/run.py \
+# Launch: baselines/harness/simplemem/venv/bin/python baselines/harness/simplemem/run.py \
 #             --config baselines/harness/simplemem/config.example.yaml
 # CLI flags override any key here (precedence: DEFAULT_CONFIG < this file < CLI).
 #

@@ -1,6 +1,6 @@
 # =============================================================================
 # hipporag2 (HippoRAG2 retrieval memory) baseline — exhaustive config reference.
-# Launch: baselines/venv/bin/python baselines/harness/hipporag2/run.py \
+# Launch: baselines/harness/hipporag2/venv/bin/python baselines/harness/hipporag2/run.py \
 #             --config baselines/harness/hipporag2/config.example.yaml
 # CLI flags override any key here (precedence: DEFAULT_CONFIG < this file < CLI).
 #
