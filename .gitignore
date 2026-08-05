@@ -70,3 +70,4 @@ forge/logs/*
 
 # Built Singularity images (too large for git; stored on /export/scratch_large)
 containers/*.sif
+memevol_env/
