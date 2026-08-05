@@ -34,7 +34,9 @@ baselines/
     ├── cc/              #   Claude Code as direct QA agent (native answer)
     ├── hipporag2/       #   HippoRAG2 graph-RAG pipeline as retrieval memory
     ├── amem/            #   A-mem agentic-notes memory as retrieval memory
-    └── simplemem/       #   SimpleMem semantic-compression memory as retrieval memory
+    ├── lightmem/        #   LightMem compression + offline-update memory
+    ├── simplemem/       #   SimpleMem semantic-compression memory as retrieval memory
+    └── zep/             #   Zep/Graphiti temporal KG memory (embedded FalkorDB Lite)
 ```
 
 - **`evolve/`** — methods that SEARCH over memory-structure code, like forge
@@ -217,6 +219,7 @@ baselines/venv/bin/python baselines/harness/hipporag2/run.py \
 | **[harness/amem](harness/amem/)** | ready-made harness | A-mem agentic-notes memory (per-note LLM analysis + memory evolution → keyword-rewrite retrieval; shared QA agent answers) | None (fixed pipeline) | Agentic note-graph memory comparison point, multi-dataset |
 | **[harness/lightmem](harness/lightmem/)** | ready-made harness | LightMem compression + offline-update memory (LLMlingua-2 pre-compression → topic segmentation → LLM metadata/summary extraction → Qdrant index → per-entry LLM offline update; `LightMemory.retrieve` → passages; shared QA agent answers) | None (fixed pipeline) | Compression + offline-refinement memory comparison point, multi-dataset |
 | **[harness/simplemem](harness/simplemem/)** | ready-made harness | SimpleMem semantic-compression memory (LLM window compression → self-contained memory units → intent-aware multi-view retrieval; shared QA agent answers) | None (fixed pipeline) | Compression-first memory comparison point, multi-dataset |
+| **[harness/zep](harness/zep/)** | ready-made harness | Zep/Graphiti temporal knowledge-graph memory (episodes → LLM entity/fact/temporal-edge extraction; hybrid BM25+cosine+BFS search, BGE cross-encoder rerank; shared QA agent answers) | None (fixed pipeline) | Temporal-KG memory comparison point; embedded FalkorDB Lite backend, multi-dataset |
 
 ### evolve/alma — meta-learning loop
 
@@ -339,6 +342,7 @@ baselines/venv/bin/python baselines/harness/lightmem/run.py \
 Artifacts: `baselines/harness/lightmem/{outputs/, results/<dataset>/<split>/}`.
 See [harness/lightmem/README.md](harness/lightmem/README.md) for the faithfulness
 boundary and provenance.
+
 ### harness/simplemem — semantic-compression memory as retrieval memory
 
 `SimpleMemMemo` ([harness/simplemem/memo.py](harness/simplemem/memo.py)) wraps
@@ -368,6 +372,38 @@ baselines/venv/bin/python baselines/harness/simplemem/run.py \
 Artifacts: `baselines/harness/simplemem/{outputs/, results/<dataset>/<split>/}`.
 See [harness/simplemem/README.md](harness/simplemem/README.md) for the
 faithfulness boundary and provenance.
+
+### harness/zep — Zep/Graphiti temporal knowledge-graph memory
+
+`ZepMemo` ([harness/zep/memo.py](harness/zep/memo.py)) vendors and drives
+[Graphiti](https://github.com/getzep/graphiti) (@ `4f62cfe`, byte-identical under
+`vendor/graphiti_core/`), the engine behind [Zep](harness/zep/zep.pdf)
+(arXiv:2501.13956):
+
+- **BUILD**: each ingestion unit becomes one Graphiti *episode* via `add_episode`
+  — LLM entity/fact extraction, entity resolution/dedup, bi-temporal edge
+  extraction + invalidation, BGE-m3 embedding. Additive across calls (persistent
+  per-user store), so DynamicMem's per-checkpoint deltas accumulate.
+- **RETRIEVE**: `search_` with the paper's `COMBINED_HYBRID_SEARCH_CROSS_ENCODER`
+  recipe (BM25 + cosine + BFS over edges & nodes, BGE cross-encoder rerank), top-20
+  facts + entity summaries formatted into the paper's FACTS/ENTITIES context string
+  (`{"inline_memory_blocks": [...]}`). The **shared QA agent** answers.
+
+Backend is **embedded FalkorDB Lite** (`falkordblite`, in-process, on-disk, no
+server) scoped per-user by uuid — the amem/simplemem/lightmem operational model,
+not Graphiti's default Neo4j server. Embedder/reranker default to paper-faithful
+**BGE-m3** (config-toggleable to OpenAI). Requires **Python 3.12+**.
+
+```bash
+baselines/venv/bin/python baselines/harness/zep/run.py \
+    --config baselines/harness/zep/config.example.yaml --dataset locomo
+# CPU-only box: add device: cpu in the config (or --device cpu)
+```
+
+Artifacts: `baselines/harness/zep/{outputs/, results/<dataset>/<split>/}`. See
+[harness/zep/README.md](harness/zep/README.md) for the faithfulness boundary
+(FalkorDB Lite vs Neo4j-Lucene, the custom BGE-m3 embedder adapter) and cost
+caveats (Graphiti's internal gpt-4o-mini calls bypass `common.tokens`).
 
 ---
 
