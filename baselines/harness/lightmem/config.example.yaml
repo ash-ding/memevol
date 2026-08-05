@@ -1,0 +1,60 @@
+# =============================================================================
+# lightmem (LightMem compression + offline-update memory) baseline — exhaustive config.
+# Launch: baselines/venv/bin/python baselines/harness/lightmem/run.py \
+#             --config baselines/harness/lightmem/config.example.yaml
+# CLI flags override any key here (precedence: DEFAULT_CONFIG < this file < CLI).
+#
+# STRICT-CONFIG (default on): with --config, EVERY key below must be present
+# (a null value is allowed). Missing keys abort the run listing what's absent.
+# Set strict_config: false (or pass --no-strict-config) to opt out.
+# =============================================================================
+
+strict_config: true            # require this file to list every parameter (default true)
+
+dataset: locomo                 # which benchmark: dynamicmem | locomo | longmemeval_s | longmemeval_m (LightMem is LoCoMo-native)
+split: test                    # test | search (search = the training split used during evolution)
+progressive: false             # false = ONE single pass (sized by single_stage); true = staged stage1->2->3 gauntlet (sized by stages)
+sampling_seed: 42              # seeds the sampled subset (both paths; a no-op at whole-split)
+memory_cache: true             # cross-stage Phase-1 memory reuse (gauntlet only); --no-memory-cache to disable
+
+# --- LightMem internal knobs (its own experiment defaults @ 34410f4) ---------
+pre_compress: true             # LLMlingua-2 token pre-compression (a core LightMem stage; needs the llmlingua model + a GPU)
+topic_segment: true            # attention-based topic segmentation. REQUIRES pre_compress (shares the LLMlingua-2 model)
+llmlingua_model: microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank   # HF hub id (downloads once) or a local path
+llmlingua_device: cuda         # device_map for the LLMlingua-2 model; set "cpu" if no GPU (slow)
+compress_rate: 0.6             # LLMlingua-2 target compression rate (LoCoMo experiment value; library default is 0.8)
+messages_use: user_only        # which turns feed extraction: user_only | assistant_only | hybrid
+extract_threshold: 0.1         # segmentation/extraction trigger threshold (LoCoMo experiment value)
+extraction_mode: flat          # flat (factual entries only) | event (factual + relational, temporally bound)
+lightmem_llm_model: gpt-4o-mini   # LightMem's internal extraction + offline-update LLM. 4-series ONLY —
+                                  # it sends temperature=0.1, which the gpt-5 family rejects.
+manager_max_tokens: 16000      # max_tokens for the internal LLM (LoCoMo experiment value)
+base_url: null                 # OpenAI-compatible base URL for LightMem's internal LLM (null = OpenAI default)
+embedding_model: all-MiniLM-L6-v2   # LightMem's HF sentence-transformer embedder (LongMemEval default; 384-dim)
+embedding_dims: 384            # embedding dimension (must match the embedder)
+embedding_device: cuda         # device for the embedder; set "cpu" if no GPU
+offline_update: true           # run the offline-update refinement phase after build (construct_update_queue +
+                               # offline_update_all_entries) — the full LoCoMo-paper pipeline. Adds per-entry LLM cost.
+update_sim_threshold: 0.9      # score_threshold for offline_update_all_entries (LoCoMo experiment value)
+retrieve_limit: 20             # top-k memories LightMemory.retrieve returns per query (LongMemEval driver value)
+
+# --- shared eval (baseline convention) --------------------------------------
+llm_model: gpt-5-mini           # shared QA agent — answers using LightMem's retrieved memories
+judge_model: gpt-5-mini        # LLM-as-judge model scoring predicted vs reference answers
+max_sample_concurrent: 3       # asyncio concurrency across users/samples (higher = faster, more API load)
+
+# --- Sizing (config-file only; no CLI flags). BOTH keys must be present; the
+#     inactive one is null. Under strict mode the active block's leaves must all
+#     be listed (a null leaf = whole split for that dimension). ---
+# progressive: false → single_stage sizes the one pass (locomo native fields):
+single_stage:
+  n_conversations: null        # locomo: null = all conversations in the split; e.g. 2 to cap
+  n_qa: null                   # null = all QA per conversation
+# progressive: true → stages sizes the gauntlet (set single_stage: null above and
+# fill this out; sizes must be non-decreasing across stage1..3):
+stages: null
+# stages:
+#   sanity_check: {n_conversations: 1, n_qa: 3}
+#   stage1: {n_conversations: 2, n_qa: 20, threshold: 0.30}
+#   stage2: {n_conversations: 4, n_qa: 40, threshold: 0.35}
+#   stage3: {n_conversations: 6, n_qa: 60}
