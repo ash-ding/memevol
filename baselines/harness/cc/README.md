@@ -24,10 +24,22 @@ ONCE per build call with the whole newly-visible data already in
 `CCMemo` doesn't split it at all, it just stashes the whole payload to disk
 each call.
 
+## Setup
+
+cc has its own venv, built from its own self-contained `requirements.txt`
+(`-r ../../core-requirements.txt` + `claude-code-sdk`):
+
+```bash
+baselines/setup_venv.sh cc
+```
+
+This creates `baselines/harness/cc/venv/`. The shared `baselines/venv/` is
+dev/test only and cannot run cc.
+
 ## Usage
 
 ```bash
-baselines/venv/bin/python baselines/harness/cc/run.py \
+baselines/harness/cc/venv/bin/python baselines/harness/cc/run.py \
     --config baselines/harness/cc/config.example.yaml \
     [--dataset {dynamicmem,locomo,longmemeval_s,longmemeval_m}] \
     [--split test|search] \
@@ -74,15 +86,15 @@ Examples:
 
 ```bash
 # Config-driven run (sizes from the config's single_stage / stages)
-baselines/venv/bin/python baselines/harness/cc/run.py \
+baselines/harness/cc/venv/bin/python baselines/harness/cc/run.py \
     --config baselines/harness/cc/config.example.yaml
 
 # Opus, one dataset (size via a config with single_stage: {n_users: 2})
-baselines/venv/bin/python baselines/harness/cc/run.py \
+baselines/harness/cc/venv/bin/python baselines/harness/cc/run.py \
     --config my_cc.yaml --dataset dynamicmem --model opus
 
 # LongMemEval-m, search split (comparable to what the proposer itself sees)
-baselines/venv/bin/python baselines/harness/cc/run.py \
+baselines/harness/cc/venv/bin/python baselines/harness/cc/run.py \
     --config my_cc.yaml --dataset longmemeval_m --split search
 ```
 

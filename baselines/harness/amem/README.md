@@ -25,11 +25,22 @@ answers — `use_memory_to_answer` is not overridden (hipporag2 pattern; note
 memevol's locomo QA prompts are themselves ported from the IREM A-mem
 baseline, so the answer side is already A-mem-shaped there).
 
+## Setup
+
+amem has its own venv, built from its own self-contained `requirements.txt`
+(`-r ../../core-requirements.txt` + sentence-transformers, transformers,
+torch, nltk, rank_bm25, scikit-learn, litellm):
+
+    baselines/setup_venv.sh amem
+
+This creates `baselines/harness/amem/venv/`. The shared `baselines/venv/` is
+dev/test only and cannot run amem.
+
 ## Usage
 
-    baselines/venv/bin/python baselines/harness/amem/run.py \
+    baselines/harness/amem/venv/bin/python baselines/harness/amem/run.py \
         --config baselines/harness/amem/config.example.yaml
-    baselines/venv/bin/python baselines/harness/amem/run.py \
+    baselines/harness/amem/venv/bin/python baselines/harness/amem/run.py \
         --config my_amem.yaml --dataset dynamicmem --split search
 
 Flags: `--config` (YAML path; CLI flags override it); `--amem_llm_model`
@@ -118,5 +129,6 @@ $2.00 per 1M in/out (plug in real rates — the total is gpt-4o-mini-build-domin
 Time, not money, is the binding constraint. The build is API-bound, so raising
 `--max_sample_concurrent` (within OpenAI rate limits) is the main lever.
 
-Tests: `baselines/venv/bin/python tests/test_amem_baseline.py` (baselines
-venv only — heavy imports).
+Tests: `baselines/harness/amem/venv/bin/python tests/test_amem_baseline.py`
+(amem's own venv — heavy imports; the shared `baselines/venv/` is dev/test
+core only and doesn't have them).

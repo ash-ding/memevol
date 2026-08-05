@@ -33,10 +33,41 @@ ONCE per build call with the whole newly-visible data already in
 `HippoRAG.index()`'s additive/dedup-by-hash behavior for correctness across
 calls.
 
+## Setup
+
+hipporag2 has its own venv, built from its own self-contained
+`requirements.txt` (`-r ../../core-requirements.txt` + HippoRAG's runtime
+deps — chromadb, langchain-chroma, finch-clust, networkx, nltk, rank_bm25,
+sentence-transformers):
+
+```bash
+baselines/setup_venv.sh hipporag2
+```
+
+Unlike every other baseline, this ALSO needs an editable install of the
+external [HippoRAG](https://github.com/OSU-NLP-Group/HippoRAG) package
+itself (`memo.py: from hipporag import HippoRAG`) — `hipporag` is NOT
+vendored and NOT a line in `requirements.txt`. `setup_venv.sh hipporag2`
+does this automatically from `HIPPORAG_SRC` (default
+`/export/scratch_large/ding/code/HippoRAG`):
+
+```bash
+HIPPORAG_SRC=/export/scratch_large/ding/code/HippoRAG baselines/setup_venv.sh hipporag2
+```
+
+or, into an already-built venv:
+
+```bash
+baselines/harness/hipporag2/venv/bin/pip install -e /export/scratch_large/ding/code/HippoRAG
+```
+
+This creates `baselines/harness/hipporag2/venv/`. The shared `baselines/venv/`
+is dev/test only and cannot run hipporag2.
+
 ## Usage
 
 ```bash
-baselines/venv/bin/python baselines/harness/hipporag2/run.py \
+baselines/harness/hipporag2/venv/bin/python baselines/harness/hipporag2/run.py \
     --config baselines/harness/hipporag2/config.example.yaml \
     [--dataset {dynamicmem,locomo,longmemeval_s,longmemeval_m}] \
     [--split test|search] \
@@ -81,17 +112,17 @@ Examples:
 
 ```bash
 # OpenAI API embedding (no GPU needed), config-driven eval
-baselines/venv/bin/python baselines/harness/hipporag2/run.py \
+baselines/harness/hipporag2/venv/bin/python baselines/harness/hipporag2/run.py \
     --config baselines/harness/hipporag2/config.example.yaml \
     --embedding text-embedding-3-small
 
 # Local GPU embedding (NVIDIA)
-baselines/venv/bin/python baselines/harness/hipporag2/run.py \
+baselines/harness/hipporag2/venv/bin/python baselines/harness/hipporag2/run.py \
     --config my_hr.yaml --dataset longmemeval_s --embedding nvidia/NV-Embed-v2 \
     --embedding_batch_size 2 --embedding_dtype float16
 
 # Quick check (size via a config with single_stage: {n_users: 2})
-baselines/venv/bin/python baselines/harness/hipporag2/run.py \
+baselines/harness/hipporag2/venv/bin/python baselines/harness/hipporag2/run.py \
     --config my_hr.yaml --dataset dynamicmem
 ```
 
