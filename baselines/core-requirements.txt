@@ -1,0 +1,22 @@
+# Shared-core requirements for EVERY baseline (and the dev/test env).
+#
+# These are the third-party packages that `common/` and `datasets/` import.
+# Every baseline imports common/ + datasets/ + baselines/registry.py via the
+# `sys.path.insert(PROJECT_ROOT)` shim in its run.py, so every per-baseline
+# venv MUST install these. Each baseline's own requirements.txt starts with
+#   -r ../../core-requirements.txt
+# and then lists ONLY its additional deps.
+#
+# NOTHING baseline-specific belongs here. Justification per line = the
+# common/ or datasets/ import that needs it.
+
+openai==1.107.3          # common/llm.py: `from openai import AsyncOpenAI`, `import openai`
+anthropic[vertex]        # common/llm.py: guarded `import anthropic` (vertex extra → AsyncAnthropicVertex)
+python-dotenv            # common/llm.py: `from dotenv import load_dotenv`
+httpx                    # common/llm.py + common/workflow.py + datasets/*/env.py: `import httpx`
+PyYAML                   # common/config.py: `import yaml`
+jsonschema               # common/llm.py: `import jsonschema`
+scipy                    # common/llm.py: `from scipy.spatial.distance import cosine`
+numpy                    # required by scipy; also imported directly by amem/simplemem/lightmem
+rich                     # common/logger.py: `from rich.console import Console` / RichHandler
+tiktoken                 # common/llm.py: `import tiktoken`; common/tokens.py

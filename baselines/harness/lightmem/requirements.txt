@@ -1,0 +1,15 @@
+# lightmem baseline (LightMem; vendored under vendor/lightmem) — self-contained venv.
+# Shared core (openai/anthropic/dotenv/httpx/yaml/jsonschema/scipy/numpy/rich/tiktoken):
+-r ../../core-requirements.txt
+
+# Exercised config (memo.py): openai memory_manager + huggingface text_embedder
+# + llmlingua-2 topic segmenter + qdrant retriever.
+sentence-transformers>=3.2.1   # huggingface text_embedder
+llmlingua==0.2.2               # llmlingua-2 topic segmenter / pre-compressor
+qdrant-client==1.15.1          # qdrant embedding retriever
+transformers                   # huggingface embedder + llmlingua-2 (`from transformers import AutoModel`)
+torch                          # llmlingua-2 / huggingface embedder (`import torch`)
+pydantic                       # vendor/lightmem/configs/*.py: `from pydantic import BaseModel`
+datasets                       # HF datasets lib — sentence-transformers import-time collision shim (_st_shim.py)
+# NOTE: numpy is in core. The vllm / ollama memory_manager backends are LAZY
+# imports for unused backends (memo.py selects "openai") — not listed.
