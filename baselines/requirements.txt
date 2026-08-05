@@ -1,33 +1,20 @@
-openai==1.107.3
-rich
-jsonschema
-scipy
-python-dotenv
-numpy
-langchain-chroma
-chromadb
-finch-clust
-networkx
-claude-code-sdk
-anthropic[vertex]
-nltk
-rank_bm25
-sentence-transformers>=3.2.1                    # BGE-m3 embedder + BGE reranker (paper-faithful); also lightmem/simplemem
-llmlingua==0.2.2
-qdrant-client==1.15.1
-lancedb
-pyarrow
-dateparser
-transformers
-accelerate
-torch
-tantivy
-pydantic
-datasets
-tiktoken
-neo4j>=5.26.0            # graphiti core dep (lazily imported; zep uses FalkorDB, not Neo4j)
-tenacity>=9.0.0
-posthog>=3.0.0
-falkordblite>=0.5.0; python_version>='3.12'   # embedded FalkorDB (no server)
-redis<9                 # redis-py 8.x breaks falkordblite's embedded server startup
-python-dateutil         # episode reference_time parsing across dataset timestamp formats
+# baselines DEV / TEST environment (the shared `baselines/venv/`).
+#
+# As of the per-baseline-venvs refactor this env is DEV/TEST ONLY: it runs the
+# shared contract tests and imports common/ + datasets/ + baselines/registry.py.
+# It never runs a real baseline.
+#
+# Each baseline now gets its OWN venv from its OWN self-contained requirements:
+#   baselines/evolve/alma/requirements.txt
+#   baselines/harness/cc/requirements.txt
+#   baselines/harness/hipporag2/requirements.txt
+#   baselines/harness/amem/requirements.txt
+#   baselines/harness/lightmem/requirements.txt
+#   baselines/harness/simplemem/requirements.txt
+#   baselines/harness/zep/requirements.txt
+# Each of those pulls -r ../../core-requirements.txt plus its own extra deps.
+#
+# This file intentionally carries NOTHING baseline-specific — only the shared
+# core that common/ + datasets/ need.
+
+-r core-requirements.txt

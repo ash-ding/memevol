@@ -1,6 +1,6 @@
 # =============================================================================
 # amem (A-mem agentic-notes memory) baseline — exhaustive config reference.
-# Launch: baselines/venv/bin/python baselines/harness/amem/run.py \
+# Launch: baselines/harness/amem/venv/bin/python baselines/harness/amem/run.py \
 #             --config baselines/harness/amem/config.example.yaml
 # CLI flags override any key here (precedence: DEFAULT_CONFIG < this file < CLI).
 #

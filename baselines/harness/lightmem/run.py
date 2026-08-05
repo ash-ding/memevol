@@ -4,8 +4,8 @@ method (same split/judge/scoring via the per-dataset workflow).
 Sizing is config-file only (no sizing CLI flags): `single_stage` (progressive:
 false) or `stages` (progressive: true) — see config.example.yaml.
 
-    baselines/venv/bin/python baselines/harness/lightmem/run.py --config baselines/harness/lightmem/config.example.yaml
-    baselines/venv/bin/python baselines/harness/lightmem/run.py --config baselines/harness/lightmem/config.example.yaml --progressive
+    baselines/harness/lightmem/venv/bin/python baselines/harness/lightmem/run.py --config baselines/harness/lightmem/config.example.yaml
+    baselines/harness/lightmem/venv/bin/python baselines/harness/lightmem/run.py --config baselines/harness/lightmem/config.example.yaml --progressive
 """
 from __future__ import annotations
 import argparse, asyncio, sys

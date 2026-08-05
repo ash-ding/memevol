@@ -16,7 +16,7 @@ TARGET_STEPS="${1:-10}"
 MAX_REATTEMPTS=20
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-PYTHON="$PROJECT_ROOT/baselines/venv/bin/python"
+PYTHON="$PROJECT_ROOT/baselines/evolve/alma/venv/bin/python"
 CKPT_DIR="$PROJECT_ROOT/baselines/evolve/alma/logs"
 SUP_TS="$(date +%Y%m%d_%H%M%S)"
 SUP_LOG="$CKPT_DIR/supervisor_${SUP_TS}.log"

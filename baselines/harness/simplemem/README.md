@@ -45,11 +45,22 @@ agent answers** — `use_memory_to_answer` is not overridden (hipporag2/amem
 pattern). This keeps the comparison about *memory* (SimpleMem's compression +
 retrieval), not about SimpleMem's own `answer_generator`.
 
+## Setup
+
+simplemem has its own venv, built from its own self-contained
+`requirements.txt` (`-r ../../core-requirements.txt` + lancedb, pyarrow,
+tantivy, dateparser, sentence-transformers, transformers, torch):
+
+    baselines/setup_venv.sh simplemem
+
+This creates `baselines/harness/simplemem/venv/`. The shared `baselines/venv/`
+is dev/test only and cannot run simplemem.
+
 ## Usage
 
-    baselines/venv/bin/python baselines/harness/simplemem/run.py \
+    baselines/harness/simplemem/venv/bin/python baselines/harness/simplemem/run.py \
         --config baselines/harness/simplemem/config.example.yaml
-    baselines/venv/bin/python baselines/harness/simplemem/run.py \
+    baselines/harness/simplemem/venv/bin/python baselines/harness/simplemem/run.py \
         --config my_simplemem.yaml --dataset dynamicmem --split search
 
 Flags: `--config` (YAML path; CLI flags override it); `--simplemem_llm_model`
@@ -116,23 +127,23 @@ the new segment; `finalize` flushes its remainder).
 ## Validation status
 
 Written against the vendored code and the 3-hook contract; **not yet run
-end-to-end** here (the baselines venv + a GPU for the Qwen3 embedder + an OpenAI
-key are only available on the eval server). To smoke each ingestion branch
+end-to-end** here (this baseline's own venv + a GPU for the Qwen3 embedder + an
+OpenAI key are only available on the eval server). To smoke each ingestion branch
 cheaply on the search split (mirrors amem's per-branch check):
 
     # locomo (conversation branch) — 1 conv, 3 QAs
     #   config: single_stage: {n_conversations: 1, n_qa: 3}
-    baselines/venv/bin/python baselines/harness/simplemem/run.py \
+    baselines/harness/simplemem/venv/bin/python baselines/harness/simplemem/run.py \
         --config smoke_locomo.yaml --dataset locomo --split search
 
     # dynamicmem (app_logs branch) — 1 user, checkpoint interleaving
     #   config: single_stage: {n_users: 1, n_checkpoints: 1, n_task_a: 1, n_task_c: 1}
-    baselines/venv/bin/python baselines/harness/simplemem/run.py \
+    baselines/harness/simplemem/venv/bin/python baselines/harness/simplemem/run.py \
         --config smoke_dm.yaml --dataset dynamicmem --split search
 
     # longmemeval_s (sessions branch) — 1 question
     #   config: single_stage: {n_questions: 1}
-    baselines/venv/bin/python baselines/harness/simplemem/run.py \
+    baselines/harness/simplemem/venv/bin/python baselines/harness/simplemem/run.py \
         --config smoke_lme.yaml --dataset longmemeval_s --split search
 
 Read `results/<dataset>/search/traces/<user>.json` to confirm build → retrieve

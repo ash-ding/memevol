@@ -7,6 +7,20 @@ method in memevol's root; it now lives here as a baseline so a new method
 
 ## Quick start
 
+### Setup
+
+alma has its own venv, built from its own self-contained `requirements.txt`
+(`-r ../../core-requirements.txt` + alma's extra deps — langchain-chroma,
+chromadb, networkx, huggingface-hub):
+
+```bash
+baselines/setup_venv.sh alma
+```
+
+This creates `baselines/evolve/alma/venv/`. Run everything below with
+`baselines/evolve/alma/venv/bin/python` in place of the bare `python` shown
+(the shared `baselines/venv/` is dev/test only and cannot run alma).
+
 Run from the **project root**:
 
 Evaluation **sizes live in the `--config` YAML only** — there is NO sizing CLI
@@ -26,7 +40,7 @@ YAML < CLI flags). `config.example.yaml` is a documented, runnable example:
 
 ```bash
 # Config-first: everything from the YAML, override --status / --steps on the CLI
-python baselines/evolve/alma/run.py \
+baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
     --config baselines/evolve/alma/config.example.yaml \
     --status search --steps 10
 ```
@@ -34,17 +48,17 @@ python baselines/evolve/alma/run.py \
 ```bash
 # Smoke test — copy config.example.yaml, set tiny sizes in its `stages`
 # (progressive: true) or `single_stage` (progressive: false) block, then:
-python baselines/evolve/alma/run.py \
+baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
     --config baselines/evolve/alma/config.smoke.yaml \
     --status search --steps 2
 
 # Full training — stage1→2→3 gauntlet (stages from the config), 10 steps
-python baselines/evolve/alma/run.py \
+baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
     --config baselines/evolve/alma/config.example.yaml \
     --status search --progressive --steps 10
 
 # Evaluate a saved memo on held-out users (007–010)
-python baselines/evolve/alma/run.py \
+baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
     --config baselines/evolve/alma/config.example.yaml \
     --status test --memo_SHA <SHA> --progressive
 ```
@@ -129,14 +143,14 @@ Example commands (mirroring "Quick start" above, run from the project root):
 # LoCoMo — search loop, 1 step, per-step random subset. Sizes come from the
 # config's `stages` block (a LoCoMo config sets n_conversations/n_qa); the
 # CLI carries only the per-invocation knobs.
-python baselines/evolve/alma/run.py \
+baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
     --config baselines/evolve/alma/config.locomo.yaml \
     --dataset locomo --status search --steps 1 \
     --progressive --random_sample --sampling_seed 42 \
     --meta_model gpt-5-mini --execution_model gpt-5-mini --judge_model gpt-5-mini
 
 # LongMemEval (s or m variant) — evaluate a saved memo on the held-out split
-python baselines/evolve/alma/run.py \
+baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
     --config baselines/evolve/alma/config.example.yaml \
     --dataset longmemeval_s --status test --memo_SHA <SHA> --progressive
 ```

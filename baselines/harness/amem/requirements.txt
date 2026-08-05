@@ -1,0 +1,16 @@
+# amem baseline (A-mem agentic-notes memory; vendored @ 0c8039f) — self-contained venv.
+# Shared core (openai/anthropic/dotenv/httpx/yaml/jsonschema/scipy/numpy/rich/tiktoken):
+-r ../../core-requirements.txt
+
+# memory_layer.py (vendored VERBATIM) imports these at module top level.
+sentence-transformers>=3.2.1   # memory_layer.py: `from sentence_transformers import SentenceTransformer`
+transformers                   # memory_layer.py: `from transformers import AutoModel, AutoTokenizer`
+torch                          # memory_layer.py: `torch.cat(...)` (embedding path); ST/transformers dep
+nltk                           # memory_layer.py: `from nltk.tokenize import word_tokenize`
+rank_bm25                      # memory_layer.py: `from rank_bm25 import BM25Okapi`
+scikit-learn                   # memory_layer.py: `from sklearn.metrics.pairwise import cosine_similarity`
+litellm                        # memory_layer.py: `from litellm import completion`
+requests                       # memory_layer.py: `import requests`
+datasets                       # HF datasets lib — sentence-transformers import-time collision shim (_st_shim.py)
+# NOTE: numpy is in core (memory_layer.py: `import numpy as np`). The `ollama`
+# backend (OllamaController) is a LAZY import for an unused backend — not listed.

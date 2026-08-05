@@ -56,11 +56,22 @@ answers** — `use_memory_to_answer` is not overridden (hipporag2/amem/simplemem
 pattern). This keeps the comparison about *memory* (LightMem's compression +
 offline-refined retrieval), not about LightMem's own answer generator.
 
+## Setup
+
+lightmem has its own venv, built from its own self-contained
+`requirements.txt` (`-r ../../core-requirements.txt` + sentence-transformers,
+llmlingua, qdrant-client, transformers, torch, pydantic):
+
+    baselines/setup_venv.sh lightmem
+
+This creates `baselines/harness/lightmem/venv/`. The shared `baselines/venv/`
+is dev/test only and cannot run lightmem.
+
 ## Usage
 
-    baselines/venv/bin/python baselines/harness/lightmem/run.py \
+    baselines/harness/lightmem/venv/bin/python baselines/harness/lightmem/run.py \
         --config baselines/harness/lightmem/config.example.yaml
-    baselines/venv/bin/python baselines/harness/lightmem/run.py \
+    baselines/harness/lightmem/venv/bin/python baselines/harness/lightmem/run.py \
         --config my_lightmem.yaml --dataset dynamicmem --split search
 
 Flags: `--config` (YAML path; CLI flags override it). LightMem knobs:
@@ -125,13 +136,13 @@ Turns are ingested in order; the per-user Qdrant index is instance-scoped
 ## Validation status
 
 Written against the vendored code and the 3-hook contract; **not yet run
-end-to-end** here (the baselines venv + `llmlingua`/`qdrant-client` + a GPU + an
-OpenAI key are only available on the eval server). All adapter + vendored files
+end-to-end** here (this baseline's own venv, incl. `llmlingua`/`qdrant-client`,
++ a GPU + an OpenAI key are only available on the eval server). All adapter + vendored files
 pass `py_compile`. To smoke each ingestion branch cheaply on the search split:
 
-    baselines/venv/bin/python baselines/harness/lightmem/run.py --config baselines/harness/lightmem/smoke_locomo.yaml
-    baselines/venv/bin/python baselines/harness/lightmem/run.py --config baselines/harness/lightmem/smoke_dynamicmem.yaml
-    baselines/venv/bin/python baselines/harness/lightmem/run.py --config baselines/harness/lightmem/smoke_longmemeval.yaml
+    baselines/harness/lightmem/venv/bin/python baselines/harness/lightmem/run.py --config baselines/harness/lightmem/smoke_locomo.yaml
+    baselines/harness/lightmem/venv/bin/python baselines/harness/lightmem/run.py --config baselines/harness/lightmem/smoke_dynamicmem.yaml
+    baselines/harness/lightmem/venv/bin/python baselines/harness/lightmem/run.py --config baselines/harness/lightmem/smoke_longmemeval.yaml
 
 Read `results/<dataset>/search/traces/<user>.json` to confirm build → retrieve →
 QA runs, `invalid_users` is empty, and the retrieved `passages` are non-empty

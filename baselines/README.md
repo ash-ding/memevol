@@ -23,20 +23,29 @@ producing comparable metrics: per-user reward, judge-scored accuracy, and
 ```
 baselines/
 ├── registry.py          # shared dataset registry (both sides import it)
-├── requirements.txt     # shared full ML install
-├── venv/                # shared Python 3.12 venv (gitignored)
+├── core-requirements.txt  # shared-core deps EVERY baseline installs (via -r)
+├── requirements.txt     # DEV/TEST ONLY (-r core-requirements.txt) — baselines/venv/
+├── setup_venv.sh         # bootstrap: baselines/setup_venv.sh <name> [python] →
+│                        #   baselines/<evolve|harness>/<name>/venv/
+├── venv/                # shared DEV/TEST venv (gitignored) — runs the shared
+│                        #   contract tests + imports common/+datasets/; NEVER
+│                        #   runs a real baseline
 ├── evolve/              # SEARCH-METHOD baselines — compared against forge ITSELF
 │   ├── alma/            #   LLM-meta-agent search loop (memevol's original method)
+│   │                    #     own requirements.txt + venv/ (gitignored)
 │   ├── evolvemem/       #   (paper PDF; to be implemented under the conventions below)
 │   └── memevolve/       #   (paper PDF; to be implemented under the conventions below)
 └── harness/             # READY-MADE MEMORY SYSTEMS — compared against forge's
     ├── eval_common.py   #   EVOLVED HARNESSES. Shared runner: run_baseline()
     ├── cc/              #   Claude Code as direct QA agent (native answer)
     ├── hipporag2/       #   HippoRAG2 graph-RAG pipeline as retrieval memory
+    │                    #     (+ editable install of the external HippoRAG repo)
     ├── amem/            #   A-mem agentic-notes memory as retrieval memory
     ├── lightmem/        #   LightMem compression + offline-update memory
     ├── simplemem/       #   SimpleMem semantic-compression memory as retrieval memory
     └── zep/             #   Zep/Graphiti temporal KG memory (embedded FalkorDB Lite)
+                         #     Each harness/<name>/ (and evolve/alma/) also has
+                         #     its own requirements.txt + venv/ (gitignored)
 ```
 
 - **`evolve/`** — methods that SEARCH over memory-structure code, like forge
@@ -75,9 +84,18 @@ bind every method here:
   machinery, copy it. Duplicated internals are acceptable — preferred, even —
   because independence between methods matters more than DRY.
 
-All baselines share **`baselines/venv/`** (full ML install:
-`pip install -r baselines/requirements.txt`) and write artifacts under
-each baseline's own `logs/` and `results/` directories (gitignored).
+Each baseline has its **own venv**, built from its own self-contained
+`requirements.txt` (`-r ../../core-requirements.txt` + that baseline's extra
+deps): `baselines/setup_venv.sh <name>` creates
+`baselines/{evolve,harness}/<name>/venv/`. hipporag2 additionally needs an
+editable install of the external [HippoRAG](https://github.com/OSU-NLP-Group/HippoRAG)
+repo (`HIPPORAG_SRC=/path/to/HippoRAG baselines/setup_venv.sh hipporag2`; the
+`hipporag` package itself is not vendored or in any `requirements.txt`). The
+shared **`baselines/venv/`** (`pip install -r baselines/requirements.txt`, just
+`-r core-requirements.txt`) is **dev/test only** — it runs the shared contract
+tests and imports `common/` + `datasets/`, and never runs a real baseline.
+Every baseline writes artifacts under its own `logs/` and `results/`
+directories (gitignored).
 
 ## Shared progressive sampling, seeding & memory cache
 
@@ -127,12 +145,12 @@ CLI surface per side:
 # harness (cc / hipporag2 / amem run.py) — no --random_sample (no step loop);
 # sizes (stages: for progressive, single_stage: for one-shot) live in the
 # --config YAML, never on the CLI
-baselines/venv/bin/python baselines/harness/hipporag2/run.py \
+baselines/harness/hipporag2/venv/bin/python baselines/harness/hipporag2/run.py \
     --config baselines/harness/hipporag2/config.example.yaml \
     --dataset locomo --progressive --sampling-seed 42
 
 # alma (evolve/alma/run.py) — has a step loop, so random_sample applies
-baselines/venv/bin/python baselines/evolve/alma/run.py \
+baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
     --status search --progressive --random_sample --sampling_seed 42 --steps 10
 ```
 
@@ -200,11 +218,11 @@ forge uses:
 
 ```bash
 # alma — config file only
-baselines/venv/bin/python baselines/evolve/alma/run.py \
+baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
     --config baselines/evolve/alma/config.example.yaml
 
 # harness baseline — config file + a CLI override (CLI wins on conflicts)
-baselines/venv/bin/python baselines/harness/hipporag2/run.py \
+baselines/harness/hipporag2/venv/bin/python baselines/harness/hipporag2/run.py \
     --config baselines/harness/hipporag2/config.example.yaml \
     --sampling-seed 7
 ```
@@ -232,15 +250,15 @@ split. Softmax-weighted parent selection over reward.
 # Smoke — tiny staged gauntlet, 2 steps (evaluation sizes come from the
 # shared `stages` schema now, not flat eval_n_*/check_n_* flags — see
 # "Shared progressive sampling" below)
-baselines/venv/bin/python baselines/evolve/alma/run.py \
+baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
     --status search --progressive --steps 2
 
 # Full training — stage1->2->3 gauntlet (default DEFAULT_STAGES sizes), 10 steps
-baselines/venv/bin/python baselines/evolve/alma/run.py \
+baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
     --status search --progressive --steps 10
 
 # Held-out evaluation of a saved memo
-baselines/venv/bin/python baselines/evolve/alma/run.py \
+baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
     --status test --memo_SHA <SHA> --progressive
 ```
 
@@ -269,12 +287,12 @@ Skips memory-architecture design entirely. `CCMemo`
   shared QA agent. This is the one baseline that overrides the answer hook.
 
 ```bash
-baselines/venv/bin/python baselines/harness/cc/run.py \
+baselines/harness/cc/venv/bin/python baselines/harness/cc/run.py \
     --config baselines/harness/cc/config.example.yaml \
     --dataset locomo --model claude-sonnet-4-20250514
 
 # sizes live in the --config YAML (e.g. single_stage: {n_users: 2} for 2 dynamicmem users)
-baselines/venv/bin/python baselines/harness/cc/run.py \
+baselines/harness/cc/venv/bin/python baselines/harness/cc/run.py \
     --config my_cc.yaml --dataset dynamicmem
 ```
 
@@ -299,11 +317,11 @@ wraps [HippoRAG2](https://github.com/OSU-NLP-Group/HippoRAG)'s pipeline:
 
 ```bash
 # OpenAI API embedding (no GPU needed)
-baselines/venv/bin/python baselines/harness/hipporag2/run.py \
+baselines/harness/hipporag2/venv/bin/python baselines/harness/hipporag2/run.py \
     --dataset locomo --embedding text-embedding-3-small
 
 # Local GPU embedding (NVIDIA)
-baselines/venv/bin/python baselines/harness/hipporag2/run.py \
+baselines/harness/hipporag2/venv/bin/python baselines/harness/hipporag2/run.py \
     --dataset longmemeval_s --embedding nvidia/NV-Embed-v2 \
     --embedding_batch_size 2 --embedding_dtype float16
 ```
@@ -330,11 +348,11 @@ Artifacts: `baselines/harness/hipporag2/{outputs/, results/<dataset>/<split>/}`.
 
 ```bash
 # faithful defaults (LLMlingua-2 pre-compress + topic-seg, MiniLM embedder; needs a GPU)
-baselines/venv/bin/python baselines/harness/lightmem/run.py \
+baselines/harness/lightmem/venv/bin/python baselines/harness/lightmem/run.py \
     --config baselines/harness/lightmem/config.example.yaml --dataset locomo
 
 # CPU (slow) — move the local models off the GPU
-baselines/venv/bin/python baselines/harness/lightmem/run.py \
+baselines/harness/lightmem/venv/bin/python baselines/harness/lightmem/run.py \
     --config my_lightmem.yaml --dataset dynamicmem \
     --llmlingua_device cpu --embedding_device cpu
 ```
@@ -360,11 +378,11 @@ boundary and provenance.
 
 ```bash
 # faithful Qwen3-0.6B embedder (benefits from GPU)
-baselines/venv/bin/python baselines/harness/simplemem/run.py \
+baselines/harness/simplemem/venv/bin/python baselines/harness/simplemem/run.py \
     --config baselines/harness/simplemem/config.example.yaml --dataset locomo
 
 # light MiniLM fallback embedder (no GPU)
-baselines/venv/bin/python baselines/harness/simplemem/run.py \
+baselines/harness/simplemem/venv/bin/python baselines/harness/simplemem/run.py \
     --config my_simplemem.yaml --dataset dynamicmem \
     --embedding_model all-MiniLM-L6-v2
 ```
@@ -395,7 +413,7 @@ not Graphiti's default Neo4j server. Embedder/reranker default to paper-faithful
 **BGE-m3** (config-toggleable to OpenAI). Requires **Python 3.12+**.
 
 ```bash
-baselines/venv/bin/python baselines/harness/zep/run.py \
+baselines/harness/zep/venv/bin/python baselines/harness/zep/run.py \
     --config baselines/harness/zep/config.example.yaml --dataset locomo
 # CPU-only box: add device: cpu in the config (or --device cpu)
 ```
@@ -540,28 +558,32 @@ attribute. No `__init__.py` files needed (namespace packages).
 
 ### Step 3 — dependencies
 
-Add your system's packages to [`baselines/requirements.txt`](requirements.txt)
-and install into the shared venv:
+Give your baseline its own self-contained `baselines/harness/<name>/requirements.txt`:
+start with `-r ../../core-requirements.txt`, then list only your system's
+extra packages (see any existing `harness/*/requirements.txt` for the
+pattern). Build its venv with the bootstrap script:
 
 ```bash
-baselines/venv/bin/pip install -r baselines/requirements.txt
+baselines/setup_venv.sh <name>
 ```
 
-(Heavy/conflicting deps? Note them in your baseline's own README; the
-shared venv is the default, not a hard rule — but scoring still MUST go
-through `run_baseline`.)
+This creates `baselines/harness/<name>/venv/` from that file. Heavy or
+mutually-conflicting deps are exactly why each baseline gets its own venv now
+— no need to reconcile them against any other baseline's requirements. Note
+anything unusual in your baseline's own README; scoring still MUST go
+through `run_baseline`.
 
 ### Step 4 — validate on the SEARCH split (cheap, iterate freely)
 
 ```bash
 # One conversation, a handful of QAs — does the adapter run end-to-end?
 # Size via a --config YAML with `single_stage: {n_conversations: 1, n_qa: 3}`.
-baselines/venv/bin/python baselines/harness/<name>/run.py \
+baselines/harness/<name>/venv/bin/python baselines/harness/<name>/run.py \
     --config my_baseline.yaml --dataset locomo --split search
 
 # DynamicMem protocol check — 1 user exercises the checkpoint interleaving
 # (config YAML: `single_stage: {n_users: 1}`)
-baselines/venv/bin/python baselines/harness/<name>/run.py \
+baselines/harness/<name>/venv/bin/python baselines/harness/<name>/run.py \
     --config my_baseline.yaml --dataset dynamicmem --split search
 ```
 
@@ -575,9 +597,9 @@ surfacing the right memory.
 
 ```bash
 # Whole test split (the default --split; = forge.heldout coverage=full)
-baselines/venv/bin/python baselines/harness/<name>/run.py --dataset locomo
-baselines/venv/bin/python baselines/harness/<name>/run.py --dataset dynamicmem
-baselines/venv/bin/python baselines/harness/<name>/run.py --dataset longmemeval_s
+baselines/harness/<name>/venv/bin/python baselines/harness/<name>/run.py --dataset locomo
+baselines/harness/<name>/venv/bin/python baselines/harness/<name>/run.py --dataset dynamicmem
+baselines/harness/<name>/venv/bin/python baselines/harness/<name>/run.py --dataset longmemeval_s
 ```
 
 Outputs land in `baselines/harness/<name>/results/<dataset>/test/`:

@@ -1,6 +1,6 @@
 # =============================================================================
 # alma (memory-structure evolution baseline) — exhaustive config reference.
-# Launch: baselines/venv/bin/python baselines/evolve/alma/run.py \
+# Launch: baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
 #             --config baselines/evolve/alma/config.example.yaml
 # CLI flags override any key here (precedence: DEFAULT_CONFIG < this file < CLI).
 #

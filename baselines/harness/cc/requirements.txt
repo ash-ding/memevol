@@ -1,0 +1,5 @@
+# cc baseline (Claude Code SDK native agentic answer) — self-contained venv.
+# Shared core (openai/anthropic/dotenv/httpx/yaml/jsonschema/scipy/numpy/rich/tiktoken):
+-r ../../core-requirements.txt
+
+claude-code-sdk         # cc/memo.py: `from claude_code_sdk import ...` (native answer)
