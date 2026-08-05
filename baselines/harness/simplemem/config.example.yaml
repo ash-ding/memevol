@@ -1,0 +1,59 @@
+# =============================================================================
+# simplemem (SimpleMem semantic-compression memory) baseline — exhaustive config.
+# Launch: baselines/venv/bin/python baselines/harness/simplemem/run.py \
+#             --config baselines/harness/simplemem/config.example.yaml
+# CLI flags override any key here (precedence: DEFAULT_CONFIG < this file < CLI).
+#
+# STRICT-CONFIG (default on): with --config, EVERY key below must be present
+# (a null value is allowed). Missing keys abort the run listing what's absent.
+# Set strict_config: false (or pass --no-strict-config) to opt out.
+# =============================================================================
+
+strict_config: true            # require this file to list every parameter (default true)
+
+dataset: locomo                 # which benchmark: dynamicmem | locomo | longmemeval_s | longmemeval_m (SimpleMem is LoCoMo-native)
+split: test                    # test | search (search = the training split used during evolution)
+progressive: false             # false = ONE single pass (sized by single_stage); true = staged stage1->2->3 gauntlet (sized by stages)
+sampling_seed: 42              # seeds the sampled subset (both paths; a no-op at whole-split)
+memory_cache: true             # cross-stage Phase-1 memory reuse (gauntlet only); --no-memory-cache to disable
+
+# --- SimpleMem internal knobs (its own defaults @ db80b6a) -------------------
+simplemem_llm_model: gpt-4.1-mini   # SimpleMem's compression + retrieval-planning LLM. 4-series ONLY —
+                                    # its LLMClient sends temperature=0.1..0.3, which the gpt-5 family rejects.
+embedding_model: Qwen/Qwen3-Embedding-0.6B   # faithful local sentence-transformer; all-MiniLM-L6-v2 = light fallback
+base_url: null                 # OpenAI-compatible base URL for SimpleMem's internal LLM (null = OpenAI default)
+window_size: 40                # dialogues per compression window (SimpleMem WINDOW_SIZE; tuned for LoCoMo)
+overlap_size: 2                # window overlap for context continuity (SimpleMem OVERLAP_SIZE)
+semantic_top_k: 25             # max vector-similarity hits per query (SimpleMem SEMANTIC_TOP_K)
+keyword_top_k: 5               # max keyword/BM25 hits per query (SimpleMem KEYWORD_TOP_K)
+structured_top_k: 5            # max structured-metadata hits per query (SimpleMem STRUCTURED_TOP_K)
+enable_planning: true          # intent-aware multi-query retrieval planning
+enable_reflection: true        # reflection-based additional retrieval rounds
+max_reflection_rounds: 2       # number of reflection rounds when enabled
+enable_parallel_processing: true   # SimpleMem default — parallel window compression. FAITHFUL path
+                                   # (serial is NOT equivalent: it feeds each window the previous
+                                   # window's entries as dedup context). Also the main build speed lever.
+max_parallel_workers: 16       # threads for parallel build (SimpleMem MAX_PARALLEL_WORKERS)
+enable_parallel_retrieval: true    # SimpleMem default — parallel multi-view retrieval
+max_retrieval_workers: 8       # threads for parallel retrieval (SimpleMem MAX_RETRIEVAL_WORKERS)
+
+# --- shared eval (baseline convention) --------------------------------------
+llm_model: gpt-5-mini           # shared QA agent — answers using SimpleMem's retrieved memory units
+judge_model: gpt-5-mini        # LLM-as-judge model scoring predicted vs reference answers
+max_sample_concurrent: 3       # asyncio concurrency across users/samples (higher = faster, more API load)
+
+# --- Sizing (config-file only; no CLI flags). BOTH keys must be present; the
+#     inactive one is null. Under strict mode the active block's leaves must all
+#     be listed (a null leaf = whole split for that dimension). ---
+# progressive: false → single_stage sizes the one pass (locomo native fields):
+single_stage:
+  n_conversations: null        # locomo: null = all conversations in the split; e.g. 2 to cap
+  n_qa: null                   # null = all QA per conversation
+# progressive: true → stages sizes the gauntlet (set single_stage: null above and
+# fill this out; sizes must be non-decreasing across stage1..3):
+stages: null
+# stages:
+#   sanity_check: {n_conversations: 1, n_qa: 3}
+#   stage1: {n_conversations: 2, n_qa: 20, threshold: 0.30}
+#   stage2: {n_conversations: 4, n_qa: 40, threshold: 0.35}
+#   stage3: {n_conversations: 6, n_qa: 60}

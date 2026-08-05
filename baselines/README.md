@@ -32,7 +32,9 @@ baselines/
 └── harness/             # READY-MADE MEMORY SYSTEMS — compared against forge's
     ├── eval_common.py   #   EVOLVED HARNESSES. Shared runner: run_baseline()
     ├── cc/              #   Claude Code as direct QA agent (native answer)
-    └── hipporag2/       #   HippoRAG2 graph-RAG pipeline as retrieval memory
+    ├── hipporag2/       #   HippoRAG2 graph-RAG pipeline as retrieval memory
+    ├── amem/            #   A-mem agentic-notes memory as retrieval memory
+    └── simplemem/       #   SimpleMem semantic-compression memory as retrieval memory
 ```
 
 - **`evolve/`** — methods that SEARCH over memory-structure code, like forge
@@ -141,7 +143,7 @@ committed (a link from a tracked file would be dead on a fresh clone).
 
 ## Configuration
 
-All four baselines (`evolve/alma` and every `harness/{cc,hipporag2,amem}`)
+All baselines (`evolve/alma` and every `harness/{cc,hipporag2,amem,simplemem}`)
 accept a `--config <yaml>` flag, resolved through the same shared helper
 forge uses:
 
@@ -160,12 +162,14 @@ forge uses:
   [`evolve/alma/config.example.yaml`](evolve/alma/config.example.yaml),
   [`harness/cc/config.example.yaml`](harness/cc/config.example.yaml),
   [`harness/hipporag2/config.example.yaml`](harness/hipporag2/config.example.yaml),
-  [`harness/amem/config.example.yaml`](harness/amem/config.example.yaml).
+  [`harness/amem/config.example.yaml`](harness/amem/config.example.yaml),
+  [`harness/simplemem/config.example.yaml`](harness/simplemem/config.example.yaml).
   Copy one to start a real run instead of hand-assembling a CLI invocation.
 - **alma's entrypoint is `run.py`** (renamed from its old script name) —
   every baseline is now invoked the same way: `evolve/alma/run.py`,
-  `harness/cc/run.py`, `harness/hipporag2/run.py`, `harness/amem/run.py`.
-- **Sampling sizes are config-file only** across ALL four baselines (and
+  `harness/cc/run.py`, `harness/hipporag2/run.py`, `harness/amem/run.py`,
+  `harness/simplemem/run.py`.
+- **Sampling sizes are config-file only** across ALL baselines (and
   forge) — the old `--stages` / `--stage-spec` JSON-string CLI flags were
   removed. Both `stages:` (progressive) and `single_stage:` (one-shot) are
   native YAML mappings in the `--config` file: `stages: {stage1: {...}, ...}`
@@ -210,7 +214,9 @@ baselines/venv/bin/python baselines/harness/hipporag2/run.py \
 | **[evolve/alma](evolve/alma/)** | search method | LLM-meta-agent search loop | Yes — propose / select / evolve over harness code | Established baseline; the framework's "v1" memory-architecture search |
 | **[harness/cc](harness/cc/)** | ready-made harness | Claude Code as direct QA agent (native answer, multi-dataset) | None (zero-shot) | What-if: just give CC the raw user data + tools and let it answer |
 | **[harness/hipporag2](harness/hipporag2/)** | ready-made harness | Graph-based RAG pipeline as retrieval memory (OpenIE → KG → PPR retrieval → passages; shared QA agent answers) | None (fixed pipeline) | Hand-designed memory architecture comparison point, multi-dataset |
+| **[harness/amem](harness/amem/)** | ready-made harness | A-mem agentic-notes memory (per-note LLM analysis + memory evolution → keyword-rewrite retrieval; shared QA agent answers) | None (fixed pipeline) | Agentic note-graph memory comparison point, multi-dataset |
 | **[harness/lightmem](harness/lightmem/)** | ready-made harness | LightMem compression + offline-update memory (LLMlingua-2 pre-compression → topic segmentation → LLM metadata/summary extraction → Qdrant index → per-entry LLM offline update; `LightMemory.retrieve` → passages; shared QA agent answers) | None (fixed pipeline) | Compression + offline-refinement memory comparison point, multi-dataset |
+| **[harness/simplemem](harness/simplemem/)** | ready-made harness | SimpleMem semantic-compression memory (LLM window compression → self-contained memory units → intent-aware multi-view retrieval; shared QA agent answers) | None (fixed pipeline) | Compression-first memory comparison point, multi-dataset |
 
 ### evolve/alma — meta-learning loop
 
@@ -333,6 +339,35 @@ baselines/venv/bin/python baselines/harness/lightmem/run.py \
 Artifacts: `baselines/harness/lightmem/{outputs/, results/<dataset>/<split>/}`.
 See [harness/lightmem/README.md](harness/lightmem/README.md) for the faithfulness
 boundary and provenance.
+### harness/simplemem — semantic-compression memory as retrieval memory
+
+`SimpleMemMemo` ([harness/simplemem/memo.py](harness/simplemem/memo.py)) wraps
+[SimpleMem](https://github.com/aiming-lab/SimpleMem)'s vendored text pipeline
+(`vendor/simplemem/{core,text}`, byte-identical @ `db80b6a`):
+
+- **BUILD**: maps the visible data to SimpleMem `Dialogue`s and runs its
+  compression pipeline — LLM window-compression (`WINDOW_SIZE=40`) into
+  self-contained `MemoryEntry` units (coref-resolved restatement + keywords +
+  timestamp/persons/entities/topic), indexed into a per-user LanceDB multi-view
+  store. Additive across DynamicMem checkpoints.
+- **RETRIEVE**: intent-aware planning + semantic/keyword/structured multi-view
+  search (+ optional reflection), returned as `{"passages": [...]}`. The
+  **shared QA agent** answers — a fair "SimpleMem-as-memory" comparison.
+
+```bash
+# faithful Qwen3-0.6B embedder (benefits from GPU)
+baselines/venv/bin/python baselines/harness/simplemem/run.py \
+    --config baselines/harness/simplemem/config.example.yaml --dataset locomo
+
+# light MiniLM fallback embedder (no GPU)
+baselines/venv/bin/python baselines/harness/simplemem/run.py \
+    --config my_simplemem.yaml --dataset dynamicmem \
+    --embedding_model all-MiniLM-L6-v2
+```
+
+Artifacts: `baselines/harness/simplemem/{outputs/, results/<dataset>/<split>/}`.
+See [harness/simplemem/README.md](harness/simplemem/README.md) for the
+faithfulness boundary and provenance.
 
 ---
 
