@@ -1,6 +1,8 @@
 # Virtual environment
 venv/
 memevol_env/
+# Per-baseline venvs (each baseline has its own; see baselines/setup_venv.sh)
+baselines/*/*/venv/
 
 # Python cache
 __pycache__/
