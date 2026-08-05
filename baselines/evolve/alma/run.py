@@ -3,8 +3,8 @@ Alma CLI entry point.
 
 Invoke from the project root:
 
-    python baselines/evolve/alma/run.py --status search --steps 10
-    python baselines/evolve/alma/run.py --config baselines/evolve/alma/config.example.yaml
+    baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py --status search --steps 10
+    baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py --config baselines/evolve/alma/config.example.yaml
 
 Routes to `MetaAgent.forward()` for --status search (meta-learning loop), or
 `MetaAgent.run_single_memo()` for --status test (held-out evaluation).
