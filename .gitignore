@@ -78,3 +78,9 @@ forge/logs/*
 # Built Singularity images (too large for git; stored on /export/scratch_large)
 containers/*.sif
 memevol_env/
+
+# mem0 / memoryos runtime artifacts (per-user Qdrant + MemoryOS stores)
+baselines/harness/mem0/results/
+baselines/harness/mem0/outputs/
+baselines/harness/memoryos/results/
+baselines/harness/memoryos/outputs/

@@ -11,7 +11,7 @@
 #
 # Usage:
 #   baselines/setup_venv.sh <name> [python]
-#     <name>   one of: alma cc hipporag2 amem lightmem simplemem zep
+#     <name>   one of: alma cc hipporag2 amem lightmem simplemem zep mem0 memoryos
 #     [python] interpreter to build the venv with (default: python3.12 —
 #              falkordblite/zep require 3.12+; all baselines target 3.12)
 #
@@ -31,7 +31,7 @@ NAME="${1:-}"
 PY="${2:-python3.12}"
 
 if [ -z "$NAME" ]; then
-  echo "usage: baselines/setup_venv.sh <alma|cc|hipporag2|amem|lightmem|simplemem|zep> [python]" >&2
+  echo "usage: baselines/setup_venv.sh <alma|cc|hipporag2|amem|lightmem|simplemem|zep|mem0|memoryos> [python]" >&2
   exit 2
 fi
 
@@ -39,8 +39,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # repo root (baselines
 
 case "$NAME" in
   alma)                                  DIR="$ROOT/baselines/evolve/$NAME" ;;
-  cc|hipporag2|amem|lightmem|simplemem|zep) DIR="$ROOT/baselines/harness/$NAME" ;;
-  *) echo "unknown baseline: '$NAME' (expected alma|cc|hipporag2|amem|lightmem|simplemem|zep)" >&2; exit 2 ;;
+  cc|hipporag2|amem|lightmem|simplemem|zep|mem0|memoryos) DIR="$ROOT/baselines/harness/$NAME" ;;
+  *) echo "unknown baseline: '$NAME' (expected alma|cc|hipporag2|amem|lightmem|simplemem|zep|mem0|memoryos)" >&2; exit 2 ;;
 esac
 
 REQ="$DIR/requirements.txt"
