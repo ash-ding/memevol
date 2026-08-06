@@ -37,7 +37,17 @@ from typing import Any, Dict, List, Optional
 from common.harness_base import MemoStructure
 from baselines.harness.hipporag2.memo import app_log_to_passage
 
-from mem0 import Memory
+# Must be set BEFORE importing mem0: the flag is read at module import time
+# (mem0/memory/telemetry.py), and with it on, every Memory() additionally opens a
+# telemetry vector store at the process-global path ~/.mem0/migrations_qdrant.
+# Local-mode Qdrant takes an exclusive lock on a storage folder, so the second
+# concurrent user in the same process dies with "already accessed by another
+# instance of Qdrant client" — which is what happens here, since the workflow
+# builds several users' memories concurrently. Off is also simply correct: a
+# benchmark run should not phone the evaluation home.
+os.environ.setdefault("MEM0_TELEMETRY", "False")
+
+from mem0 import Memory  # noqa: E402
 
 OUTPUTS_DIR = Path(__file__).resolve().parent / "outputs"
 

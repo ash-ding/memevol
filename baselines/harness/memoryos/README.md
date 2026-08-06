@@ -76,3 +76,54 @@ baselines/harness/memoryos/venv/bin/python baselines/harness/memoryos/run.py \
     --config baselines/harness/memoryos/config.example.yaml
 baselines/harness/memoryos/venv/bin/python tests/test_memoryos_baseline.py
 ```
+
+## Reproduction check (2026-08-05)
+
+`config.paper.yaml` — LoCoMo **search** split, all 6 conversations × 60
+randomly-sampled QA = **360 questions**, answerer **gpt-4o-mini** (what the paper
+reports on; `config.example.yaml` keeps the repo's shared gpt-5-mini agent), with
+the paper's `retrieval_queue_capacity: 10` and `mid_term_capacity: 200`.
+6/6 conversations, **3.5 hours**, **2,778 tokens/question**.
+
+Scored with `baselines/harness/score_paper_metrics.py`, which recomputes the
+papers' metrics — the shared judge is binary and is not what they report.
+
+| category | our F1 | paper F1 | n |
+|---|---|---|---|
+| single-hop | **33.7** | **35.3** | 202 |
+| multi-hop | 22.2 | 41.1 | 65 |
+| temporal | 39.5 | 20.0 | 73 |
+| open-domain | 12.1 | 48.6 | 20 |
+| **unweighted mean** | **26.9** | **36.2** | |
+
+**Verdict: the integration is correct, but two categories are not comparable.**
+
+What reproduces: single-hop — the cleanest, largest cell (n=202) — lands at
+**33.7 vs the paper's 35.3**, a precision no mis-wired integration produces. The
+cost profile also reproduces: 2,778 tokens/question against the paper's reported
+3,874 (Table 3), confirming the expense is intrinsic to the method rather than to
+this integration. Head-to-head on identical questions, Mem0 (30.2) > MemoryOS
+(26.9), matching the papers' own ordering (41.0 > 36.2).
+
+What does not: **temporal is inverted.** The paper's signature is temporal being
+MemoryOS's weakest category (20.02, its only cell below 25); here it is the
+strongest (39.5). The cause is shared, not method-specific — `_LOCOMO_USER_CAT2`
+supplies explicit date guidance, and under it Mem0 and MemoryOS converge to 35.9
+and 39.5 while their papers report 48.9 and 20.0. Open-domain (12.1) is the same
+story in a more extreme form; see mem0/README.md for the worked example. Neither
+cell can be compared to a paper number without swapping in the original LoCoMo
+prompts, which would invalidate every historical LoCoMo number in this repo.
+
+### Cost and concurrency
+
+Phase 1 is 20–43 min per conversation. `Memoryos.add_memory` is a blocking
+synchronous call inside an async hook, so it holds the event loop and the
+nominal `max_sample_concurrent: 3` does not actually overlap users — the build is
+serial. It is left that way on purpose: `vendor/memoryos/utils.py`'s
+`_embedding_cache` evicts by listing keys and deleting them one by one, which
+races under threads, so wrapping the call in `asyncio.to_thread` would trade a
+known cost for an unknown corruption.
+
+`mid_term_capacity: 200` binds in **1 of 6** conversations (segment counts:
+79 / 109 / 155 / 171 / 179 / **200** — landing exactly on the cap is the LFU
+eviction signature). The vendored default of 2000 would never bind at this scale.
