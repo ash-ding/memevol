@@ -1,0 +1,38 @@
+# amem baseline — standalone uv project (A-mem agentic-notes memory).
+#
+#   cd baselines/harness/amem && uv sync      # -> .venv/ (CPython 3.12 via .python-version)
+#
+# Isolated per-baseline env (uv sync + committed uv.lock for reproducibility).
+# The shared-core block is the closure common/ + datasets/ need — duplicated
+# into every baseline pyproject on purpose (independence over DRY).
+[project]
+name = "memevol-baseline-amem"
+version = "0.0.0"
+description = "A-mem agentic-notes memory"
+requires-python = ">=3.12"
+dependencies = [
+    # --- shared core (common/ + datasets/) ---
+    "openai==1.107.3",
+    "anthropic[vertex]",
+    "python-dotenv",
+    "httpx",
+    "PyYAML",
+    "jsonschema",
+    "scipy",
+    "numpy",
+    "rich",
+    "tiktoken",
+    # --- amem-specific ---
+    "sentence-transformers>=3.2.1",   # memory_layer.py: SentenceTransformer
+    "transformers",                   # AutoModel/AutoTokenizer
+    "torch",                          # embedding path
+    "nltk",                           # word_tokenize
+    "rank_bm25",                      # BM25Okapi
+    "scikit-learn",                   # cosine_similarity
+    "litellm",                        # completion
+    "requests",
+    "datasets",                       # HF datasets (ST import-time shim)
+]
+
+[tool.uv]
+package = false   # this dir is an app env, not a buildable package

@@ -1,0 +1,30 @@
+# cc baseline (Claude Code SDK native agentic answer) — standalone uv project.
+#
+#   cd baselines/harness/cc && uv sync      # → venv/ (UV_PROJECT_ENVIRONMENT=venv)
+#
+# Isolated per-baseline environment (uv sync + uv.lock for reproducibility). The
+# shared-core block below is the closure common/ + datasets/ need — duplicated
+# into every baseline pyproject on purpose (independence over DRY).
+[project]
+name = "memevol-baseline-cc"
+version = "0.0.0"
+description = "cc harness baseline environment"
+requires-python = ">=3.12"
+dependencies = [
+    # --- shared core (common/ + datasets/) ---
+    "openai==1.107.3",
+    "anthropic[vertex]",
+    "python-dotenv",
+    "httpx",
+    "PyYAML",
+    "jsonschema",
+    "scipy",
+    "numpy",
+    "rich",
+    "tiktoken",
+    # --- cc-specific ---
+    "claude-code-sdk",   # cc/memo.py: native agentic answer
+]
+
+[tool.uv]
+package = false   # this dir is an app env, not a buildable package

@@ -1,0 +1,38 @@
+# zep baseline — standalone uv project (Zep/Graphiti temporal KG memory (embedded FalkorDB Lite)).
+#
+#   cd baselines/harness/zep && uv sync      # -> .venv/ (CPython 3.12 via .python-version)
+#
+# Isolated per-baseline env (uv sync + committed uv.lock for reproducibility).
+# The shared-core block is the closure common/ + datasets/ need — duplicated
+# into every baseline pyproject on purpose (independence over DRY).
+[project]
+name = "memevol-baseline-zep"
+version = "0.0.0"
+description = "Zep/Graphiti temporal KG memory (embedded FalkorDB Lite)"
+requires-python = ">=3.12"
+dependencies = [
+    # --- shared core (common/ + datasets/) ---
+    "openai==1.107.3",
+    "anthropic[vertex]",
+    "python-dotenv",
+    "httpx",
+    "PyYAML",
+    "jsonschema",
+    "scipy",
+    "numpy",
+    "rich",
+    "tiktoken",
+    # --- zep-specific ---
+    "neo4j>=5.26.0",          # graphiti_core driver (eager import)
+    "tenacity>=9.0.0",        # graphiti_core retry
+    "posthog>=3.0.0",         # graphiti_core telemetry
+    "falkordblite>=0.5.0; python_version>='3.12'",   # embedded FalkorDB (provides falkordb+redislite)
+    "redis<9",                # redis-py 8.x breaks falkordblite
+    "python-dateutil",        # episode reference_time parsing
+    "datasets",               # HF datasets (ST import-time shim)
+    "pydantic",               # graphiti_core models
+    "sentence-transformers>=3.2.1",   # BGE-m3 embedder + reranker
+]
+
+[tool.uv]
+package = false   # this dir is an app env, not a buildable package

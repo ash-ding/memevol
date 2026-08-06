@@ -1,0 +1,33 @@
+# memevol root — forge host orchestrator + shared common/ + datasets/ env.
+#
+#   uv sync      # -> .venv/ (CPython 3.12 via .python-version)
+#
+# This env runs forge (host-side: parses YAML, drives the Claude-Code-SDK
+# proposer, subprocess singularity — heavy ML deps live in the Singularity
+# image, NOT here) AND the baselines' shared/contract tests (they import only
+# common/ + datasets/, which this env is a superset of). Each baseline has its
+# OWN standalone uv project under baselines/{evolve,harness}/<name>/.
+[project]
+name = "memevol"
+version = "0.0.0"
+description = "memevol — forge host + shared common/datasets + baseline contract tests"
+requires-python = ">=3.12"
+dependencies = [
+    # forge orchestrator runtime
+    "claude-code-sdk==0.0.25",
+    "python-dotenv>=1.0",
+    "PyYAML>=6.0",
+    # lightweight common.* deps (let the host import common/ + run the shared
+    # tests without a container; production heavy deps live in Singularity)
+    "openai>=1.107",
+    "httpx",
+    "jsonschema",
+    "tiktoken",
+    "scipy",            # common/llm.py::Embedding (cosine)
+    "rich",             # common/logger.py
+    "anthropic[vertex]",
+    "huggingface-hub",
+]
+
+[tool.uv]
+package = false   # repo root is an app/env, not a buildable package

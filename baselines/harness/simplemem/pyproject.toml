@@ -1,0 +1,39 @@
+# simplemem baseline — standalone uv project (SimpleMem semantic-compression memory).
+#
+#   cd baselines/harness/simplemem && uv sync      # -> .venv/ (CPython 3.12 via .python-version)
+#
+# Isolated per-baseline env (uv sync + committed uv.lock for reproducibility).
+# The shared-core block is the closure common/ + datasets/ need — duplicated
+# into every baseline pyproject on purpose (independence over DRY).
+[project]
+name = "memevol-baseline-simplemem"
+version = "0.0.0"
+description = "SimpleMem semantic-compression memory"
+requires-python = ">=3.12"
+dependencies = [
+    # --- shared core (common/ + datasets/) ---
+    "openai==1.107.3",
+    "anthropic[vertex]",
+    "python-dotenv",
+    "httpx",
+    "PyYAML",
+    "jsonschema",
+    "scipy",
+    "numpy",
+    "rich",
+    "tiktoken",
+    # --- simplemem-specific ---
+    "lancedb",                        # vector store backend
+    "pyarrow",
+    "tantivy",                        # lancedb full-text search
+    "dateparser",                     # hybrid_retriever
+    "sentence-transformers>=3.2.1",   # embedding.py
+    "transformers",
+    "accelerate",                     # Qwen3 embedder loading
+    "torch",
+    "pydantic",                       # memory_entry model
+    "datasets",                       # HF datasets (ST/lancedb import-time shim)
+]
+
+[tool.uv]
+package = false   # this dir is an app env, not a buildable package

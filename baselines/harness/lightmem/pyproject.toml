@@ -1,0 +1,36 @@
+# lightmem baseline — standalone uv project (LightMem compression + offline-update memory).
+#
+#   cd baselines/harness/lightmem && uv sync      # -> .venv/ (CPython 3.12 via .python-version)
+#
+# Isolated per-baseline env (uv sync + committed uv.lock for reproducibility).
+# The shared-core block is the closure common/ + datasets/ need — duplicated
+# into every baseline pyproject on purpose (independence over DRY).
+[project]
+name = "memevol-baseline-lightmem"
+version = "0.0.0"
+description = "LightMem compression + offline-update memory"
+requires-python = ">=3.12"
+dependencies = [
+    # --- shared core (common/ + datasets/) ---
+    "openai==1.107.3",
+    "anthropic[vertex]",
+    "python-dotenv",
+    "httpx",
+    "PyYAML",
+    "jsonschema",
+    "scipy",
+    "numpy",
+    "rich",
+    "tiktoken",
+    # --- lightmem-specific ---
+    "sentence-transformers>=3.2.1",   # huggingface text_embedder
+    "llmlingua==0.2.2",               # llmlingua-2 topic segmenter
+    "qdrant-client==1.15.1",          # qdrant retriever
+    "transformers",                   # embedder + llmlingua-2
+    "torch",
+    "pydantic",                       # vendor configs
+    "datasets",                       # HF datasets (ST import-time shim)
+]
+
+[tool.uv]
+package = false   # this dir is an app env, not a buildable package
