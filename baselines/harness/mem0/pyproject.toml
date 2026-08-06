@@ -1,0 +1,32 @@
+# mem0 baseline — standalone uv project (Mem0 LLM-extracted fact memory).
+#
+#   cd baselines/harness/mem0 && uv sync      # -> .venv/ (CPython 3.12 via .python-version)
+#
+# Isolated per-baseline env (uv sync + committed uv.lock for reproducibility).
+# The shared-core block is the closure common/ + datasets/ need — duplicated
+# into every baseline pyproject on purpose (independence over DRY).
+[project]
+name = "memevol-baseline-mem0"
+version = "0.0.0"
+description = "Mem0 LLM-extracted fact memory"
+requires-python = ">=3.12"
+dependencies = [
+    # --- shared core (common/ + datasets/) ---
+    "openai==1.107.3",
+    "anthropic[vertex]",
+    "python-dotenv",
+    "httpx",
+    "PyYAML",
+    "jsonschema",
+    "scipy",
+    "numpy",
+    "rich",
+    "tiktoken",
+    # --- mem0-specific ---
+    "mem0ai==2.0.17",              # pinned (maintained pkg, stable API) — reproducible
+    "qdrant-client==1.15.1",       # in-process Qdrant collection per user
+    "pydantic",                    # mem0 config models
+]
+
+[tool.uv]
+package = false   # this dir is an app env, not a buildable package

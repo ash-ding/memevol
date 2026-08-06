@@ -38,6 +38,8 @@ baselines/
     ├── amem/            #   A-mem agentic-notes memory as retrieval memory
     ├── lightmem/        #   LightMem compression + offline-update memory
     ├── simplemem/       #   SimpleMem semantic-compression memory as retrieval memory
+    ├── mem0/            #   Mem0 LLM-extracted facts with ADD/UPDATE/DELETE consolidation
+    ├── memoryos/        #   MemoryOS three-tier STM/MTM/LPM memory, heat-based promotion
     └── zep/             #   Zep/Graphiti temporal KG memory (embedded FalkorDB Lite)
                          #     Each harness/<name>/ (and evolve/alma/) also has
                          #     its own pyproject.toml + .python-version + uv.lock + .venv/ (gitignored)
