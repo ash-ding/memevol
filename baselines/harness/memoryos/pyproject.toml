@@ -1,0 +1,34 @@
+# memoryos baseline — standalone uv project (MemoryOS three-tier heat-based memory (vendored memoryos-pro)).
+#
+#   cd baselines/harness/memoryos && uv sync      # -> .venv/ (CPython 3.12 via .python-version)
+#
+# Isolated per-baseline env (uv sync + committed uv.lock for reproducibility).
+# The shared-core block is the closure common/ + datasets/ need — duplicated
+# into every baseline pyproject on purpose (independence over DRY).
+[project]
+name = "memevol-baseline-memoryos"
+version = "0.0.0"
+description = "MemoryOS three-tier heat-based memory (vendored memoryos-pro)"
+requires-python = ">=3.12"
+dependencies = [
+    # --- shared core (common/ + datasets/) ---
+    "openai==1.107.3",
+    "anthropic[vertex]",
+    "python-dotenv",
+    "httpx",
+    "PyYAML",
+    "jsonschema",
+    "scipy",
+    "numpy",
+    "rich",
+    "tiktoken",
+    # --- memoryos-specific ---
+    "faiss-cpu",                   # mid_term.py / retriever.py: `import faiss`
+    "sentence-transformers>=3.2.1",# utils.py: SentenceTransformer
+    "transformers",                # ST backend
+    "torch",                       # ST dep
+    "datasets",                    # HF datasets (ST import-time shadow shim, _st_shim.py)
+]
+
+[tool.uv]
+package = false   # this dir is an app env, not a buildable package

@@ -5,7 +5,7 @@ and MemoryOS (arXiv 2506.06326) both report token-F1 and BLEU-1 on LoCoMo. A
 reproduction check therefore cannot use the judge number at all — it has to
 recompute the papers' metrics from the same predictions.
 
-    baselines/venv/bin/python baselines/harness/score_paper_metrics.py \
+    uv run python baselines/harness/score_paper_metrics.py \
         baselines/harness/mem0/results/locomo/search
 
 TWO AVERAGES, deliberately. The papers' "Avg. F1" is the UNWEIGHTED mean over the

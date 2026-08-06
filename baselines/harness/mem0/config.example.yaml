@@ -1,6 +1,6 @@
 # =============================================================================
 # mem0 (Mem0 LLM-extracted fact memory) baseline — exhaustive config.
-# Launch: baselines/harness/mem0/venv/bin/python baselines/harness/mem0/run.py \
+# Launch: uv run --project baselines/harness/mem0 python baselines/harness/mem0/run.py \
 #             --config baselines/harness/mem0/config.example.yaml
 # CLI flags override any key here (precedence: DEFAULT_CONFIG < this file < CLI).
 #

@@ -4,8 +4,8 @@ method (same split/judge/scoring via the per-dataset workflow).
 Sizing is config-file only (no sizing CLI flags): `single_stage` (progressive:
 false) or `stages` (progressive: true) — see config.example.yaml.
 
-    baselines/harness/mem0/venv/bin/python baselines/harness/mem0/run.py --config baselines/harness/mem0/config.example.yaml
-    baselines/harness/mem0/venv/bin/python baselines/harness/mem0/run.py --config baselines/harness/mem0/config.example.yaml --progressive
+    uv run --project baselines/harness/mem0 python baselines/harness/mem0/run.py --config baselines/harness/mem0/config.example.yaml
+    uv run --project baselines/harness/mem0 python baselines/harness/mem0/run.py --config baselines/harness/mem0/config.example.yaml --progressive
 """
 from __future__ import annotations
 import argparse, asyncio, sys

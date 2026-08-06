@@ -39,7 +39,7 @@ identical across baselines.
 
 ## Dependencies
 
-`mem0ai` is PINNED in `requirements.txt` rather than vendored: it is a maintained
+`mem0ai` is PINNED in `pyproject.toml` rather than vendored: it is a maintained
 package with a stable public API, and the pin is what makes a run reproducible
 (same reasoning as hipporag2's external install). The exercised path is Mem0's
 default stack — OpenAI LLM + OpenAI embedder + embedded Qdrant, no server.
@@ -47,10 +47,14 @@ default stack — OpenAI LLM + OpenAI embedder + embedded Qdrant, no server.
 ## Run
 
 ```bash
-baselines/setup_venv.sh mem0
-baselines/harness/mem0/venv/bin/python baselines/harness/mem0/run.py \
-    --config baselines/harness/mem0/config.example.yaml
-baselines/harness/mem0/venv/bin/python tests/test_mem0_baseline.py
+# build mem0's isolated env
+cd baselines/harness/mem0 && uv sync
+
+# run it (from the baseline dir)
+cd baselines/harness/mem0 && uv run python run.py --config config.example.yaml
+
+# its unit test (from the repo root)
+uv run --project baselines/harness/mem0 python tests/test_mem0_baseline.py
 ```
 
 ## Reproduction check (2026-08-05)

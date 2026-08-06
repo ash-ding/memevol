@@ -71,10 +71,14 @@ hardcodes `all-MiniLM-L6-v2` behind a process-global cache.
 ## Run
 
 ```bash
-baselines/setup_venv.sh memoryos
-baselines/harness/memoryos/venv/bin/python baselines/harness/memoryos/run.py \
-    --config baselines/harness/memoryos/config.example.yaml
-baselines/harness/memoryos/venv/bin/python tests/test_memoryos_baseline.py
+# build memoryos's isolated env
+cd baselines/harness/memoryos && uv sync
+
+# run it (from the baseline dir)
+cd baselines/harness/memoryos && uv run python run.py --config config.example.yaml
+
+# its unit test (from the repo root)
+uv run --project baselines/harness/memoryos python tests/test_memoryos_baseline.py
 ```
 
 ## Reproduction check (2026-08-05)

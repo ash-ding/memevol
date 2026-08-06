@@ -2,7 +2,7 @@
 vendored-package identity, hooks). Zero-dependency runner (no pytest in the
 venvs) — memoryos's OWN venv (heavy imports: torch/sentence-transformers/faiss):
 
-    baselines/harness/memoryos/venv/bin/python tests/test_memoryos_baseline.py
+    uv run --project baselines/harness/memoryos python tests/test_memoryos_baseline.py
 
 Network/LLM calls are NOT exercised here; those need a live key and are covered
 by an actual run.

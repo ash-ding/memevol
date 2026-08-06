@@ -2,7 +2,7 @@
 Zero-dependency runner (no pytest in the venvs) — mem0's OWN venv (it imports
 the mem0 package):
 
-    baselines/harness/mem0/venv/bin/python tests/test_mem0_baseline.py
+    uv run --project baselines/harness/mem0 python tests/test_mem0_baseline.py
 
 Network/LLM calls are NOT exercised here; those need a live key and are covered
 by an actual run.

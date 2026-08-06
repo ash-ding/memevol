@@ -1,6 +1,6 @@
 # =============================================================================
 # memoryos (MemoryOS three-tier heat-based memory) baseline — exhaustive config.
-# Launch: baselines/harness/memoryos/venv/bin/python baselines/harness/memoryos/run.py \
+# Launch: uv run --project baselines/harness/memoryos python baselines/harness/memoryos/run.py \
 #             --config baselines/harness/memoryos/config.example.yaml
 # CLI flags override any key here (precedence: DEFAULT_CONFIG < this file < CLI).
 #
