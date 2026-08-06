@@ -473,7 +473,7 @@ def sample_items_staged(
     rng = random.Random(str(seed))
     counts = {TASK_FAMILY_STATE_COMPLETION: n_task_a, TASK_FAMILY_APPLY_SERVICE: n_task_c}
     out: List[Dict] = []
-    # None = no cap (coverage=full): all checkpoints / whole buckets. The
+    # None = no cap (whole split): all checkpoints / whole buckets. The
     # shuffles still run so capped selections stay prefixes of the full set.
     cps = checkpoints if n_checkpoints is None else checkpoints[: max(0, int(n_checkpoints))]
     for cp in cps:

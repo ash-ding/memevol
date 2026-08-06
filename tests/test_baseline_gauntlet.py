@@ -151,14 +151,21 @@ def test_progressive_false_single_stage_path():
             # progressive defaults to False
         )
         assert seen == ["single"], seen                 # single pass, stage label "single"
-        # single-stage return is the _build_score_json shape, NOT the gauntlet dict
-        assert "benchmark_eval_score" in score, score
-        assert score["benchmark_eval_score"]["benchmark_overall_eval_score"] == 1.0
+        # Unified 2026-08: progressive=False now runs through run_gauntlet's one-item
+        # plan, so it returns run_gauntlet's per-dataset metrics dict (same shape as
+        # progressive), NOT the old flat score.json dict.
+        assert "locomo" in score, score
+        assert score["locomo"]["raw_score"] == 1.0
+        assert score["locomo"]["stage"] == 4.0          # FULL_STAGE (single pass)
+        assert not score["locomo"]["eliminated"]
+        # Artifacts now match forge's progressive=false / the progressive path: the
+        # reached-stage score.json + token_usage.json copied to the out_dir root, the
+        # pass's own copy under out_dir/single/, and a stages.json at the root.
         assert (out_dir / "score.json").exists()
         assert (out_dir / "token_usage.json").exists()
-        # single-stage path writes NO stages.json and NO per-stage subdirs
-        assert not (out_dir / "stages.json").exists()
-        assert not (out_dir / "stage1").exists()
+        assert (out_dir / "stages.json").exists()
+        assert (out_dir / "single").is_dir()
+        assert not (out_dir / "stage1").exists()        # single plan, not a gauntlet
     finally:
         shutil.rmtree(out_dir, ignore_errors=True)
 
@@ -172,7 +179,7 @@ def test_progressive_false_single_stage_path():
 def test_progressive_false_sizes_from_single_stage():
     from datasets.locomo.workflow import LoCoMoWorkflow
     from baselines.harness.eval_common import run_baseline
-    from common.staged_eval import single_stage_wire_spec
+    from common.evaluate import single_stage_wire_spec
     from common.sampling import derive_sample_seed
 
     captured = {}
@@ -208,7 +215,8 @@ def test_progressive_false_sizes_from_single_stage():
     assert captured["stage_spec"]["sample_seed"] == derive_sample_seed(42, 0, "locomo")
     # n_samples caps the task list (2 conversations of the 4-conv locomo test split)
     assert len(captured["task_list"]) == 2, captured["task_list"]
-    assert "benchmark_eval_score" in score, score
+    # Unified: returns run_gauntlet's per-dataset metrics dict (not the flat score dict).
+    assert score["locomo"]["raw_score"] == 1.0, score
 
 
 # --------------------------------------------------------------------------

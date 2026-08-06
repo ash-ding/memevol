@@ -100,9 +100,9 @@ llm:
 #           split whole-split sizes): DynamicMem 4 users × ~400 items, LoCoMo
 #           655 QA (cat 1-4), LongMemEval 200 questions.
 # `python -m forge.heldout` (dedicated held-out entry) defaults to full
-# coverage (progressive=false-equivalent) regardless of this field.
+# a single-stage pass (progressive=false) regardless of this field.
 #
-# `coverage: sample|full` (CLI --coverage) is kept as a back-compat ALIAS —
+# (the legacy `coverage:` alias was removed 2026-08 — use `progressive`).
 # full → progressive=false, sample → progressive=true — honored only when
 # `progressive` isn't ALSO explicitly set (YAML or CLI); an explicit
 # `progressive` always wins. New configs should just set `progressive:`.
@@ -319,14 +319,14 @@ prompts:
 #
 # FULL-COVERAGE FINAL STAGE: a size field set to `null` (or the string
 # `full` / `all`) means "the whole pool for that dimension" — the same
-# uncapped sampling coverage=full uses, but INSIDE the gauntlet. Pools vary
+# uncapped sampling a progressive=false pass uses, but INSIDE the gauntlet. Pools vary
 # per unit (LoCoMo 81-199 QA/conv, DynamicMem 17-53 items/checkpoint), so a
 # fixed number can't mean "all"; `null` can. Intended for stage3: cheap
-# stage1/2 filtering, then a full-coverage final score. Monotonicity treats
+# stage1/2 filtering, then a whole-split final score. Monotonicity treats
 # `null` as the largest value, so it may only be followed by another
 # `null`/`full` field (a stray null at stage1 errors out).
 #   stage3: {n_users: null, n_checkpoints: null, n_task_a: null, n_task_c: null}
-# NB this differs from top-level `coverage: full`, which is ONE full pass
+# NB this differs from top-level `progressive: false`, which is ONE single pass
 # with NO gauntlet (stage_<ds>=4); stage3-null keeps the gauntlet (=3).
 #
 # `stages` vs `single_stage` — which block sizes your run depends on

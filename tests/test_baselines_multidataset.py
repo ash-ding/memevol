@@ -156,10 +156,10 @@ def test_dynamicmem_default_answer_call_signature():
 
 def test_single_stage_whole_split_matches_main_method():
     """An all-null (or omitted-field) `single_stage` MUST size to the main
-    method's coverage=full wire spec — otherwise DynamicMem silently drops out
+    method's progressive=false wire spec — otherwise DynamicMem silently drops out
     of the TCE checkpoint path (its branch keys on the n_checkpoints KEY).
-    Both sides go through common.staged_eval (shared with forge)."""
-    from common.staged_eval import single_stage_wire_spec
+    Both sides go through common.evaluate (shared with forge)."""
+    from common.evaluate import single_stage_wire_spec
     from forge.orchestrator import full_wire_spec   # test-only import (baselines never import forge)
     for ds in ("dynamicmem", "locomo", "longmemeval_s", "longmemeval_m"):
         assert single_stage_wire_spec(ds, {}) == full_wire_spec(ds), ds
@@ -175,7 +175,7 @@ def test_task_list_identical_to_main_method():
     (forge/launch.py:185-189 calls the SAME env.get_task_list). Sized here via
     the shared single_stage_wire_spec (no seed → deterministic prefix)."""
     from baselines.harness.eval_common import resolve_task_list
-    from common.staged_eval import single_stage_wire_spec
+    from common.evaluate import single_stage_wire_spec
     from datasets.locomo import env as locomo_env
     from datasets.longmemeval import env as lme_env
     from datasets.dynamicmem import env as dm_env
@@ -229,7 +229,7 @@ def test_run_baseline_locomo_end_to_end():
     import common.llm as llm_mod
     from baselines.harness.eval_common import resolve_task_list, run_baseline
     from common.harness_base import MemoStructure
-    from common.staged_eval import single_stage_wire_spec
+    from common.evaluate import single_stage_wire_spec
     from common.sampling import derive_sample_seed
     from datasets.locomo.workflow import LoCoMoWorkflow
 
@@ -275,7 +275,10 @@ def test_run_baseline_locomo_end_to_end():
 
         assert (out_dir / "score.json").exists()
         assert (out_dir / "token_usage.json").exists()
-        trace_files = sorted((out_dir / "traces").glob("*.json"))
+        # Unified: single pass runs through run_gauntlet's one-item plan, so traces
+        # land under out_dir/single/traces/ (like forge's progressive=false), and
+        # run_baseline returns run_gauntlet's per-dataset metrics dict.
+        trace_files = sorted((out_dir / "single" / "traces").glob("*.json"))
         assert len(trace_files) == 1, trace_files
         trace = json.loads(trace_files[0].read_text())
         assert trace["user_id"] == the_user
@@ -284,9 +287,12 @@ def test_run_baseline_locomo_end_to_end():
         assert trace["steps"][0]["predicted"] == "a canned answer"
         assert trace["steps"][0]["score"] == 1
 
-        assert score["benchmark_eval_score"]["benchmark_overall_eval_score"] == 1.0
-        assert score["per_user"][the_user]["n_qa"] == 1
-        assert score["invalid_users"] == []
+        assert score["locomo"]["raw_score"] == 1.0, score
+        # The detailed score.json (per_user / invalid_users) is on disk at the root.
+        disk_score = json.loads((out_dir / "score.json").read_text())
+        assert disk_score["benchmark_eval_score"]["benchmark_overall_eval_score"] == 1.0
+        assert disk_score["per_user"][the_user]["n_qa"] == 1
+        assert disk_score["invalid_users"] == []
     finally:
         shutil.rmtree(out_dir, ignore_errors=True)
 

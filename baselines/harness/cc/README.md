@@ -101,13 +101,13 @@ uv run python run.py \
 ## Sizing (config file only)
 
 There are **no sizing CLI flags** — evaluation sizes are config-file keys
-resolved through the shared `common.staged_eval` layer (the same one forge
+resolved through the shared `common.evaluate` layer (the same one forge
 uses):
 
 - **`progressive: false` (default)** REQUIRES a `single_stage` block — ONE pass
-  sized by its fields (`common.staged_eval.single_stage_wire_spec`; a `null`
+  sized by its fields (`common.evaluate.single_stage_wire_spec`; a `null`
   or omitted field = the WHOLE split for that dimension, byte-identical to the
-  main method's `forge.heldout` `coverage=full` when all-null). Omitting
+  main method's `forge.heldout` `progressive=false` when all-null). Omitting
   `single_stage` raises a clear `ValueError` (no silent whole-split).
 - **`progressive: true`** runs the staged stage1→2→3 gauntlet; a `stages` block
   overrides the family `DEFAULT_STAGES`.

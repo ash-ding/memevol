@@ -183,7 +183,7 @@ async def _async_main(args: argparse.Namespace) -> None:
     # list — a deterministic PREFIX of the split, so a smaller stage's task
     # list is always a prefix of a larger one (staged nesting).
     stage_spec = json.loads(args.stage_spec)
-    # n_samples None = no cap (coverage=full: the whole split).
+    # n_samples None = no cap (a null single_stage/stage field = the whole split).
     n_samples = stage_spec.get("n_samples")
     task_list = env_module.get_task_list(
         status=args.split,

@@ -133,7 +133,7 @@ def get_task_list(status: str, eval_n_samples: Optional[int], seed: Optional[str
     status='test'   → last EVAL_SAMPLES (4) samples (held-out), same cap
 
     Both splits honour the eval_n_samples cap (deterministic prefix ⇒
-    staged nesting holds on the test split too — heldout sample-coverage sizing
+    staged nesting holds on the test split too — heldout single-stage sizing
     was silently void before 2026-07-08).
     """
     from common.sampling import shuffle_prefix

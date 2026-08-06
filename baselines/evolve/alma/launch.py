@@ -175,7 +175,8 @@ async def _run_single_stage(
 ) -> dict:
     """One workflow pass at a single tier (no gauntlet). Writes score.json /
     traces/ / token_usage.json under out_dir and returns the score dict. Used
-    for mode=check (sanity gate) and progressive=False eval."""
+    for mode=check (alma's sanity gate) ONLY — progressive=False eval now goes
+    through run_gauntlet with progressive=False like forge + eval_common."""
     out_dir.mkdir(parents=True, exist_ok=True)
     task_list = _task_list(env_module, status, spec)
     log.info(f"Task list ({status}, stage={stage}, size={len(task_list)}): "
@@ -203,7 +204,7 @@ async def _run_single_stage(
     return score
 
 
-async def _run_progressive(
+async def _run_gauntlet_eval(
     *,
     workflow_cls,
     env_module,
@@ -220,18 +221,20 @@ async def _run_progressive(
     judge_model: str,
     max_sample_concurrent: int,
     use_memcache: bool,
+    progressive: bool = True,
     tracker,
 ) -> Dict[str, Dict[str, Any]]:
-    """Drive one candidate through the shared staged gauntlet
-    (common.staged_eval.run_gauntlet, coverage="sample") with an IN-PROCESS
-    stage runner — the same pattern as baselines/harness/eval_common.py, but
+    """Drive one candidate through the shared common.evaluate.run_gauntlet with an
+    IN-PROCESS stage runner — for BOTH the progressive stage1→2→3 gauntlet
+    (progressive=True) and a single ('single', spec, None) pass (progressive=False).
+    Same pattern as baselines/harness/eval_common.py's runner, but
     alma's per-STEP seed (already folded into `sample_seed`) rides every stage
     spec. Per-stage artifacts under out_dir/<stage>/, cross-stage Phase-1 memory
     reuse via out_dir/memory_cache/, and the highest-reached stage's
     score.json/token_usage.json/traces/ copied to the out_dir root (where alma's
     memo_manager + sampling read the reward + examples). stages.json at the
     root."""
-    from common.staged_eval import run_gauntlet
+    from common.evaluate import Executor, evaluate_memo
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -318,14 +321,15 @@ async def _run_progressive(
     def _sample_seed_for(ds: str) -> Optional[str]:
         return sample_seed   # per-step seed already derived (None when random_sample off)
 
-    metrics = await run_gauntlet(
+    metrics = await evaluate_memo(
         datasets_config=datasets_config,
-        coverage="sample",
-        smoke=False,
+        progressive=progressive,
+        executor=Executor(
+            run_stage=_run_stage_fn,
+            read_metrics=_read_metrics_fn,
+            write_stages=_stages_writer,
+        ),
         sample_seed_for=_sample_seed_for,
-        run_stage_fn=_run_stage_fn,
-        read_metrics_fn=_read_metrics_fn,
-        stages_writer=_stages_writer,
     )
     # Guarantee a root score.json even if the first stage crashed before writing
     # one, so alma's memo_manager never hard-fails on a missing file (it degrades
@@ -355,9 +359,8 @@ async def main(
     single_stage: Optional[dict] = None,
     memory_cache: bool = True,
 ):
-    from common.staged_eval import (
-        DEFAULT_STAGES, _benchmark_family, _resolve_dataset_stages,
-        resolve_single_stage_spec, stage_wire_spec,
+    from common.evaluate import (
+        DEFAULT_STAGES, _benchmark_family, _resolve_dataset_stages, stage_wire_spec,
     )
     from common.sampling import derive_sample_seed
 
@@ -395,35 +398,32 @@ async def main(
     sample_seed = derive_sample_seed(sampling_seed, step_index, dataset) if random_sample else None
 
     # 4. Route the eval.
-    #  - mode=check  → cheap single sanity-size run (alma's sanity gate; sizes
-    #                  from `sanity_check`, ignores `single_stage`).
-    #  - mode=eval + progressive → the shared stage1→2→3 gauntlet.
-    #  - mode=eval + not progressive → a single pass sized by the REQUIRED
-    #    `single_stage` block (same size fields as a stage; a null/omitted field
-    #    = the whole split for that dimension). No stage3 fallback — sizing is
-    #    config-driven and required (mirrors baselines/harness/eval_common.py).
-    if mode == "eval" and progressive:
-        await _run_progressive(
+    #  - mode=eval → the SHARED run_gauntlet, both progressive and single-stage:
+    #      progressive → the stage1→2→3 gauntlet ({"stages": ...}, progressive=True);
+    #      else        → a single ('single', spec, None) pass sized by the REQUIRED
+    #                    `single_stage` block ({"single_stage": ...}, progressive=False;
+    #                    run_gauntlet raises if it is absent — no silent whole-split).
+    #    No hand-rolled single-stage eval any more — unified with forge + eval_common.
+    #  - mode=check → alma's cheap sanity gate: ONE sanity-size pass (NOT the
+    #                 gauntlet; sizes from `sanity_check`, ignores `single_stage`).
+    if mode == "eval":
+        eval_params = {dataset: ds_params} if progressive else {dataset: {"single_stage": single_stage}}
+        await _run_gauntlet_eval(
             workflow_cls=workflow_cls, env_module=env_module, dataset=dataset,
-            datasets_config={dataset: ds_params}, memo_class=memo_class,
+            datasets_config=eval_params, memo_class=memo_class,
             module_path=module_path, memo_sha=memory_id, status=status,
             out_dir=run_dir, sample_seed=sample_seed, model=model, max_logs=max_logs,
             judge_model=judge_model, max_sample_concurrent=max_sample_concurrent,
-            use_memcache=memory_cache, tracker=tracker,
+            use_memcache=memory_cache, progressive=progressive,
+            tracker=tracker,
         )
-    else:
-        if mode == "check":
-            stage, spec = "sanity", stage_wire_spec(dataset, stages_block["sanity_check"])
-        else:
-            # Shared resolver: presence-check (absent → ValueError, never silent
-            # whole-split; empty {} = present = whole), validate (reject unknown
-            # fields / a stray threshold), normalize null/full/all → None, size.
-            stage, spec = "single", resolve_single_stage_spec(dataset, single_stage)
+    else:  # mode == "check"
+        spec = stage_wire_spec(dataset, stages_block["sanity_check"])
         if sample_seed is not None:
             spec["sample_seed"] = sample_seed
         await _run_single_stage(
             workflow_cls=workflow_cls, env_module=env_module, memo_class=memo_class,
-            memo_sha=memory_id, status=status, out_dir=run_dir, stage=stage, spec=spec,
+            memo_sha=memory_id, status=status, out_dir=run_dir, stage="sanity", spec=spec,
             model=model, max_logs=max_logs, judge_model=judge_model,
             max_sample_concurrent=max_sample_concurrent, tracker=tracker,
         )

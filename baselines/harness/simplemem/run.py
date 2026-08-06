@@ -116,7 +116,7 @@ def main():
     cfg = resolve_config(DEFAULT_CONFIG, a.config, cli)
 
     from common.config import strict_on, load_config_file, provided_keys, require_present_keys, ConfigCompletenessError
-    from common.staged_eval import missing_sizing_config
+    from common.evaluate import missing_sizing_config
     if strict_on(a.config, cfg):
         _fc = load_config_file(a.config)
         require_present_keys(provided_keys(_fc, cli),

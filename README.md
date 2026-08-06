@@ -91,13 +91,13 @@ How much and which data each eval covers is controlled by three flags,
 honored by forge AND every baseline (alma + the harness/ baselines):
 `progressive` (default `true` — the staged gauntlet above vs. one
 single-stage pass over the whole split; unifies/supersedes the older
-`coverage: sample|full`), `random_sample` (default `false` — whether each
+`progressive: true|false`), `random_sample` (default `false` — whether each
 search-loop step evaluates a different reproducibly-seeded task subset or
 the same fixed one every step), and `sampling_seed` (default `42` — the
 base seed for the per-step subset derivation). See
 [`configs/search_example.yaml`](configs/search_example.yaml) for the fully
 documented block. Held-out test evaluation (below) always forces full
-coverage regardless of these flags.
+the same single-stage pass regardless of these flags.
 
 ### What the proposer sees inside its container
 
@@ -258,11 +258,11 @@ Everything the run produces lands under `workspace/<run_name>/`:
 
 Held-out evaluation is deliberately a **separate entry point**
 (`forge.heldout`): it runs frozen harnesses on the **test split**, whole
-split by default (`coverage: full`, equivalently `progressive: false`),
+split by default (`progressive: false`),
 with no proposer / sanity gate / frontier — running the search loop on
 test data would optimize against the held-out split. Held-out evaluation
-always uses full, uniform coverage: the staged gauntlet
-(`progressive: true` / the back-compat `coverage: sample`) samples subsets
+always uses one single-stage pass; the staged gauntlet
+(`progressive: true`) samples subsets
 and eliminates candidates early, which is invalid for final held-out
 numbers — `forge.heldout` refuses to run (exits with an error) if either
 is set.

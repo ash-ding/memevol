@@ -82,7 +82,7 @@ class DynamicMemWorkflow(BaseWorkflow):
         if "n_checkpoints" in spec:
             # Staged spec (forge path): first n_checkpoints checkpoints,
             # n_task_a / n_task_c items per checkpoint (nested sampling).
-            # None sizes = no cap (coverage=full: all checkpoints / items).
+            # None sizes = no cap (whole split: all checkpoints / items).
             n_cp = spec["n_checkpoints"]
             checkpoints_used = (
                 checkpoints if n_cp is None else checkpoints[: int(n_cp)]

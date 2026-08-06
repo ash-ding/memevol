@@ -5,6 +5,7 @@ Moved from forge/orchestrator.py 2026-07-25."""
 from __future__ import annotations
 
 import copy
+from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
@@ -56,10 +57,10 @@ DEFAULT_STAGES: Dict[str, Dict[str, Dict[str, Any]]] = {
     },
 }
 
-# stage_<ds> objective value for a coverage=full evaluation. Numerically above
-# the last gauntlet tier (3) so full-coverage entries are distinguishable in
+# stage_<ds> objective value for a progressive=false single-stage evaluation. Numerically above
+# the last gauntlet tier (3) so whole-split (progressive=false) entries are distinguishable in
 # frontier telemetry; scores at stage 3 vs 4 are still NOT mutually comparable —
-# coverage is uniform within a run.
+# the tier is uniform within a run.
 FULL_STAGE = 4.0
 
 _OLD_SIZE_FIELDS = ("eval_n_samples", "eval_n_qa", "check_n_samples", "check_n_qa")
@@ -81,14 +82,14 @@ def _wire_size(v: Any) -> Optional[int]:
     """Stage size field → wire value. None (a `null` / `full` / `all` field,
     normalized by _resolve_dataset_stages) passes through as None = no cap
     (whole pool / whole split), reusing the same downstream machinery as
-    coverage=full; anything else is coerced to int."""
+    the whole split; anything else is coerced to int."""
     return None if v is None else int(v)
 
 
 def stage_wire_spec(ds: str, stage_params: Dict[str, Any]) -> Dict[str, Any]:
     """Normalize a stage's benchmark-native size fields to the wire spec the
     container consumes: {"n_samples": int|None, ...family extras}. A None
-    field means full coverage of that dimension. `threshold` is an
+    field means the whole split for that dimension. `threshold` is an
     orchestrator-side concern and is stripped."""
     family = _benchmark_family(ds)
     sample_field, extras = _FAMILY_FIELDS[family]
@@ -99,7 +100,7 @@ def stage_wire_spec(ds: str, stage_params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def full_wire_spec(ds: str) -> Dict[str, Any]:
-    """Wire spec for coverage=full: every size field None = no cap (the
+    """Wire spec: every size field None = no cap (the
     container's env/get_task_list and the workflows treat None as "whole
     split / all checkpoints / whole buckets")."""
     family = _benchmark_family(ds)
@@ -260,9 +261,9 @@ def _resolve_dataset_stages(ds: str, params: Dict[str, Any]) -> None:
             )
         for field, default in DEFAULT_STAGES[family][name].items():
             block.setdefault(field, default)
-        # Full-coverage sentinel: a size field of null / "full" / "all"
+        # Whole-split sentinel: a size field of null / "full" / "all"
         # (case-insensitive) → None = that dimension's whole pool / split,
-        # reusing coverage=full's downstream None path. Intended for stage3
+        # reusing the whole-split downstream None path. Intended for stage3
         # (progressive gauntlet with a full final stage); the monotonicity
         # check below treats None as +inf, so a stray null at an earlier
         # stage forces later stages full or errors out.
@@ -278,7 +279,7 @@ def _resolve_dataset_stages(ds: str, params: Dict[str, Any]) -> None:
             raise ValueError(f"datasets.{ds}.stages.{name}.threshold must be in [0,1], got {thr}")
 
     # Monotonic non-decreasing sizes across stage1..3 (nesting depends on it).
-    # None (full coverage) counts as the largest value, so it must not precede
+    # None (whole split) counts as the largest value, so it must not precede
     # a concrete size — a null/full field forces every later stage full too.
     for field in (sample_field, *extras):
         seq = [stages[name][field] for name in STAGE_ORDER]
@@ -287,7 +288,7 @@ def _resolve_dataset_stages(ds: str, params: Dict[str, Any]) -> None:
             raise ValueError(
                 f"datasets.{ds}.stages: {field} must be non-decreasing across "
                 f"stage1..stage3 (got {seq}) — staged nesting depends on it; "
-                f"a null/full field (= full coverage) may only be followed by "
+                f"a null/full field (= whole split) may only be followed by "
                 f"another null/full field"
             )
 
@@ -314,7 +315,7 @@ StagesWriter = Callable[[str, Dict[str, Any]], None]
 async def run_gauntlet(
     *,
     datasets_config: Dict[str, Dict[str, Any]],
-    coverage: str,
+    progressive: bool,
     smoke: bool,
     sample_seed_for: SampleSeedFn,
     run_stage_fn: RunStageFn,
@@ -339,14 +340,12 @@ async def run_gauntlet(
 
     - ``smoke=True``: one ``sanity_check``-sized run per benchmark, no gating,
       telemetry ``stage=0.0`` / ``eliminated=False`` (stages_writer NOT called).
-    - ``coverage='full'`` (progressive=False): a single ``('single', spec, None)``
-      plan (no promotion gates), sized by the dataset's REQUIRED `single_stage`
-      config block via ``resolve_sampling_plan`` — raises ``ValueError`` if that
-      dataset has no `single_stage` block (no more automatic whole-split
-      `full_wire_spec`; sizing is config-file only). Reached stage telemetry is
-      ``FULL_STAGE`` (the "full" plan name is legacy and no longer emitted, but
-      still mapped for back-compat).
-    - ``coverage='sample'`` (default, progressive=True): the stage1 → stage2 →
+    - ``progressive=False``: a single ``('single', spec, None)`` plan (no
+      promotion gates), sized by the dataset's REQUIRED `single_stage` config
+      block via ``resolve_sampling_plan`` — raises ``ValueError`` if that dataset
+      has no `single_stage` block (sizing is config-file only). Reached stage
+      telemetry is ``FULL_STAGE``.
+    - ``progressive=True`` (default): the stage1 → stage2 →
       stage3 gauntlet from the dataset's `stages` block; after a gated stage
       the normalized score must be >= its threshold to advance, else the
       benchmark stops ("eliminated"). A crashed stage (a non-None
@@ -381,7 +380,7 @@ async def run_gauntlet(
         # ---- staged gauntlet (progressive=True) OR single pass (progressive=False,
         # sized by the REQUIRED `single_stage` block — raises if absent) ----
         plan: List[Tuple[str, Dict[str, Any], Optional[float]]] = resolve_sampling_plan(
-            ds, params, progressive=(coverage != "full")
+            ds, params, progressive=progressive
         )
 
         stage_summary: Dict[str, Any] = {}
@@ -433,3 +432,69 @@ async def run_gauntlet(
             )
         scores[ds] = final_metrics
     return scores
+
+
+# ---------------------------------------------------------------------------
+# evaluate_memo — the single evaluation entry point + the executor seam.
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Executor:
+    """HOW one stage of an evaluation runs — the ONE thing that differs by
+    execution model (the trust boundary): a Singularity container per stage for
+    forge (untrusted, model-generated harness code) vs a bare in-process
+    ``run_all_users`` for the baselines (trusted hand-written code). It bundles
+    the three run_gauntlet callbacks a caller must supply:
+
+    - ``run_stage(ds, stage, spec) -> Optional[Exception]`` executes one stage
+      (build the memo, run the workflow over the sampled users, write that
+      stage's score.json/token_usage.json/traces), returning a non-None
+      exception iff the stage crashed (which eliminates + stops the gauntlet).
+    - ``read_metrics(ds, stage) -> {raw_score, score_max, tokens}`` reads that
+      stage's metrics back (off disk for forge's container, from an in-memory
+      dict for the in-process runners).
+    - ``write_stages(ds, summary)`` (optional) persists the per-benchmark stage
+      summary — stages.json at the out_dir root + the reached-stage artifacts
+      copied up to the root.
+
+    Everything else — promotion / elimination / sizing / seeding / cost
+    accounting / stages.json shape — lives in run_gauntlet, identical for every
+    execution model."""
+    run_stage: RunStageFn
+    read_metrics: ReadMetricsFn
+    write_stages: Optional[StagesWriter] = None
+
+
+async def evaluate_memo(
+    *,
+    datasets_config: Dict[str, Dict[str, Any]],
+    progressive: bool,
+    executor: Executor,
+    sample_seed_for: SampleSeedFn = lambda ds: None,
+    smoke: bool = False,
+) -> Dict[str, Dict[str, Any]]:
+    """Evaluate a memo across benchmarks — the SINGLE entry every context uses
+    (forge search, forge.heldout, harness baselines, alma), so "evaluate a
+    harness on a task" is one function regardless of who calls it.
+
+    - ``progressive=True``  → the staged stage1→2→3 gauntlet (sizes from each
+      dataset's ``stages`` block; promotion thresholds gate advancement).
+    - ``progressive=False`` → ONE ('single', spec, None) pass sized by the
+      REQUIRED ``single_stage`` block (raises ValueError if absent).
+    - ``smoke=True`` → one sanity-size pass per benchmark, no gating.
+
+    ``datasets_config`` carries the per-dataset sizing (``stages`` /
+    ``single_stage``). HOW a stage executes is injected via ``executor`` (the
+    container-vs-in-process seam); ``sample_seed_for(ds)`` supplies the per-run
+    seed. Thin facade over run_gauntlet: forwards ``progressive`` + the executor's
+    three callbacks. Returns run_gauntlet's per-dataset metrics
+    dict {ds: {raw_score, score_max, stage, eliminated, tokens, ...}}."""
+    return await run_gauntlet(
+        datasets_config=datasets_config,
+        progressive=progressive,
+        smoke=smoke,
+        sample_seed_for=sample_seed_for,
+        run_stage_fn=executor.run_stage,
+        read_metrics_fn=executor.read_metrics,
+        stages_writer=executor.write_stages,
+    )

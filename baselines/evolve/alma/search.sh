@@ -6,7 +6,7 @@
 #
 # Evaluation SIZES live in the --config YAML only — there is NO sizing CLI flag
 # (the old --stages was removed). progressive: true scores each candidate
-# through the SHARED staged gauntlet (common.staged_eval: stage1 -> stage2 ->
+# through the SHARED staged gauntlet (common.evaluate: stage1 -> stage2 ->
 # stage3 with promotion thresholds), sized by the config's `stages` block (or
 # the family DEFAULT_STAGES). progressive: false does ONE pass sized by the
 # config's REQUIRED `single_stage` block. Edit

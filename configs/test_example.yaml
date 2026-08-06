@@ -8,9 +8,9 @@
 #
 # CLI flags override matching YAML fields; `--harness <dir>` (repeatable)
 # REPLACES the `harnesses:` list below entirely. Fields you omit fall back to
-# `forge/orchestrator.py::DEFAULT_CONFIG` — except `coverage`, which defaults
-# to `full` in the heldout flow (final-numbers semantics) rather than the
-# search loop's `sample`.
+# `forge/orchestrator.py::DEFAULT_CONFIG` — except `progressive`, which defaults
+# to `false` in the heldout flow (final-numbers semantics: ONE single-stage
+# pass) rather than the search loop's `true`.
 #
 # Notes on semantics fixed by the heldout flow (not configurable here):
 #   - the split is ALWAYS test (heldout has no mode/smoke_test concept)
@@ -47,33 +47,30 @@ harnesses:
 # -----------------------------------------------------------------------------
 # HOW MUCH to evaluate.
 #
-# Held-out test evaluation is ALWAYS a full, uniform pass over the whole
+# Held-out test evaluation is ALWAYS a single-stage pass over the whole
 # test split — that's the only way its numbers are valid as final results.
-# `progressive` (the canonical knob, superseding `coverage` 2026-07-25) /
-# the back-compat `coverage: sample` alias select the staged stage1→2→3
-# gauntlet with threshold elimination — that's for the SEARCH loop, where
-# bad candidates should die cheap. Applied to held-out test it would mean a
-# harness eliminated at stage1 gets scored on a ~20-item subset instead of
-# the full split, which is not a comparable held-out number. So
-# `forge.heldout` REJECTS `progressive: true` / `coverage: sample` outright
-# (SystemExit(2), before any harness runs) — see
-# `forge/heldout.py::_reject_progressive_on_heldout`.
+# `progressive: true` selects the staged stage1→2→3 gauntlet with threshold
+# elimination — that's for the SEARCH loop, where bad candidates should die
+# cheap. Applied to held-out test it would mean a harness eliminated at
+# stage1 gets scored on a ~20-item subset instead of the full split, which
+# is not a comparable held-out number. So `forge.heldout` REJECTS
+# `progressive: true` outright (SystemExit(2), before any harness runs) —
+# see `forge/heldout.py::_reject_progressive_on_heldout`.
 #
-# The only valid setting here is full coverage: `coverage: full` (shown
-# below) or, equivalently, `progressive: false`. Omitting both fields
-# entirely also resolves to full (heldout's own default when neither is
-# given anywhere).
-#   full — ONE whole-test-split pass per benchmark: no stage1/2, no
-#          threshold elimination; artifacts under <ds>/single/. Full
-#          test-split sizes for cost planning: DynamicMem 4 users ×
+# The only valid setting here is `progressive: false` (shown below); omitting
+# it also resolves to false (heldout's own default).
+#   progressive: false — ONE single-stage pass per benchmark: no stage1/2, no
+#          threshold elimination; artifacts under <ds>/single/. Sized by the
+#          per-dataset `single_stage` block below (all-null = the whole split).
+#          Whole test-split sizes for cost planning: DynamicMem 4 users ×
 #          ~400 items, LoCoMo 655 QA (cat 1-4), LongMemEval 200 questions.
 # -----------------------------------------------------------------------------
-coverage: full
+progressive: false
 
 # -----------------------------------------------------------------------------
 # Benchmarks to evaluate on. Same schema as the search configs. Any per-
 # benchmark `stages` block is IGNORED here — held-out evaluation is always
-# full coverage (progressive=false / coverage=full is enforced above), so
+# a single-stage pass (progressive=false is enforced above), so
 # stage sizes/thresholds never apply; they only matter for the search loop's
 # gauntlet (see forge/orchestrator.py::DEFAULT_STAGES).
 #
