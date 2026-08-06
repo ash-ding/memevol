@@ -4,7 +4,7 @@
 # Evaluates SPECIFIC harnesses on the held-out TEST split, without the search
 # loop's proposer / sanity gate / frontier. Launch:
 #
-#     venv/bin/python -m forge.heldout --config configs/test_example.yaml
+#     uv run python -m forge.heldout --config configs/test_example.yaml
 #
 # CLI flags override matching YAML fields; `--harness <dir>` (repeatable)
 # REPLACES the `harnesses:` list below entirely. Fields you omit fall back to

@@ -79,7 +79,7 @@ cmd_finalize() {
 
     # Smoke-load via the existing loader so missing exports / syntax errors
     # surface here, not later in a search run.
-    ( cd "$ROOT" && venv/bin/python -c "
+    ( cd "$ROOT" && uv run python -c "
 from forge.prompts import load_template_module
 mod = load_template_module('${new_stem}')
 assert mod.PROMPT_VERSION == '${new_stem}', mod.PROMPT_VERSION

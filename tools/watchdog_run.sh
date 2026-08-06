@@ -62,7 +62,7 @@ while true; do
     TS=$(date +%H%M%S)
     OUT="$PROJECT_ROOT/workspace/_launch_${RUN_NAME}.resume${resume_count}_${TS}.out"
 
-    nohup venv/bin/python -m forge.orchestrator \
+    nohup uv run python -m forge.orchestrator \
         --config "$CONFIG" \
         --run-name "$RUN_NAME" \
         > "$OUT" 2>&1 &

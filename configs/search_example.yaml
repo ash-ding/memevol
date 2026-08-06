@@ -10,7 +10,7 @@
 # CLI flags always override matching YAML fields (e.g. `--steps 5` wins over
 # `steps: 1` here). The launch command is:
 #
-#     venv/bin/python -m forge.orchestrator --config configs/search_example.yaml
+#     uv run python -m forge.orchestrator --config configs/search_example.yaml
 #
 # CLI-only options (no YAML equivalent):
 #   --config <path>      pick a YAML to start from
@@ -44,7 +44,7 @@ steps: 5
 # split (e.g. DynamicMem users 001-006, LoCoMo conv-26..conv-44, LongMemEval
 # 300 stratified question_ids) — the old `mode:` switch was removed
 # 2026-07-14. Held-out evaluation is a separate entry point:
-#   venv/bin/python -m forge.heldout --config configs/test_example.yaml
+#   uv run python -m forge.heldout --config configs/test_example.yaml
 #
 # smoke_test: true also forces steps=1 / propose.k_per_step=1 (single
 # candidate) unless --steps / --k-per-step are given EXPLICITLY on the CLI
@@ -352,7 +352,7 @@ prompts:
 # cross-benchmark mean, and the proposer picks priors itself (no algorithmic
 # selection). To measure how a discovered harness generalizes to OTHER
 # benchmarks, evaluate it on them via the held-out entry:
-#   venv/bin/python -m forge.heldout --config configs/test_example.yaml
+#   uv run python -m forge.heldout --config configs/test_example.yaml
 # All three benchmarks are documented below (for the field reference); only
 # `locomo` is active — (un)comment blocks to switch the active dataset.
 datasets:

@@ -3,11 +3,11 @@ test split, WITHOUT the search loop's proposer / sanity gate / frontier.
 
     # Config-first (see configs/test_example.yaml for the annotated schema —
     # `harnesses:` lists the target dirs right in the YAML):
-    venv/bin/python -m forge.heldout --config configs/test_example.yaml
+    uv run python -m forge.heldout --config configs/test_example.yaml
 
     # CLI overrides: --harness (repeatable) REPLACES the YAML `harnesses:`
     # list; every orchestrator flag (--datasets, ...) works too.
-    venv/bin/python -m forge.heldout --config configs/test_example.yaml \\
+    uv run python -m forge.heldout --config configs/test_example.yaml \\
         --harness workspace/<run>/harnesses/3_9f00aa11
 
 Flow per harness:
