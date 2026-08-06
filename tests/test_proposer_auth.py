@@ -375,7 +375,11 @@ def test_orchestrator_cli_claude_auth_override():
 
     with tempfile.TemporaryDirectory() as td:
         cfg_path = Path(td) / "ok.yaml"
-        cfg_path.write_text(yaml.safe_dump({"datasets": {"locomo": {}}}))
+        # strict_config: False — this test isolates the --claude-auth CLI override;
+        # it deliberately ships a minimal config and must not be gated by the
+        # strict-completeness check (added 2026-07-26, after this test).
+        cfg_path.write_text(yaml.safe_dump(
+            {"datasets": {"locomo": {}}, "strict_config": False}))
         args = build_arg_parser().parse_args(
             ["--config", str(cfg_path), "--claude-auth", "api_key"]
         )
