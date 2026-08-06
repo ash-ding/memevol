@@ -275,7 +275,10 @@ def test_run_baseline_locomo_end_to_end():
 
         assert (out_dir / "score.json").exists()
         assert (out_dir / "token_usage.json").exists()
-        trace_files = sorted((out_dir / "traces").glob("*.json"))
+        # Unified: single pass runs through run_gauntlet's one-item plan, so traces
+        # land under out_dir/single/traces/ (like forge's coverage=full), and
+        # run_baseline returns run_gauntlet's per-dataset metrics dict.
+        trace_files = sorted((out_dir / "single" / "traces").glob("*.json"))
         assert len(trace_files) == 1, trace_files
         trace = json.loads(trace_files[0].read_text())
         assert trace["user_id"] == the_user
@@ -284,9 +287,12 @@ def test_run_baseline_locomo_end_to_end():
         assert trace["steps"][0]["predicted"] == "a canned answer"
         assert trace["steps"][0]["score"] == 1
 
-        assert score["benchmark_eval_score"]["benchmark_overall_eval_score"] == 1.0
-        assert score["per_user"][the_user]["n_qa"] == 1
-        assert score["invalid_users"] == []
+        assert score["locomo"]["raw_score"] == 1.0, score
+        # The detailed score.json (per_user / invalid_users) is on disk at the root.
+        disk_score = json.loads((out_dir / "score.json").read_text())
+        assert disk_score["benchmark_eval_score"]["benchmark_overall_eval_score"] == 1.0
+        assert disk_score["per_user"][the_user]["n_qa"] == 1
+        assert disk_score["invalid_users"] == []
     finally:
         shutil.rmtree(out_dir, ignore_errors=True)
 

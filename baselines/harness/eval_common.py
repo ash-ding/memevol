@@ -118,15 +118,12 @@ async def run_baseline(
     Sizing is config-driven (no sizing CLI flags — config file only):
 
     progressive=False (default): ONE single-stage pass sized by the REQUIRED
-    `single_stage` block (via common.evaluate.single_stage_wire_spec; a null /
-    omitted field = the whole split for that dimension). Raises ValueError when
-    `single_stage` is absent — no silent whole-split. The pass runs as
-    `run_all_users(stage="single", ...)`; the "single" stage label is purely
-    informational (the memory cache is gated by the workflow's memory_cache_dir,
-    not the stage name). A per-run sample_seed is derived (fixed step 0, honoring
-    `sampling_seed`) and threaded into the spec so it reaches BOTH the task-list
-    cap and the per-user QA sampling; it is a no-op at whole-split n=None.
-    Returns the _build_score_json dict.
+    `single_stage` block. Runs through run_gauntlet(coverage='full') — a one-item
+    ('single', spec, None) plan (via resolve_sampling_plan → resolve_single_stage_spec:
+    a null/omitted field = the whole split; absent `single_stage` raises ValueError,
+    no silent whole-split). A per-run sample_seed is derived (fixed step 0, honoring
+    `sampling_seed`) and threaded into the spec so it reaches BOTH the task-list cap
+    and the per-user QA sampling; it is a no-op at whole-split n=None.
 
     progressive=True: run the SAME memory system through the shared staged
     gauntlet (common.evaluate.run_gauntlet, coverage="sample"): stage1 →
@@ -134,69 +131,37 @@ async def run_baseline(
     out_dir/<stage>/, cross-stage Phase-1 memory reuse via out_dir/memory_cache/,
     and a stages.json at the out_dir root. `stages` overrides the family
     DEFAULT_STAGES; `sampling_seed` seeds the (fixed step=0) nested subset
-    selection; `memory_cache=False` disables the cache. Returns run_gauntlet's
-    per-dataset metrics dict {dataset: {..., stage, eliminated}}."""
-    if progressive:
-        return await _run_baseline_progressive(
-            dataset=dataset, split=split, memo_class=memo_class,
-            qa_model=qa_model, judge_model=judge_model, out_dir=out_dir,
-            max_sample_concurrent=max_sample_concurrent,
-            sampling_seed=sampling_seed, stages=stages, memory_cache=memory_cache,
-        )
+    selection; `memory_cache=False` disables the cache.
 
-    # progressive=False: single pass sized by the REQUIRED single_stage block.
-    # The shared resolver presence-checks (absent → ValueError, never silent
-    # whole-split; an empty {} counts as present = all-null = whole), validates
-    # (rejects unknown fields — a typo like `n_user` for `n_users` would
-    # otherwise be silently ignored → whole split — and a stray threshold),
-    # normalizes null/"full"/"all" → None, and returns the wire spec.
-    from common.tokens import init_global_tracker
-    from common.sampling import derive_sample_seed
-    from common.evaluate import resolve_single_stage_spec
-
-    # Same fixed step-0 seed derivation as the gauntlet (no search steps here);
-    # a no-op at whole-split n=None, only selecting a subset when a field caps.
-    spec = {
-        **resolve_single_stage_spec(dataset, single_stage),
-        "sample_seed": derive_sample_seed(sampling_seed, 0, dataset),
-    }
-    workflow_cls, _env, _rec = resolve(dataset)
-    task_list = resolve_task_list(dataset, split, spec)   # honors n_samples + sample_seed
-
-    out_dir.mkdir(parents=True, exist_ok=True)
-    tracker = init_global_tracker()
-    workflow = workflow_cls(
-        memo_class=memo_class, model=qa_model, judge_model=judge_model,
+    BOTH paths return run_gauntlet's per-dataset metrics dict
+    {dataset: {raw_score, score_max, stage, eliminated, tokens, ...}} and write the
+    same artifact layout (out_dir/<stage>/ + out_dir/stages.json + the reached-stage
+    score.json/token_usage.json copied to the out_dir root)."""
+    # Both progressive AND non-progressive go through the SAME run_gauntlet
+    # machinery (non-progressive → a one-item ('single', spec, None) plan built by
+    # run_gauntlet(coverage='full')). No separate hand-rolled single pass — the
+    # single-stage path is unified here, so its artifacts (out_dir/single/ +
+    # out_dir/stages.json + the final-stage score.json/token_usage.json copied to
+    # out_dir root) match the progressive path and forge's coverage=full.
+    return await _run_baseline_gauntlet(
+        dataset=dataset, split=split, memo_class=memo_class,
+        qa_model=qa_model, judge_model=judge_model, out_dir=out_dir,
+        max_sample_concurrent=max_sample_concurrent, sampling_seed=sampling_seed,
+        progressive=progressive, single_stage=single_stage, stages=stages,
+        memory_cache=memory_cache,
     )
-    workflow.status = split
-    workflow.output_run_dir = out_dir
-    records, n = await workflow.run_all_users(
-        task_list, stage="single", stage_spec=spec,
-        max_sample_concurrent=max_sample_concurrent,
-    )
-    workflow.save_full_traces(records[:n])
-    # Score summary: reuse alma's builder shape (mean per-user reward).
-    from baselines.evolve.alma.launch import _build_score_json
-    score = _build_score_json(records[:n])
-    with (out_dir / "score.json").open("w", encoding="utf-8") as f:
-        json.dump(score, f, indent=2, ensure_ascii=False)
-    with (out_dir / "token_usage.json").open("w", encoding="utf-8") as f:
-        json.dump(tracker.summary(), f, indent=2, ensure_ascii=False)
-    return score
 
 
 def print_result(dataset: str, progressive: bool, result: Dict[str, Any], out_dir: Path) -> None:
-    """One-line run summary handling BOTH run_baseline return shapes:
-    progressive=False returns the _build_score_json dict; progressive=True
-    returns run_gauntlet's per-dataset metrics dict {dataset: {...}}."""
-    if progressive:
-        m = result.get(dataset, {})
-        print(
-            f"[{dataset}] gauntlet stage={m.get('stage')} "
-            f"raw_score={m.get('raw_score')} eliminated={m.get('eliminated')} → {out_dir}"
-        )
-    else:
-        print("overall:", result["benchmark_eval_score"]["benchmark_overall_eval_score"], "→", out_dir)
+    """One-line run summary. run_baseline ALWAYS returns run_gauntlet's per-dataset
+    metrics dict {dataset: {raw_score, stage, eliminated, ...}} now (progressive
+    gauntlet OR the single-stage one-item plan), so this reads it uniformly."""
+    m = result.get(dataset, {})
+    label = "gauntlet" if progressive else "single"
+    print(
+        f"[{dataset}] {label} stage={m.get('stage')} "
+        f"raw_score={m.get('raw_score')} eliminated={m.get('eliminated')} → {out_dir}"
+    )
 
 
 def _total_tokens(summary: Dict[str, Any]) -> int:
@@ -208,7 +173,7 @@ def _total_tokens(summary: Dict[str, Any]) -> int:
     )
 
 
-async def _run_baseline_progressive(
+async def _run_baseline_gauntlet(
     *,
     dataset: str,
     split: str,
@@ -218,15 +183,20 @@ async def _run_baseline_progressive(
     out_dir: Path,
     max_sample_concurrent: int,
     sampling_seed: int,
+    progressive: bool,
+    single_stage: Optional[Dict[str, Any]],
     stages: Optional[Dict[str, Any]],
     memory_cache: bool,
 ) -> Dict[str, Dict[str, Any]]:
-    """progressive=True branch of run_baseline. Drives the fixed memory system
-    through common.evaluate.run_gauntlet with an IN-PROCESS stage runner
-    (contrast forge, whose runner is a Singularity exec). The promotion /
-    elimination / cost-accounting / stages.json logic lives entirely in
-    run_gauntlet (identical to forge); only stage EXECUTION + artifact layout +
-    memcache mounting are this closure's concern."""
+    """Drive the fixed memory system through common.evaluate.run_gauntlet with an
+    IN-PROCESS stage runner (contrast forge, whose runner is a Singularity exec) —
+    for BOTH progressive (staged gauntlet) and non-progressive (a single
+    ('single', spec, None) pass). The promotion / elimination / cost-accounting /
+    stages.json logic lives entirely in run_gauntlet (identical to forge); only
+    stage EXECUTION + artifact layout + memcache mounting are this closure's
+    concern. progressive=False no longer has a separate hand-rolled path —
+    run_gauntlet(coverage='full') builds the one-item plan (raises if single_stage
+    absent)."""
     from common.tokens import init_global_tracker
     from common.sampling import derive_sample_seed
     from common.evaluate import (
@@ -236,10 +206,17 @@ async def _run_baseline_progressive(
     from baselines.evolve.alma.launch import _build_score_json
 
     family = _benchmark_family(dataset)
-    # deepcopy so DEFAULT_STAGES (module global) is never mutated in place by
-    # _resolve_dataset_stages (which fills defaults + validates the block).
-    params: Dict[str, Any] = {"stages": copy.deepcopy(stages or DEFAULT_STAGES[family])}
-    _resolve_dataset_stages(dataset, params)
+    if progressive:
+        # deepcopy so DEFAULT_STAGES (module global) is never mutated in place by
+        # _resolve_dataset_stages (which fills defaults + validates the block).
+        params: Dict[str, Any] = {"stages": copy.deepcopy(stages or DEFAULT_STAGES[family])}
+        _resolve_dataset_stages(dataset, params)
+    else:
+        # single pass: run_gauntlet(coverage='full') → resolve_sampling_plan builds
+        # [('single', resolve_single_stage_spec(single_stage), None)] — the shared
+        # resolver presence-checks (absent → ValueError, never silent whole-split),
+        # validates (rejects unknown fields / a stray threshold), normalizes.
+        params = {"single_stage": single_stage}
     datasets_config = {dataset: params}
 
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -336,7 +313,7 @@ async def _run_baseline_progressive(
 
     return await run_gauntlet(
         datasets_config=datasets_config,
-        coverage="sample",
+        coverage=("sample" if progressive else "full"),
         smoke=False,
         sample_seed_for=_sample_seed_for,
         run_stage_fn=_run_stage_fn,
