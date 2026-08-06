@@ -5,6 +5,7 @@ Moved from forge/orchestrator.py 2026-07-25."""
 from __future__ import annotations
 
 import copy
+from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
@@ -433,3 +434,69 @@ async def run_gauntlet(
             )
         scores[ds] = final_metrics
     return scores
+
+
+# ---------------------------------------------------------------------------
+# evaluate_memo — the single evaluation entry point + the executor seam.
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class Executor:
+    """HOW one stage of an evaluation runs — the ONE thing that differs by
+    execution model (the trust boundary): a Singularity container per stage for
+    forge (untrusted, model-generated harness code) vs a bare in-process
+    ``run_all_users`` for the baselines (trusted hand-written code). It bundles
+    the three run_gauntlet callbacks a caller must supply:
+
+    - ``run_stage(ds, stage, spec) -> Optional[Exception]`` executes one stage
+      (build the memo, run the workflow over the sampled users, write that
+      stage's score.json/token_usage.json/traces), returning a non-None
+      exception iff the stage crashed (which eliminates + stops the gauntlet).
+    - ``read_metrics(ds, stage) -> {raw_score, score_max, tokens}`` reads that
+      stage's metrics back (off disk for forge's container, from an in-memory
+      dict for the in-process runners).
+    - ``write_stages(ds, summary)`` (optional) persists the per-benchmark stage
+      summary — stages.json at the out_dir root + the reached-stage artifacts
+      copied up to the root.
+
+    Everything else — promotion / elimination / sizing / seeding / cost
+    accounting / stages.json shape — lives in run_gauntlet, identical for every
+    execution model."""
+    run_stage: RunStageFn
+    read_metrics: ReadMetricsFn
+    write_stages: Optional[StagesWriter] = None
+
+
+async def evaluate_memo(
+    *,
+    datasets_config: Dict[str, Dict[str, Any]],
+    progressive: bool,
+    executor: Executor,
+    sample_seed_for: SampleSeedFn = lambda ds: None,
+    smoke: bool = False,
+) -> Dict[str, Dict[str, Any]]:
+    """Evaluate a memo across benchmarks — the SINGLE entry every context uses
+    (forge search, forge.heldout, harness baselines, alma), so "evaluate a
+    harness on a task" is one function regardless of who calls it.
+
+    - ``progressive=True``  → the staged stage1→2→3 gauntlet (sizes from each
+      dataset's ``stages`` block; promotion thresholds gate advancement).
+    - ``progressive=False`` → ONE ('single', spec, None) pass sized by the
+      REQUIRED ``single_stage`` block (raises ValueError if absent).
+    - ``smoke=True`` → one sanity-size pass per benchmark, no gating.
+
+    ``datasets_config`` carries the per-dataset sizing (``stages`` /
+    ``single_stage``). HOW a stage executes is injected via ``executor`` (the
+    container-vs-in-process seam); ``sample_seed_for(ds)`` supplies the per-run
+    seed. Thin facade over run_gauntlet: maps progressive → coverage and forwards
+    the executor's three callbacks. Returns run_gauntlet's per-dataset metrics
+    dict {ds: {raw_score, score_max, stage, eliminated, tokens, ...}}."""
+    return await run_gauntlet(
+        datasets_config=datasets_config,
+        coverage=("sample" if progressive else "full"),
+        smoke=smoke,
+        sample_seed_for=sample_seed_for,
+        run_stage_fn=executor.run_stage,
+        read_metrics_fn=executor.read_metrics,
+        stages_writer=executor.write_stages,
+    )

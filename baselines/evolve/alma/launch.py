@@ -234,7 +234,7 @@ async def _run_gauntlet_eval(
     score.json/token_usage.json/traces/ copied to the out_dir root (where alma's
     memo_manager + sampling read the reward + examples). stages.json at the
     root."""
-    from common.evaluate import run_gauntlet
+    from common.evaluate import Executor, evaluate_memo
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -321,14 +321,15 @@ async def _run_gauntlet_eval(
     def _sample_seed_for(ds: str) -> Optional[str]:
         return sample_seed   # per-step seed already derived (None when random_sample off)
 
-    metrics = await run_gauntlet(
+    metrics = await evaluate_memo(
         datasets_config=datasets_config,
-        coverage=coverage,
-        smoke=False,
+        progressive=(coverage != "full"),
+        executor=Executor(
+            run_stage=_run_stage_fn,
+            read_metrics=_read_metrics_fn,
+            write_stages=_stages_writer,
+        ),
         sample_seed_for=_sample_seed_for,
-        run_stage_fn=_run_stage_fn,
-        read_metrics_fn=_read_metrics_fn,
-        stages_writer=_stages_writer,
     )
     # Guarantee a root score.json even if the first stage crashed before writing
     # one, so alma's memo_manager never hard-fails on a missing file (it degrades

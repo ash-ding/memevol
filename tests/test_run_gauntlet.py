@@ -43,6 +43,40 @@ def test_gauntlet_full_runs_all_stages_and_passes_seed():
     assert out["locomo"]["eliminated"] is False
 
 
+def test_evaluate_memo_progressive_forwards_executor():
+    # evaluate_memo(progressive=True) → the staged gauntlet, forwarding the
+    # Executor's callbacks to run_gauntlet.
+    from common.evaluate import evaluate_memo, Executor
+    seen = []
+    async def run_stage(ds, stage, spec):
+        seen.append(stage); return None
+    def read_metrics(ds, stage):
+        return {"raw_score": 1.0, "score_max": 1, "tokens": {}}
+    out = asyncio.run(evaluate_memo(
+        datasets_config=_cfg(), progressive=True,
+        executor=Executor(run_stage=run_stage, read_metrics=read_metrics)))
+    assert seen == ["stage1", "stage2", "stage3"], seen   # progressive → coverage='sample'
+    assert out["locomo"]["eliminated"] is False
+
+
+def test_evaluate_memo_single_stage_one_pass():
+    # evaluate_memo(progressive=False) → ONE ('single', spec, None) pass
+    # (coverage='full'), sized by single_stage. No gauntlet.
+    from common.evaluate import evaluate_memo, Executor, FULL_STAGE
+    seen = []
+    async def run_stage(ds, stage, spec):
+        seen.append(stage); return None
+    def read_metrics(ds, stage):
+        return {"raw_score": 1.0, "score_max": 1, "tokens": {}}
+    cfg = {"locomo": {"single_stage": {"n_conversations": 1, "n_qa": 1}}}
+    out = asyncio.run(evaluate_memo(
+        datasets_config=cfg, progressive=False,
+        executor=Executor(run_stage=run_stage, read_metrics=read_metrics)))
+    assert seen == ["single"], seen
+    assert out["locomo"]["stage"] == FULL_STAGE
+    assert out["locomo"]["eliminated"] is False
+
+
 def main():
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = []

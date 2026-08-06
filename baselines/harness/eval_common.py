@@ -200,7 +200,7 @@ async def _run_baseline_gauntlet(
     from common.tokens import init_global_tracker
     from common.sampling import derive_sample_seed
     from common.evaluate import (
-        DEFAULT_STAGES, _benchmark_family, _resolve_dataset_stages, run_gauntlet,
+        DEFAULT_STAGES, Executor, _benchmark_family, _resolve_dataset_stages, evaluate_memo,
     )
     from common.memory_cache import harness_fingerprint
     from baselines.evolve.alma.launch import _build_score_json
@@ -311,12 +311,13 @@ async def _run_baseline_gauntlet(
     def _sample_seed_for(ds: str) -> Optional[str]:
         return derive_sample_seed(sampling_seed, 0, ds)
 
-    return await run_gauntlet(
+    return await evaluate_memo(
         datasets_config=datasets_config,
-        coverage=("sample" if progressive else "full"),
-        smoke=False,
+        progressive=progressive,
+        executor=Executor(
+            run_stage=_run_stage_fn,
+            read_metrics=_read_metrics_fn,
+            write_stages=_stages_writer,
+        ),
         sample_seed_for=_sample_seed_for,
-        run_stage_fn=_run_stage_fn,
-        read_metrics_fn=_read_metrics_fn,
-        stages_writer=_stages_writer,
     )
