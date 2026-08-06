@@ -39,7 +39,7 @@ DEFAULT_CONFIG = {
     "base_url": None,              # OpenAI-compatible base URL for Mem0's internal LLM (None = OpenAI)
     "add_batch_size": 20,          # messages per Memory.add() extraction call
     "infer": True,                 # True = LLM fact extraction (Mem0's contribution); False = store raw
-    "top_k": 20,                   # Memory.search hits per query (Mem0 default)
+    "top_k": 10,                   # Memory.search hits/query. Paper: s=10 (library default is 20)
     "threshold": 0.0,              # min similarity for a hit (0 = keep all top_k; Mem0 default 0.1)
     # --- shared eval (baseline convention) ---
     "llm_model": "gpt-5-mini",     # shared QA agent (answers from Mem0's retrieved units)

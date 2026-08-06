@@ -39,10 +39,11 @@ DEFAULT_CONFIG = {
                                            # The paper's headline numbers are on gpt-4o-mini.
     "base_url": None,              # OpenAI-compatible base URL for MemoryOS's internal LLM (None = OpenAI)
     "short_term_capacity": 7,      # STM dialogue-page queue length (paper: 7; vendored default: 10)
-    "mid_term_capacity": 2000,     # max MTM segments (vendored default; paper says 200)
+    "mid_term_capacity": 200,      # max MTM segments before LFU eviction. Paper: 200 (vendored: 2000,
+                                   # which never binds at ~176 segments/conversation)
     "mid_term_heat_threshold": 5.0,        # tau — Heat above which a segment is distilled into LPM (paper: 5)
     "mid_term_similarity_threshold": 0.6,  # theta in F_score > theta for page->segment merge (paper: 0.6)
-    "retrieval_queue_capacity": 7,         # retrieved MTM pages handed back per query
+    "retrieval_queue_capacity": 10,        # retrieved MTM pages per query. Paper: 10 on LoCoMo (vendored: 7)
     "long_term_knowledge_capacity": 100,   # FIFO capacity of User KB / Assistant Traits (paper: 100)
     # --- shared eval (baseline convention) ---
     "llm_model": "gpt-5-mini",     # shared QA agent (answers from MemoryOS's retrieved units)
