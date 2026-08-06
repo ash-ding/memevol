@@ -19,7 +19,7 @@ baselines/setup_venv.sh alma
 
 This creates `baselines/evolve/alma/venv/`. Run everything below with
 `baselines/evolve/alma/venv/bin/python` in place of the bare `python` shown
-(the shared `baselines/venv/` is dev/test only and cannot run alma).
+(the repo-root `venv/` is dev/test only and cannot run alma).
 
 Run from the **project root**:
 

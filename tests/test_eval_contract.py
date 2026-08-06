@@ -1,7 +1,6 @@
 """Tests for the standardized memory-system eval contract.
 
 Zero-dependency runner:
-    baselines/venv/bin/python tests/test_eval_contract.py
     venv/bin/python tests/test_eval_contract.py
 """
 import asyncio

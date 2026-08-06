@@ -5,7 +5,7 @@
 #
 # As of the per-baseline-venvs refactor, EACH baseline has its own venv so its
 # (often heavy / mutually-incompatible) dependencies stay isolated and can be
-# pinned to that method's paper-faithful versions. The shared `baselines/venv/`
+# pinned to that method's paper-faithful versions. The repo-root `venv/`
 # is DEV/TEST ONLY (runs the shared contract tests + common/ + datasets/); it
 # never runs a real baseline.
 #

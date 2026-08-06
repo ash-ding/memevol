@@ -1,8 +1,12 @@
 """Tests for Task 2: strict-config wiring in the four baseline run.py entrypoints
 (baselines/harness/{cc,hipporag2,amem}/run.py + baselines/evolve/alma/run.py).
 
-Zero-dep runner — run under the baselines venv:
-    baselines/venv/bin/python tests/test_strict_config.py
+Runs in the repo-root venv/ (or any venv): each baseline's run.py is loaded to
+read its DEFAULT_CONFIG. A baseline whose isolated per-baseline-venv deps aren't
+installed in the CURRENT venv (e.g. amem's sentence-transformers in the root
+venv) is SKIPPED, not failed — its own venv verifies it. Same skip-on-missing-
+deps pattern as tests/test_config.py.
+    venv/bin/python tests/test_strict_config.py
 
 Each test loads a run.py as a standalone module (via importlib, custom module
 name — never registered under its real dotted name, and `__name__ !=
@@ -34,9 +38,19 @@ AMEM_EXAMPLE = PROJECT_ROOT / "baselines" / "harness" / "amem" / "config.example
 ALMA_EXAMPLE = PROJECT_ROOT / "baselines" / "evolve" / "alma" / "config.example.yaml"
 
 
+class _SkipTest(Exception):
+    """This baseline's deps aren't installed in the current venv — skip it here
+    (its own per-baseline venv verifies its strict-config wiring)."""
+
+
 def _load(mod_name, rel):
     spec = importlib.util.spec_from_file_location(mod_name, PROJECT_ROOT / rel)
-    m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m); return m
+    m = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(m)
+    except ImportError as e:  # ModuleNotFoundError included — baseline deps absent
+        raise _SkipTest(f"{rel}: deps unavailable in this venv ({e})")
+    return m
 
 
 def _strict_check_flat(default_cfg, file_cfg, cli, dataset, progressive, context):
@@ -215,11 +229,12 @@ def test_alma_complete_passes():
 
 def main():
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
-    failed = []
+    failed = []; skipped = []
     for n, f in tests:
         try: f(); print(f"  PASS  {n}")
+        except _SkipTest as e: print(f"  SKIP  {n}  ({e})"); skipped.append(n)
         except Exception: print(f"  FAIL  {n}"); traceback.print_exc(); failed.append(n)
-    print(f"\n{len(tests)-len(failed)}/{len(tests)} passed")
+    print(f"\n{len(tests)-len(failed)-len(skipped)}/{len(tests)} passed, {len(skipped)} skipped")
     if failed: sys.exit(1)
 
 

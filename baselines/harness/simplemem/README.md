@@ -53,7 +53,7 @@ tantivy, dateparser, sentence-transformers, transformers, torch):
 
     baselines/setup_venv.sh simplemem
 
-This creates `baselines/harness/simplemem/venv/`. The shared `baselines/venv/`
+This creates `baselines/harness/simplemem/venv/`. The repo-root `venv/`
 is dev/test only and cannot run simplemem.
 
 ## Usage

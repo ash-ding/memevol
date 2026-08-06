@@ -6,7 +6,7 @@ env.py checkpoint loader against the real published data.
 
 Zero-dependency runner (no pytest in the venvs):
 
-    baselines/venv/bin/python tests/test_tce_scoring.py
+    venv/bin/python tests/test_tce_scoring.py
 """
 import os
 import sys

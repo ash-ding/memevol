@@ -2,7 +2,6 @@
 
 Zero-dependency runner (no pytest in the venvs):
 
-    baselines/venv/bin/python tests/test_alma_multidataset.py
     venv/bin/python tests/test_alma_multidataset.py
 """
 import sys

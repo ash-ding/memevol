@@ -61,7 +61,7 @@ or, into an already-built venv:
 baselines/harness/hipporag2/venv/bin/pip install -e /export/scratch_large/ding/code/HippoRAG
 ```
 
-This creates `baselines/harness/hipporag2/venv/`. The shared `baselines/venv/`
+This creates `baselines/harness/hipporag2/venv/`. The repo-root `venv/`
 is dev/test only and cannot run hipporag2.
 
 ## Usage

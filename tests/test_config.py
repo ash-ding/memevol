@@ -1,7 +1,6 @@
 """Tests for common/config.py (shared baseline config resolution).
 Zero-dep runner — run under BOTH venvs:
     venv/bin/python tests/test_config.py
-    baselines/venv/bin/python tests/test_config.py
 """
 import sys, tempfile, traceback
 from pathlib import Path

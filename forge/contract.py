@@ -11,7 +11,7 @@ Validation = dynamic import + subclass check. No execution beyond import.
 ⚠ As of 2026-04-25 the orchestrator no longer calls this on the host.
 It used to live in the propose→eval pipeline as a "is the file even
 loadable?" pre-check before paying for Singularity startup, but that
-required `baselines/venv/` to mirror the container's package list — when
+required the host `venv/` to mirror the container's package list — when
 a CC-proposed harness imported `rank_bm25` (in container, not in host venv)
 this validator would false-fail the harness despite it being correct.
 
@@ -20,7 +20,7 @@ Today, validation happens inside the container as the first step of
 This module is kept for external scripts, CI hooks, or interactive dev
 that want to syntax-check a harness without spinning up Singularity. Be
 aware that an `ImportError` here may simply mean a base-image package is
-missing from `baselines/venv/`.
+missing from the host `venv/`.
 """
 from __future__ import annotations
 

@@ -6,7 +6,7 @@ encoder class was deleted while its usage survived.
 
 Zero-dependency runner:
 
-    baselines/venv/bin/python tests/test_traces.py
+    venv/bin/python tests/test_traces.py
 """
 import json
 import os

@@ -33,7 +33,7 @@ cc has its own venv, built from its own self-contained `requirements.txt`
 baselines/setup_venv.sh cc
 ```
 
-This creates `baselines/harness/cc/venv/`. The shared `baselines/venv/` is
+This creates `baselines/harness/cc/venv/`. The repo-root `venv/` is
 dev/test only and cannot run cc.
 
 ## Usage

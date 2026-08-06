@@ -2,7 +2,7 @@
 
 Zero-dependency runner (no pytest in the venvs):
 
-    baselines/venv/bin/python tests/test_llm_retry.py
+    venv/bin/python tests/test_llm_retry.py
 
 Each test_* function is run in isolation; failures print a traceback and the
 runner exits non-zero if any test fails.

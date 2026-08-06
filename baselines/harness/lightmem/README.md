@@ -64,7 +64,7 @@ llmlingua, qdrant-client, transformers, torch, pydantic):
 
     baselines/setup_venv.sh lightmem
 
-This creates `baselines/harness/lightmem/venv/`. The shared `baselines/venv/`
+This creates `baselines/harness/lightmem/venv/`. The repo-root `venv/`
 is dev/test only and cannot run lightmem.
 
 ## Usage

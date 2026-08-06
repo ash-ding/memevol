@@ -2,7 +2,7 @@
 Zero-dependency runner (no pytest in the venvs) — baselines venv ONLY (heavy
 imports: torch/sentence-transformers/litellm; the root venv will fail):
 
-    baselines/venv/bin/python tests/test_amem_baseline.py
+    baselines/harness/amem/venv/bin/python tests/test_amem_baseline.py
 """
 import asyncio, json, sys, traceback
 from pathlib import Path
