@@ -30,8 +30,7 @@ cc has its own uv-managed environment, defined by its own self-contained
 `pyproject.toml` + committed `uv.lock` (`.python-version` pins 3.12):
 
 ```bash
-baselines/setup_venv.sh cc     # thin wrapper over `uv sync`
-# equivalent to: cd baselines/harness/cc && uv sync
+cd baselines/harness/cc && uv sync
 ```
 
 This creates `baselines/harness/cc/.venv/`. The repo-root `.venv/` is

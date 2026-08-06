@@ -23,9 +23,8 @@ producing comparable metrics: per-user reward, judge-scored accuracy, and
 ```
 baselines/
 ├── registry.py          # shared dataset registry (both sides import it)
-├── setup_venv.sh         # bootstrap: baselines/setup_venv.sh <name> →
-│                        #   `uv sync` in baselines/<evolve|harness>/<name>/
-│                        #   (shared contract tests run in the repo-root uv project, not here)
+│                        # (set up any baseline with: cd <its dir> && uv sync;
+│                        #  shared contract tests run in the repo-root uv project)
 ├── evolve/              # SEARCH-METHOD baselines — compared against forge ITSELF
 │   ├── alma/            #   LLM-meta-agent search loop (memevol's original method)
 │   │                    #     own pyproject.toml + .python-version + uv.lock + .venv/ (gitignored)
@@ -81,12 +80,18 @@ bind every method here:
   because independence between methods matters more than DRY.
 
 Each baseline is its **own standalone uv project** — `pyproject.toml` +
-`.python-version` (3.12) + a committed `uv.lock`: `baselines/setup_venv.sh
-<name>` runs `uv sync` in that baseline's directory, creating
-`baselines/{evolve,harness}/<name>/.venv/`. hipporag2 additionally needs an
-editable install of the external [HippoRAG](https://github.com/OSU-NLP-Group/HippoRAG)
-repo (`HIPPORAG_SRC=/path/to/HippoRAG baselines/setup_venv.sh hipporag2`; the
-`hipporag` package itself is not vendored or listed in any `pyproject.toml`).
+`.python-version` (3.12) + a committed `uv.lock`. Set one up by `cd`-ing into
+its directory and running `uv sync`, which creates
+`baselines/{evolve,harness}/<name>/.venv/`:
+
+```bash
+cd baselines/harness/cc && uv sync
+```
+
+hipporag2 needs one extra step — an editable install of the external
+[HippoRAG](https://github.com/OSU-NLP-Group/HippoRAG) repo (`hipporag` is not
+vendored or listed in any `pyproject.toml`); see its own
+[harness/hipporag2/README.md](harness/hipporag2/README.md) for the exact commands.
 
 There is **no shared baselines dev/test venv** — the shared contract tests
 (`tests/test_baselines_multidataset.py`, `test_config.py`, `test_sampling_plan.py`,
@@ -563,11 +568,10 @@ attribute. No `__init__.py` files needed (namespace packages).
 Give your baseline its own self-contained `baselines/harness/<name>/pyproject.toml`
 (+ `.python-version` pinned to 3.12), listing only your system's extra
 packages on top of the shared core deps (see any existing
-`harness/*/pyproject.toml` for the pattern). Build its `.venv/` with the
-bootstrap script:
+`harness/*/pyproject.toml` for the pattern). Build its `.venv/`:
 
 ```bash
-baselines/setup_venv.sh <name>
+cd baselines/harness/<name> && uv sync
 ```
 
 This runs `uv sync` in `baselines/harness/<name>/`, creating

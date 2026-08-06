@@ -38,10 +38,6 @@ zep has its own uv-managed environment, defined by its own self-contained
 `pyproject.toml` + committed `uv.lock` (neo4j, tenacity, posthog, falkordblite,
 redis, sentence-transformers, plus the shared core deps):
 
-    baselines/setup_venv.sh zep
-
-(a thin wrapper over `uv sync`), or directly:
-
     cd baselines/harness/zep && uv sync
 
 This creates `baselines/harness/zep/.venv/`. The repo-root `.venv/` is

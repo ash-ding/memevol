@@ -31,8 +31,6 @@ amem has its own `.venv/`, built from its own self-contained `pyproject.toml`
 (sentence-transformers, transformers, torch, nltk, rank_bm25, scikit-learn,
 litellm on top of the shared core deps) with a committed `uv.lock`:
 
-    baselines/setup_venv.sh amem   # thin wrapper over `uv sync`
-    # or directly:
     cd baselines/harness/amem && uv sync
 
 This creates `baselines/harness/amem/.venv/`. The repo-root `.venv/` is

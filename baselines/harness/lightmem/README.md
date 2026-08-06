@@ -62,10 +62,9 @@ lightmem is its own standalone uv project (`pyproject.toml` + `.python-version`
 + committed `uv.lock`, pulling in sentence-transformers, llmlingua,
 qdrant-client, transformers, torch, pydantic):
 
-    baselines/setup_venv.sh lightmem
+    cd baselines/harness/lightmem && uv sync
 
-(a thin wrapper over `uv sync`; equivalently `cd baselines/harness/lightmem &&
-uv sync`). This creates `baselines/harness/lightmem/.venv/`. The repo-root
+This creates `baselines/harness/lightmem/.venv/`. The repo-root
 `.venv/` is dev/test only and cannot run lightmem.
 
 ## Usage

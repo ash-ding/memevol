@@ -41,26 +41,15 @@ langchain-chroma, finch-clust, networkx, nltk, rank_bm25,
 sentence-transformers):
 
 ```bash
-baselines/setup_venv.sh hipporag2
+cd baselines/harness/hipporag2
+uv sync
+# hipporag2 ALSO needs the external HippoRAG package as an EDITABLE install
+# (memo.py: `from hipporag import HippoRAG`) — `hipporag` is NOT vendored and
+# NOT a pyproject.toml dependency, so `uv sync` alone does not install it:
+uv pip install -e /export/scratch_large/ding/code/HippoRAG   # point at your HippoRAG checkout
 ```
 
-Unlike every other baseline, this ALSO needs an editable install of the
-external [HippoRAG](https://github.com/OSU-NLP-Group/HippoRAG) package
-itself (`memo.py: from hipporag import HippoRAG`) — `hipporag` is NOT
-vendored and NOT a `pyproject.toml` dependency. `setup_venv.sh hipporag2`
-does this automatically from `HIPPORAG_SRC` (default
-`/export/scratch_large/ding/code/HippoRAG`): it runs `uv sync` and then
-`uv pip install -e $HIPPORAG_SRC` into hipporag2's `.venv/`.
-
-```bash
-HIPPORAG_SRC=/export/scratch_large/ding/code/HippoRAG baselines/setup_venv.sh hipporag2
-```
-
-or, manually, into an already-synced project:
-
-```bash
-cd baselines/harness/hipporag2 && uv sync && uv pip install -e /export/scratch_large/ding/code/HippoRAG
-```
+This is the ONLY baseline whose setup needs a second step beyond `uv sync`.
 
 This creates `baselines/harness/hipporag2/.venv/`. The repo-root
 `.venv/` is dev/test only and cannot run hipporag2.

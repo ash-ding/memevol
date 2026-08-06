@@ -13,7 +13,7 @@ alma has its own `pyproject.toml` + committed `uv.lock` (shared-core deps +
 alma's extra deps — langchain-chroma, chromadb, networkx, huggingface-hub):
 
 ```bash
-baselines/setup_venv.sh alma
+cd baselines/evolve/alma && uv sync
 ```
 
 (a thin wrapper over `uv sync`; equivalently `cd baselines/evolve/alma && uv sync`).

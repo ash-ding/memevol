@@ -51,10 +51,9 @@ simplemem has its own uv-managed venv, built from its own self-contained
 `pyproject.toml` (lancedb, pyarrow, tantivy, dateparser,
 sentence-transformers, transformers, torch):
 
-    baselines/setup_venv.sh simplemem
+    cd baselines/harness/simplemem && uv sync
 
-(a thin wrapper over `uv sync`). Or directly: `cd baselines/harness/simplemem
-&& uv sync`. This creates `baselines/harness/simplemem/.venv/`. The repo-root
+This creates `baselines/harness/simplemem/.venv/`. The repo-root
 `.venv/` is dev/test only and cannot run simplemem.
 
 ## Usage
