@@ -1,8 +1,8 @@
 """Tests for the cc harness baseline (baselines/harness/cc/memo.py — native
-agentic answer via Claude Code). Zero-dependency runner; run in cc's OWN venv
-(baselines/harness/cc/venv/), not the repo-root venv/ dev env:
+agentic answer via Claude Code). Zero-dependency runner; run in cc's OWN uv
+project (baselines/harness/cc/.venv/), not the repo-root dev env:
 
-    baselines/harness/cc/venv/bin/python tests/test_cc_baseline.py
+    uv run --project baselines/harness/cc python tests/test_cc_baseline.py
 """
 import sys, traceback
 from pathlib import Path

@@ -34,24 +34,27 @@ lightmem (pip-only, no daemon), not Graphiti's default Neo4j server.
 
 ## Setup
 
-zep has its own venv, built from its own self-contained `requirements.txt`
-(`-r ../../core-requirements.txt` + neo4j, tenacity, posthog, falkordblite,
-redis, sentence-transformers):
+zep has its own uv-managed environment, defined by its own self-contained
+`pyproject.toml` + committed `uv.lock` (neo4j, tenacity, posthog, falkordblite,
+redis, sentence-transformers, plus the shared core deps):
 
     baselines/setup_venv.sh zep
 
-This creates `baselines/harness/zep/venv/`. The repo-root `venv/` is
+(a thin wrapper over `uv sync`), or directly:
+
+    cd baselines/harness/zep && uv sync
+
+This creates `baselines/harness/zep/.venv/`. The repo-root `.venv/` is
 dev/test only and cannot run zep.
 
 ## Usage
 
-    baselines/harness/zep/venv/bin/python baselines/harness/zep/run.py \
-        --config baselines/harness/zep/config.example.yaml
-    baselines/harness/zep/venv/bin/python baselines/harness/zep/run.py \
-        --config my_zep.yaml --dataset dynamicmem --split search
+    cd baselines/harness/zep && uv run python run.py \
+        --config config.example.yaml
+    uv run python run.py --config my_zep.yaml --dataset dynamicmem --split search
 
-**Requires Python 3.12+** (falkordblite constraint; zep's own venv qualifies —
-`baselines/setup_venv.sh` defaults to `python3.12`).
+**Requires Python 3.12+** (falkordblite constraint; pinned via zep's own
+`.python-version`).
 Key flags: `--config` (YAML; CLI overrides it); `--retrieve_k` (default 20, the
 paper's top-k); `--embedder` (`bge-m3` paper-faithful local | `openai`);
 `--reranker` (`bge` paper-faithful cross-encoder | `openai`); `--device`
@@ -100,9 +103,9 @@ Shared progressive-sampling flags (same as cc/hipporag2/amem): `--progressive` /
 sessions); smoke on `--split search`, 1 sample each, confirming build → retrieve →
 QA runs, `invalid_users` is empty, and retrieved context is non-empty:
 
-    baselines/harness/zep/venv/bin/python baselines/harness/zep/run.py --config baselines/harness/zep/smoke_locomo.yaml
-    baselines/harness/zep/venv/bin/python baselines/harness/zep/run.py --config baselines/harness/zep/smoke_longmemeval.yaml
-    baselines/harness/zep/venv/bin/python baselines/harness/zep/run.py --config baselines/harness/zep/smoke_dynamicmem.yaml
+    cd baselines/harness/zep && uv run python run.py --config smoke_locomo.yaml
+    uv run python run.py --config smoke_longmemeval.yaml
+    uv run python run.py --config smoke_dynamicmem.yaml
 
 Smoke scores are single-sample sanity signals, NOT benchmark numbers. Real numbers
 belong on the `--split test` runs (touch the test split once per reported number).

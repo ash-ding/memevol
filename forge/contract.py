@@ -11,16 +11,17 @@ Validation = dynamic import + subclass check. No execution beyond import.
 ⚠ As of 2026-04-25 the orchestrator no longer calls this on the host.
 It used to live in the propose→eval pipeline as a "is the file even
 loadable?" pre-check before paying for Singularity startup, but that
-required the host `venv/` to mirror the container's package list — when
-a CC-proposed harness imported `rank_bm25` (in container, not in host venv)
-this validator would false-fail the harness despite it being correct.
+required the host env to mirror the container's package list — when
+a CC-proposed harness imported `rank_bm25` (in container, not in the host
+env) this validator would false-fail the harness despite it being correct.
 
 Today, validation happens inside the container as the first step of
 `launch.py::_load_harness_class` (called by both sanity and full eval).
 This module is kept for external scripts, CI hooks, or interactive dev
 that want to syntax-check a harness without spinning up Singularity. Be
 aware that an `ImportError` here may simply mean a base-image package is
-missing from the host `venv/`.
+missing from the host env (2026-08-05: the host env is a `uv sync`'d
+project — `.venv/` built from the repo-root `pyproject.toml` / `uv.lock`).
 """
 from __future__ import annotations
 

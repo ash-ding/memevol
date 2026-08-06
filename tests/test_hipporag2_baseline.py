@@ -1,8 +1,8 @@
 """Tests for the hipporag2 harness baseline (baselines/harness/hipporag2/memo.py
-— retrieval MemoStructure). Zero-dependency runner; run in hipporag2's OWN venv
-(baselines/harness/hipporag2/venv/), not the repo-root venv/ dev env:
+— retrieval MemoStructure). Zero-dependency runner; run in hipporag2's OWN uv
+project (baselines/harness/hipporag2/.venv/), not the repo-root dev env:
 
-    baselines/harness/hipporag2/venv/bin/python tests/test_hipporag2_baseline.py
+    uv run --project baselines/harness/hipporag2 python tests/test_hipporag2_baseline.py
 """
 import sys, traceback
 from pathlib import Path

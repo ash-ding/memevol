@@ -4,8 +4,8 @@ main method (same split/judge/scoring via the per-dataset workflow).
 Sizing is config-file only (no sizing CLI flags): `single_stage` (progressive:
 false) or `stages` (progressive: true) — see config.example.yaml.
 
-    baselines/harness/hipporag2/venv/bin/python baselines/harness/hipporag2/run.py --config baselines/harness/hipporag2/config.example.yaml
-    baselines/harness/hipporag2/venv/bin/python baselines/harness/hipporag2/run.py --config baselines/harness/hipporag2/config.example.yaml --progressive
+    cd baselines/harness/hipporag2 && uv run python run.py --config config.example.yaml
+    uv run python run.py --config config.example.yaml --progressive
 """
 from __future__ import annotations
 import argparse, asyncio, sys

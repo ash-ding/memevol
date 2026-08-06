@@ -1,5 +1,5 @@
 """common/staged_eval.py owns the stage config, and forge re-exports it identically.
-    venv/bin/python tests/test_staged_eval_shared.py
+    uv run python tests/test_staged_eval_shared.py
 """
 import sys, traceback
 from pathlib import Path

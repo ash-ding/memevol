@@ -27,20 +27,22 @@ baseline, so the answer side is already A-mem-shaped there).
 
 ## Setup
 
-amem has its own venv, built from its own self-contained `requirements.txt`
-(`-r ../../core-requirements.txt` + sentence-transformers, transformers,
-torch, nltk, rank_bm25, scikit-learn, litellm):
+amem has its own `.venv/`, built from its own self-contained `pyproject.toml`
+(sentence-transformers, transformers, torch, nltk, rank_bm25, scikit-learn,
+litellm on top of the shared core deps) with a committed `uv.lock`:
 
-    baselines/setup_venv.sh amem
+    baselines/setup_venv.sh amem   # thin wrapper over `uv sync`
+    # or directly:
+    cd baselines/harness/amem && uv sync
 
-This creates `baselines/harness/amem/venv/`. The repo-root `venv/` is
+This creates `baselines/harness/amem/.venv/`. The repo-root `.venv/` is
 dev/test only and cannot run amem.
 
 ## Usage
 
-    baselines/harness/amem/venv/bin/python baselines/harness/amem/run.py \
-        --config baselines/harness/amem/config.example.yaml
-    baselines/harness/amem/venv/bin/python baselines/harness/amem/run.py \
+    cd baselines/harness/amem && uv run python run.py \
+        --config config.example.yaml
+    uv run python run.py \
         --config my_amem.yaml --dataset dynamicmem --split search
 
 Flags: `--config` (YAML path; CLI flags override it); `--amem_llm_model`
@@ -129,6 +131,6 @@ $2.00 per 1M in/out (plug in real rates — the total is gpt-4o-mini-build-domin
 Time, not money, is the binding constraint. The build is API-bound, so raising
 `--max_sample_concurrent` (within OpenAI rate limits) is the main lever.
 
-Tests: `baselines/harness/amem/venv/bin/python tests/test_amem_baseline.py`
-(amem's own venv — heavy imports; the repo-root `venv/` is dev/test
+Tests: `cd baselines/harness/amem && uv run python tests/test_amem_baseline.py`
+(amem's own project — heavy imports; the repo-root `.venv/` is dev/test
 core only and doesn't have them).

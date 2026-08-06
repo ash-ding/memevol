@@ -1,8 +1,8 @@
 """Tests for the A-mem harness baseline (shim, init→note-unit mapping, hooks).
-Zero-dependency runner (no pytest in the venvs) — baselines venv ONLY (heavy
-imports: torch/sentence-transformers/litellm; the root venv will fail):
+Zero-dependency runner (no pytest) — amem's OWN uv project ONLY (heavy
+imports: torch/sentence-transformers/litellm; the repo-root project will fail):
 
-    baselines/harness/amem/venv/bin/python tests/test_amem_baseline.py
+    uv run --project baselines/harness/amem python tests/test_amem_baseline.py
 """
 import asyncio, json, sys, traceback
 from pathlib import Path

@@ -4,7 +4,7 @@
 Zero-dependency runner (baselines venv; no network — the QA agent + judge are
 stubbed, run_all_users is faked for the gauntlet-logic tests):
 
-    venv/bin/python tests/test_baseline_gauntlet.py
+    uv run python tests/test_baseline_gauntlet.py
 
 Covers:
   (a) progressive=True runs stages in order + returns a stages.json-shaped result

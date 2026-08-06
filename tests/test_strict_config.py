@@ -6,7 +6,7 @@ read its DEFAULT_CONFIG. A baseline whose isolated per-baseline-venv deps aren't
 installed in the CURRENT venv (e.g. amem's sentence-transformers in the root
 venv) is SKIPPED, not failed — its own venv verifies it. Same skip-on-missing-
 deps pattern as tests/test_config.py.
-    venv/bin/python tests/test_strict_config.py
+    uv run python tests/test_strict_config.py
 
 Each test loads a run.py as a standalone module (via importlib, custom module
 name — never registered under its real dotted name, and `__name__ !=

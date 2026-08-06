@@ -6,8 +6,8 @@ QA agent so the workflow judges cc's own tool-using answer verbatim.
 Sizing is config-file only (no sizing CLI flags): `single_stage` (progressive:
 false) or `stages` (progressive: true) — see config.example.yaml.
 
-    baselines/harness/cc/venv/bin/python baselines/harness/cc/run.py --config baselines/harness/cc/config.example.yaml
-    baselines/harness/cc/venv/bin/python baselines/harness/cc/run.py --config baselines/harness/cc/config.example.yaml --progressive
+    cd baselines/harness/cc && uv run python run.py --config config.example.yaml
+    uv run python run.py --config config.example.yaml --progressive
 """
 from __future__ import annotations
 import argparse, asyncio, sys

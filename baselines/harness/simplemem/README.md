@@ -47,20 +47,21 @@ retrieval), not about SimpleMem's own `answer_generator`.
 
 ## Setup
 
-simplemem has its own venv, built from its own self-contained
-`requirements.txt` (`-r ../../core-requirements.txt` + lancedb, pyarrow,
-tantivy, dateparser, sentence-transformers, transformers, torch):
+simplemem has its own uv-managed venv, built from its own self-contained
+`pyproject.toml` (lancedb, pyarrow, tantivy, dateparser,
+sentence-transformers, transformers, torch):
 
     baselines/setup_venv.sh simplemem
 
-This creates `baselines/harness/simplemem/venv/`. The repo-root `venv/`
-is dev/test only and cannot run simplemem.
+(a thin wrapper over `uv sync`). Or directly: `cd baselines/harness/simplemem
+&& uv sync`. This creates `baselines/harness/simplemem/.venv/`. The repo-root
+`.venv/` is dev/test only and cannot run simplemem.
 
 ## Usage
 
-    baselines/harness/simplemem/venv/bin/python baselines/harness/simplemem/run.py \
-        --config baselines/harness/simplemem/config.example.yaml
-    baselines/harness/simplemem/venv/bin/python baselines/harness/simplemem/run.py \
+    cd baselines/harness/simplemem && uv run python run.py \
+        --config config.example.yaml
+    uv run python run.py \
         --config my_simplemem.yaml --dataset dynamicmem --split search
 
 Flags: `--config` (YAML path; CLI flags override it); `--simplemem_llm_model`
@@ -133,17 +134,17 @@ cheaply on the search split (mirrors amem's per-branch check):
 
     # locomo (conversation branch) — 1 conv, 3 QAs
     #   config: single_stage: {n_conversations: 1, n_qa: 3}
-    baselines/harness/simplemem/venv/bin/python baselines/harness/simplemem/run.py \
+    cd baselines/harness/simplemem && uv run python run.py \
         --config smoke_locomo.yaml --dataset locomo --split search
 
     # dynamicmem (app_logs branch) — 1 user, checkpoint interleaving
     #   config: single_stage: {n_users: 1, n_checkpoints: 1, n_task_a: 1, n_task_c: 1}
-    baselines/harness/simplemem/venv/bin/python baselines/harness/simplemem/run.py \
+    uv run python run.py \
         --config smoke_dm.yaml --dataset dynamicmem --split search
 
     # longmemeval_s (sessions branch) — 1 question
     #   config: single_stage: {n_questions: 1}
-    baselines/harness/simplemem/venv/bin/python baselines/harness/simplemem/run.py \
+    uv run python run.py \
         --config smoke_lme.yaml --dataset longmemeval_s --split search
 
 Read `results/<dataset>/search/traces/<user>.json` to confirm build → retrieve

@@ -16,7 +16,8 @@ TARGET_STEPS="${1:-10}"
 MAX_REATTEMPTS=20
 
 PROJECT_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
-PYTHON="$PROJECT_ROOT/baselines/evolve/alma/venv/bin/python"
+ALMA_DIR="$PROJECT_ROOT/baselines/evolve/alma"
+PYTHON=(uv run --project "$ALMA_DIR" python)
 CKPT_DIR="$PROJECT_ROOT/baselines/evolve/alma/logs"
 SUP_TS="$(date +%Y%m%d_%H%M%S)"
 SUP_LOG="$CKPT_DIR/supervisor_${SUP_TS}.log"
@@ -32,7 +33,7 @@ read_completed_steps() {
   # Emits the completed_steps int from the given ckpt path (0 if missing/malformed).
   local ckpt="$1"
   [ -f "$ckpt" ] || { echo 0; return; }
-  "$PYTHON" -c "
+  "${PYTHON[@]}" -c "
 import json, sys
 try:
     d = json.load(open('$ckpt'))
@@ -62,7 +63,7 @@ COMMON_ARGS=(
 
 log "=== Supervisor start | target_steps=$TARGET_STEPS | max_reattempts=$MAX_REATTEMPTS ==="
 log "Project root: $PROJECT_ROOT"
-log "Python:       $PYTHON"
+log "Python:       ${PYTHON[*]}"
 log "Supervisor log: $SUP_LOG"
 
 attempt=0
@@ -90,13 +91,13 @@ while :; do
   CHILD_OUT="/tmp/alma_search_attempt${attempt}_${SUP_TS}.out"
   if [ -n "$CKPT_NAME" ]; then
     log "resuming from ckpt=$CKPT_NAME ; child stdout/stderr -> $CHILD_OUT"
-    "$PYTHON" "$PROJECT_ROOT/baselines/evolve/alma/run.py" \
+    "${PYTHON[@]}" "$PROJECT_ROOT/baselines/evolve/alma/run.py" \
       "${COMMON_ARGS[@]}" \
       --history_ckpt_path "$CKPT_NAME" \
       > "$CHILD_OUT" 2>&1
   else
     log "starting fresh ; child stdout/stderr -> $CHILD_OUT"
-    "$PYTHON" "$PROJECT_ROOT/baselines/evolve/alma/run.py" \
+    "${PYTHON[@]}" "$PROJECT_ROOT/baselines/evolve/alma/run.py" \
       "${COMMON_ARGS[@]}" \
       > "$CHILD_OUT" 2>&1
   fi

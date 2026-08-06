@@ -26,21 +26,22 @@ each call.
 
 ## Setup
 
-cc has its own venv, built from its own self-contained `requirements.txt`
-(`-r ../../core-requirements.txt` + `claude-code-sdk`):
+cc has its own uv-managed environment, defined by its own self-contained
+`pyproject.toml` + committed `uv.lock` (`.python-version` pins 3.12):
 
 ```bash
-baselines/setup_venv.sh cc
+baselines/setup_venv.sh cc     # thin wrapper over `uv sync`
+# equivalent to: cd baselines/harness/cc && uv sync
 ```
 
-This creates `baselines/harness/cc/venv/`. The repo-root `venv/` is
+This creates `baselines/harness/cc/.venv/`. The repo-root `.venv/` is
 dev/test only and cannot run cc.
 
 ## Usage
 
 ```bash
-baselines/harness/cc/venv/bin/python baselines/harness/cc/run.py \
-    --config baselines/harness/cc/config.example.yaml \
+cd baselines/harness/cc && uv run python run.py \
+    --config config.example.yaml \
     [--dataset {dynamicmem,locomo,longmemeval_s,longmemeval_m}] \
     [--split test|search] \
     [--progressive|--no-progressive] \
@@ -86,15 +87,15 @@ Examples:
 
 ```bash
 # Config-driven run (sizes from the config's single_stage / stages)
-baselines/harness/cc/venv/bin/python baselines/harness/cc/run.py \
-    --config baselines/harness/cc/config.example.yaml
+uv run python run.py \
+    --config config.example.yaml
 
 # Opus, one dataset (size via a config with single_stage: {n_users: 2})
-baselines/harness/cc/venv/bin/python baselines/harness/cc/run.py \
+uv run python run.py \
     --config my_cc.yaml --dataset dynamicmem --model opus
 
 # LongMemEval-m, search split (comparable to what the proposer itself sees)
-baselines/harness/cc/venv/bin/python baselines/harness/cc/run.py \
+uv run python run.py \
     --config my_cc.yaml --dataset longmemeval_m --split search
 ```
 

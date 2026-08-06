@@ -23,13 +23,12 @@ producing comparable metrics: per-user reward, judge-scored accuracy, and
 ```
 baselines/
 ├── registry.py          # shared dataset registry (both sides import it)
-├── core-requirements.txt  # shared-core deps EVERY baseline installs (via -r ../../)
-├── setup_venv.sh         # bootstrap: baselines/setup_venv.sh <name> [python] →
-│                        #   baselines/<evolve|harness>/<name>/venv/
-│                        # (shared contract tests run in the repo-root venv/, not here)
+├── setup_venv.sh         # bootstrap: baselines/setup_venv.sh <name> →
+│                        #   `uv sync` in baselines/<evolve|harness>/<name>/
+│                        #   (shared contract tests run in the repo-root uv project, not here)
 ├── evolve/              # SEARCH-METHOD baselines — compared against forge ITSELF
 │   ├── alma/            #   LLM-meta-agent search loop (memevol's original method)
-│   │                    #     own requirements.txt + venv/ (gitignored)
+│   │                    #     own pyproject.toml + .python-version + uv.lock + .venv/ (gitignored)
 │   ├── evolvemem/       #   (paper PDF; to be implemented under the conventions below)
 │   └── memevolve/       #   (paper PDF; to be implemented under the conventions below)
 └── harness/             # READY-MADE MEMORY SYSTEMS — compared against forge's
@@ -42,7 +41,7 @@ baselines/
     ├── simplemem/       #   SimpleMem semantic-compression memory as retrieval memory
     └── zep/             #   Zep/Graphiti temporal KG memory (embedded FalkorDB Lite)
                          #     Each harness/<name>/ (and evolve/alma/) also has
-                         #     its own requirements.txt + venv/ (gitignored)
+                         #     its own pyproject.toml + .python-version + uv.lock + .venv/ (gitignored)
 ```
 
 - **`evolve/`** — methods that SEARCH over memory-structure code, like forge
@@ -81,24 +80,24 @@ bind every method here:
   machinery, copy it. Duplicated internals are acceptable — preferred, even —
   because independence between methods matters more than DRY.
 
-Each baseline has its **own venv**, built from its own self-contained
-`requirements.txt` (`-r ../../core-requirements.txt` + that baseline's extra
-deps): `baselines/setup_venv.sh <name>` creates
-`baselines/{evolve,harness}/<name>/venv/`. hipporag2 additionally needs an
+Each baseline is its **own standalone uv project** — `pyproject.toml` +
+`.python-version` (3.12) + a committed `uv.lock`: `baselines/setup_venv.sh
+<name>` runs `uv sync` in that baseline's directory, creating
+`baselines/{evolve,harness}/<name>/.venv/`. hipporag2 additionally needs an
 editable install of the external [HippoRAG](https://github.com/OSU-NLP-Group/HippoRAG)
 repo (`HIPPORAG_SRC=/path/to/HippoRAG baselines/setup_venv.sh hipporag2`; the
-`hipporag` package itself is not vendored or in any `requirements.txt`).
+`hipporag` package itself is not vendored or listed in any `pyproject.toml`).
 
 There is **no shared baselines dev/test venv** — the shared contract tests
 (`tests/test_baselines_multidataset.py`, `test_config.py`, `test_sampling_plan.py`,
-…) are baseline-free and run in the **repo-root `venv/`** (forge's venv, which
-already imports `common/` + `datasets/` and is a superset of
-`core-requirements.txt`): `venv/bin/python tests/test_baselines_multidataset.py`.
+…) are baseline-free and run in the **repo-root uv project** (forge's project,
+which already imports `common/` + `datasets/`): `uv sync` at the repo root,
+then `uv run python tests/test_baselines_multidataset.py`.
 A baseline's OWN behavioral test (`tests/test_<name>_baseline.py`) runs in that
-baseline's venv (it needs that baseline's deps). `core-requirements.txt` stays —
-it is the `-r ../../core-requirements.txt` target every per-baseline
-`requirements.txt` pulls in. Every baseline writes artifacts under its own
-`logs/` and `results/` directories (gitignored).
+baseline's own project (it needs that baseline's deps):
+`uv run --project baselines/<evolve|harness>/<name> python tests/test_<name>_baseline.py`.
+Every baseline writes artifacts under its own `logs/` and `results/`
+directories (gitignored).
 
 ## Shared progressive sampling, seeding & memory cache
 
@@ -148,12 +147,12 @@ CLI surface per side:
 # harness (cc / hipporag2 / amem run.py) — no --random_sample (no step loop);
 # sizes (stages: for progressive, single_stage: for one-shot) live in the
 # --config YAML, never on the CLI
-baselines/harness/hipporag2/venv/bin/python baselines/harness/hipporag2/run.py \
-    --config baselines/harness/hipporag2/config.example.yaml \
+cd baselines/harness/hipporag2 && uv run python run.py \
+    --config config.example.yaml \
     --dataset locomo --progressive --sampling-seed 42
 
 # alma (evolve/alma/run.py) — has a step loop, so random_sample applies
-baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
+cd baselines/evolve/alma && uv run python run.py \
     --status search --progressive --random_sample --sampling_seed 42 --steps 10
 ```
 
@@ -221,12 +220,12 @@ forge uses:
 
 ```bash
 # alma — config file only
-baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
-    --config baselines/evolve/alma/config.example.yaml
+cd baselines/evolve/alma && uv run python run.py \
+    --config config.example.yaml
 
 # harness baseline — config file + a CLI override (CLI wins on conflicts)
-baselines/harness/hipporag2/venv/bin/python baselines/harness/hipporag2/run.py \
-    --config baselines/harness/hipporag2/config.example.yaml \
+cd baselines/harness/hipporag2 && uv run python run.py \
+    --config config.example.yaml \
     --sampling-seed 7
 ```
 
@@ -253,15 +252,15 @@ split. Softmax-weighted parent selection over reward.
 # Smoke — tiny staged gauntlet, 2 steps (evaluation sizes come from the
 # shared `stages` schema now, not flat eval_n_*/check_n_* flags — see
 # "Shared progressive sampling" below)
-baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
+cd baselines/evolve/alma && uv run python run.py \
     --status search --progressive --steps 2
 
 # Full training — stage1->2->3 gauntlet (default DEFAULT_STAGES sizes), 10 steps
-baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
+uv run python run.py \
     --status search --progressive --steps 10
 
 # Held-out evaluation of a saved memo
-baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
+uv run python run.py \
     --status test --memo_SHA <SHA> --progressive
 ```
 
@@ -290,12 +289,12 @@ Skips memory-architecture design entirely. `CCMemo`
   shared QA agent. This is the one baseline that overrides the answer hook.
 
 ```bash
-baselines/harness/cc/venv/bin/python baselines/harness/cc/run.py \
-    --config baselines/harness/cc/config.example.yaml \
+cd baselines/harness/cc && uv run python run.py \
+    --config config.example.yaml \
     --dataset locomo --model claude-sonnet-4-20250514
 
 # sizes live in the --config YAML (e.g. single_stage: {n_users: 2} for 2 dynamicmem users)
-baselines/harness/cc/venv/bin/python baselines/harness/cc/run.py \
+uv run python run.py \
     --config my_cc.yaml --dataset dynamicmem
 ```
 
@@ -320,11 +319,11 @@ wraps [HippoRAG2](https://github.com/OSU-NLP-Group/HippoRAG)'s pipeline:
 
 ```bash
 # OpenAI API embedding (no GPU needed)
-baselines/harness/hipporag2/venv/bin/python baselines/harness/hipporag2/run.py \
+cd baselines/harness/hipporag2 && uv run python run.py \
     --dataset locomo --embedding text-embedding-3-small
 
 # Local GPU embedding (NVIDIA)
-baselines/harness/hipporag2/venv/bin/python baselines/harness/hipporag2/run.py \
+uv run python run.py \
     --dataset longmemeval_s --embedding nvidia/NV-Embed-v2 \
     --embedding_batch_size 2 --embedding_dtype float16
 ```
@@ -351,11 +350,11 @@ Artifacts: `baselines/harness/hipporag2/{outputs/, results/<dataset>/<split>/}`.
 
 ```bash
 # faithful defaults (LLMlingua-2 pre-compress + topic-seg, MiniLM embedder; needs a GPU)
-baselines/harness/lightmem/venv/bin/python baselines/harness/lightmem/run.py \
-    --config baselines/harness/lightmem/config.example.yaml --dataset locomo
+cd baselines/harness/lightmem && uv run python run.py \
+    --config config.example.yaml --dataset locomo
 
 # CPU (slow) — move the local models off the GPU
-baselines/harness/lightmem/venv/bin/python baselines/harness/lightmem/run.py \
+uv run python run.py \
     --config my_lightmem.yaml --dataset dynamicmem \
     --llmlingua_device cpu --embedding_device cpu
 ```
@@ -381,11 +380,11 @@ boundary and provenance.
 
 ```bash
 # faithful Qwen3-0.6B embedder (benefits from GPU)
-baselines/harness/simplemem/venv/bin/python baselines/harness/simplemem/run.py \
-    --config baselines/harness/simplemem/config.example.yaml --dataset locomo
+cd baselines/harness/simplemem && uv run python run.py \
+    --config config.example.yaml --dataset locomo
 
 # light MiniLM fallback embedder (no GPU)
-baselines/harness/simplemem/venv/bin/python baselines/harness/simplemem/run.py \
+uv run python run.py \
     --config my_simplemem.yaml --dataset dynamicmem \
     --embedding_model all-MiniLM-L6-v2
 ```
@@ -416,8 +415,8 @@ not Graphiti's default Neo4j server. Embedder/reranker default to paper-faithful
 **BGE-m3** (config-toggleable to OpenAI). Requires **Python 3.12+**.
 
 ```bash
-baselines/harness/zep/venv/bin/python baselines/harness/zep/run.py \
-    --config baselines/harness/zep/config.example.yaml --dataset locomo
+cd baselines/harness/zep && uv run python run.py \
+    --config config.example.yaml --dataset locomo
 # CPU-only box: add device: cpu in the config (or --device cpu)
 ```
 
@@ -561,19 +560,21 @@ attribute. No `__init__.py` files needed (namespace packages).
 
 ### Step 3 — dependencies
 
-Give your baseline its own self-contained `baselines/harness/<name>/requirements.txt`:
-start with `-r ../../core-requirements.txt`, then list only your system's
-extra packages (see any existing `harness/*/requirements.txt` for the
-pattern). Build its venv with the bootstrap script:
+Give your baseline its own self-contained `baselines/harness/<name>/pyproject.toml`
+(+ `.python-version` pinned to 3.12), listing only your system's extra
+packages on top of the shared core deps (see any existing
+`harness/*/pyproject.toml` for the pattern). Build its `.venv/` with the
+bootstrap script:
 
 ```bash
 baselines/setup_venv.sh <name>
 ```
 
-This creates `baselines/harness/<name>/venv/` from that file. Heavy or
-mutually-conflicting deps are exactly why each baseline gets its own venv now
-— no need to reconcile them against any other baseline's requirements. Note
-anything unusual in your baseline's own README; scoring still MUST go
+This runs `uv sync` in `baselines/harness/<name>/`, creating
+`baselines/harness/<name>/.venv/` and a committed `uv.lock`. Heavy or
+mutually-conflicting deps are exactly why each baseline gets its own project
+now — no need to reconcile them against any other baseline's dependencies.
+Note anything unusual in your baseline's own README; scoring still MUST go
 through `run_baseline`.
 
 ### Step 4 — validate on the SEARCH split (cheap, iterate freely)
@@ -581,12 +582,12 @@ through `run_baseline`.
 ```bash
 # One conversation, a handful of QAs — does the adapter run end-to-end?
 # Size via a --config YAML with `single_stage: {n_conversations: 1, n_qa: 3}`.
-baselines/harness/<name>/venv/bin/python baselines/harness/<name>/run.py \
+cd baselines/harness/<name> && uv run python run.py \
     --config my_baseline.yaml --dataset locomo --split search
 
 # DynamicMem protocol check — 1 user exercises the checkpoint interleaving
 # (config YAML: `single_stage: {n_users: 1}`)
-baselines/harness/<name>/venv/bin/python baselines/harness/<name>/run.py \
+uv run python run.py \
     --config my_baseline.yaml --dataset dynamicmem --split search
 ```
 
@@ -600,9 +601,9 @@ surfacing the right memory.
 
 ```bash
 # Whole test split (the default --split; = forge.heldout coverage=full)
-baselines/harness/<name>/venv/bin/python baselines/harness/<name>/run.py --dataset locomo
-baselines/harness/<name>/venv/bin/python baselines/harness/<name>/run.py --dataset dynamicmem
-baselines/harness/<name>/venv/bin/python baselines/harness/<name>/run.py --dataset longmemeval_s
+cd baselines/harness/<name> && uv run python run.py --dataset locomo
+uv run python run.py --dataset dynamicmem
+uv run python run.py --dataset longmemeval_s
 ```
 
 Outputs land in `baselines/harness/<name>/results/<dataset>/test/`:

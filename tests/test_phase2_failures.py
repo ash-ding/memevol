@@ -6,7 +6,7 @@ instead of silently scoring 0 and burning a full stage1 eval.
 Zero-dependency runner (no network — the QA agent is never reached or is
 monkeypatched):
 
-    venv/bin/python tests/test_phase2_failures.py
+    uv run python tests/test_phase2_failures.py
 """
 import asyncio
 import json

@@ -1,6 +1,6 @@
 """Tests for the unified sampling-plan resolution in common/staged_eval.py.
 Zero-dep runner — both venvs:
-    venv/bin/python tests/test_sampling_plan.py
+    uv run python tests/test_sampling_plan.py
 """
 import sys, traceback
 from pathlib import Path

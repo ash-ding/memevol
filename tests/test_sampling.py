@@ -1,6 +1,6 @@
 """Tests for common/sampling.py (seed derivation + shuffle-prefix primitive).
 Zero-dependency runner — run under BOTH venvs:
-    venv/bin/python tests/test_sampling.py
+    uv run python tests/test_sampling.py
 """
 import sys, traceback
 from pathlib import Path

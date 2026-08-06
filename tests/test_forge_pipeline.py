@@ -7,7 +7,7 @@
 
 Zero-dependency runner:
 
-    venv/bin/python tests/test_forge_pipeline.py
+    uv run python tests/test_forge_pipeline.py
 """
 import asyncio
 import json
