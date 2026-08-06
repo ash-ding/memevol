@@ -223,7 +223,7 @@ async def _run_progressive(
     tracker,
 ) -> Dict[str, Dict[str, Any]]:
     """Drive one candidate through the shared staged gauntlet
-    (common.staged_eval.run_gauntlet, coverage="sample") with an IN-PROCESS
+    (common.evaluate.run_gauntlet, coverage="sample") with an IN-PROCESS
     stage runner — the same pattern as baselines/harness/eval_common.py, but
     alma's per-STEP seed (already folded into `sample_seed`) rides every stage
     spec. Per-stage artifacts under out_dir/<stage>/, cross-stage Phase-1 memory
@@ -231,7 +231,7 @@ async def _run_progressive(
     score.json/token_usage.json/traces/ copied to the out_dir root (where alma's
     memo_manager + sampling read the reward + examples). stages.json at the
     root."""
-    from common.staged_eval import run_gauntlet
+    from common.evaluate import run_gauntlet
 
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -355,7 +355,7 @@ async def main(
     single_stage: Optional[dict] = None,
     memory_cache: bool = True,
 ):
-    from common.staged_eval import (
+    from common.evaluate import (
         DEFAULT_STAGES, _benchmark_family, _resolve_dataset_stages,
         resolve_single_stage_spec, stage_wire_spec,
     )

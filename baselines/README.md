@@ -115,9 +115,9 @@ literal same `common/` modules forge uses:
 
 - **`--progressive`** (alma default `true`, `harness/*/run.py` default
   `false` — matching each side's historical behavior): drives the candidate
-  through the shared stage1→2→3 gauntlet (`common.staged_eval.run_gauntlet`)
+  through the shared stage1→2→3 gauntlet (`common.evaluate.run_gauntlet`)
   instead of a single one-shot pass. Sizes come from the family
-  `DEFAULT_STAGES` (in `common/staged_eval.py`) unless overridden by a
+  `DEFAULT_STAGES` (in `common/evaluate.py`) unless overridden by a
   `stages:` block in the `--config` YAML — for BOTH alma and harness, sizing
   is config-file only (no `--stages`/`--stage-spec` JSON CLI flag anywhere;
   see "Configuration"). The single-pass path (`--no-progressive`) instead
@@ -205,7 +205,7 @@ forge uses:
   drives the gauntlet; `single_stage: {n_qa: null, ...}` sizes the single pass
   (required when `progressive: false`; a null field = whole split for that
   dimension). The unified resolver is
-  `common.staged_eval.resolve_sampling_plan` (`progressive` → `stage_plan`;
+  `common.evaluate.resolve_sampling_plan` (`progressive` → `stage_plan`;
   `not progressive` → the `single_stage` wire spec, raising if the block is
   absent) — shared verbatim by forge and every baseline.
 - **Strict config — no silent defaults** (2026-07-26, default ON): when a
@@ -279,7 +279,7 @@ compressed feedback (sampled trajectories + meta-prompt), whereas forge's
 proposer is an agentic CC SDK call with full filesystem access to all
 prior code, traces, and scores. alma runs the shared per-dataset workflows
 (including the official DynamicMem TCE v2 checkpoint protocol) AND the same
-`common.staged_eval.run_gauntlet` driver forge uses, so its numbers ARE
+`common.evaluate.run_gauntlet` driver forge uses, so its numbers ARE
 comparable with forge.
 
 ### harness/cc — Claude Code as direct QA agent

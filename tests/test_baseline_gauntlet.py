@@ -172,7 +172,7 @@ def test_progressive_false_single_stage_path():
 def test_progressive_false_sizes_from_single_stage():
     from datasets.locomo.workflow import LoCoMoWorkflow
     from baselines.harness.eval_common import run_baseline
-    from common.staged_eval import single_stage_wire_spec
+    from common.evaluate import single_stage_wire_spec
     from common.sampling import derive_sample_seed
 
     captured = {}

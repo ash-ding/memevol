@@ -82,7 +82,7 @@ def parse_args():
     # --- Progressive gauntlet + per-step deterministic sampling (Task 9) ---
     # These REPLACE the removed flat eval_n_samples/eval_n_qa/check_n_samples/
     # check_n_qa knobs: evaluation sizes now live in the shared `stages` schema
-    # (common.staged_eval.DEFAULT_STAGES), and each candidate is scored through
+    # (common.evaluate.DEFAULT_STAGES), and each candidate is scored through
     # the same stage1→2→3 gauntlet forge uses.
     # NOTE (Task 4): default=None is the resolve_config sentinel — the real
     # defaults (progressive=True / random_sample=False / memory_cache=True) live
@@ -119,7 +119,7 @@ def build_cfg(args):
     cfg = resolve_config(DEFAULT_CONFIG, args.config, cli)
 
     from common.config import strict_on, load_config_file, provided_keys, require_present_keys, ConfigCompletenessError
-    from common.staged_eval import missing_sizing_config
+    from common.evaluate import missing_sizing_config
     if strict_on(args.config, cfg):
         _fc = load_config_file(args.config)
         require_present_keys(provided_keys(_fc, cli),

@@ -158,8 +158,8 @@ def test_single_stage_whole_split_matches_main_method():
     """An all-null (or omitted-field) `single_stage` MUST size to the main
     method's coverage=full wire spec — otherwise DynamicMem silently drops out
     of the TCE checkpoint path (its branch keys on the n_checkpoints KEY).
-    Both sides go through common.staged_eval (shared with forge)."""
-    from common.staged_eval import single_stage_wire_spec
+    Both sides go through common.evaluate (shared with forge)."""
+    from common.evaluate import single_stage_wire_spec
     from forge.orchestrator import full_wire_spec   # test-only import (baselines never import forge)
     for ds in ("dynamicmem", "locomo", "longmemeval_s", "longmemeval_m"):
         assert single_stage_wire_spec(ds, {}) == full_wire_spec(ds), ds
@@ -175,7 +175,7 @@ def test_task_list_identical_to_main_method():
     (forge/launch.py:185-189 calls the SAME env.get_task_list). Sized here via
     the shared single_stage_wire_spec (no seed → deterministic prefix)."""
     from baselines.harness.eval_common import resolve_task_list
-    from common.staged_eval import single_stage_wire_spec
+    from common.evaluate import single_stage_wire_spec
     from datasets.locomo import env as locomo_env
     from datasets.longmemeval import env as lme_env
     from datasets.dynamicmem import env as dm_env
@@ -229,7 +229,7 @@ def test_run_baseline_locomo_end_to_end():
     import common.llm as llm_mod
     from baselines.harness.eval_common import resolve_task_list, run_baseline
     from common.harness_base import MemoStructure
-    from common.staged_eval import single_stage_wire_spec
+    from common.evaluate import single_stage_wire_spec
     from common.sampling import derive_sample_seed
     from datasets.locomo.workflow import LoCoMoWorkflow
 

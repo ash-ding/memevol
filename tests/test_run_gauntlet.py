@@ -9,12 +9,12 @@ if str(PROJECT_ROOT) not in sys.path:
 
 
 def _cfg():
-    from common.staged_eval import DEFAULT_STAGES
+    from common.evaluate import DEFAULT_STAGES
     return {"locomo": {"stages": DEFAULT_STAGES["locomo"]}}
 
 
 def test_gauntlet_eliminates_below_threshold():
-    from common.staged_eval import run_gauntlet
+    from common.evaluate import run_gauntlet
     seen = []
     async def run_stage(ds, stage, spec):
         seen.append(stage); return None
@@ -29,7 +29,7 @@ def test_gauntlet_eliminates_below_threshold():
 
 
 def test_gauntlet_full_runs_all_stages_and_passes_seed():
-    from common.staged_eval import run_gauntlet
+    from common.evaluate import run_gauntlet
     specs = []
     async def run_stage(ds, stage, spec):
         specs.append((stage, spec.get("sample_seed"))); return None

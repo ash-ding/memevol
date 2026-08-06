@@ -1,5 +1,5 @@
-"""common/staged_eval.py owns the stage config, and forge re-exports it identically.
-    uv run python tests/test_staged_eval_shared.py
+"""common/evaluate.py owns the stage config, and forge re-exports it identically.
+    uv run python tests/test_evaluate_shared.py
 """
 import sys, traceback
 from pathlib import Path
@@ -8,8 +8,8 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
-def test_staged_eval_module_owns_config():
-    from common import staged_eval as se
+def test_evaluate_module_owns_config():
+    from common import evaluate as se
     assert set(se.DEFAULT_STAGES) == {"dynamicmem", "locomo", "longmemeval"}
     plan = se.stage_plan("locomo", {"stages": se.DEFAULT_STAGES["locomo"]})
     assert [p[0] for p in plan] == ["stage1", "stage2", "stage3"]
@@ -17,7 +17,7 @@ def test_staged_eval_module_owns_config():
 
 
 def test_forge_reexports_are_identical_objects():
-    from common import staged_eval as se
+    from common import evaluate as se
     from forge import orchestrator as orch
     assert orch.DEFAULT_STAGES is se.DEFAULT_STAGES
     assert orch.stage_plan is se.stage_plan

@@ -81,7 +81,7 @@ from common.config import (
     strict_on, missing_schema_paths, raise_completeness,
     REQUIRED, Cond, ConfigCompletenessError,
 )
-from common.staged_eval import (  # re-export: config moved to common/ 2026-07-25
+from common.evaluate import (  # re-export: config moved to common/ 2026-07-25
     STAGE_ORDER, DEFAULT_STAGES, FULL_STAGE, _FAMILY_FIELDS,
     _benchmark_family, _wire_size, stage_wire_spec, full_wire_spec,
     stage_plan, _resolve_dataset_stages, run_gauntlet,
@@ -1297,7 +1297,7 @@ async def evaluate_harness(
     coverage="sample" (progressive=True): the STAGED gauntlet below, from the
     dataset's `stages` block. coverage="full" (progressive=False): ONE pass
     per benchmark (plan = [("single", spec, no threshold)], via
-    `common.staged_eval.resolve_sampling_plan`), sized by the dataset's
+    `common.evaluate.resolve_sampling_plan`), sized by the dataset's
     REQUIRED `single_stage` config block (raises ValueError if absent — no
     automatic whole-split fallback) — same loop, no promotion gates.
 

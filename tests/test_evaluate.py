@@ -2,7 +2,7 @@
 
 Zero-dependency runner (no pytest in the venvs):
 
-    uv run python tests/test_staged_eval.py          # repo-root uv project
+    uv run python tests/test_evaluate.py          # repo-root uv project
 
 Covers:
   - datasets/dynamicmem/env.py::sample_items_staged (per-checkpoint A/C
@@ -321,7 +321,7 @@ def test_gauntlet_single_stage_from_single_stage_block():
     pass from the required `single_stage` block — replacing the old automatic
     full_wire_spec whole-split."""
     import asyncio
-    from common.staged_eval import run_gauntlet
+    from common.evaluate import run_gauntlet
     seen = []
 
     async def run_stage(ds, stage, spec):
@@ -344,7 +344,7 @@ def test_gauntlet_coverage_full_missing_single_stage_raises():
     """progressive=false (coverage='full') with no `single_stage` block must
     raise — no silent automatic whole-split anymore."""
     import asyncio
-    from common.staged_eval import run_gauntlet
+    from common.evaluate import run_gauntlet
 
     async def run_stage(ds, stage, spec): return None
 

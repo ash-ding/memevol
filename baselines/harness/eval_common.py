@@ -118,7 +118,7 @@ async def run_baseline(
     Sizing is config-driven (no sizing CLI flags — config file only):
 
     progressive=False (default): ONE single-stage pass sized by the REQUIRED
-    `single_stage` block (via common.staged_eval.single_stage_wire_spec; a null /
+    `single_stage` block (via common.evaluate.single_stage_wire_spec; a null /
     omitted field = the whole split for that dimension). Raises ValueError when
     `single_stage` is absent — no silent whole-split. The pass runs as
     `run_all_users(stage="single", ...)`; the "single" stage label is purely
@@ -129,7 +129,7 @@ async def run_baseline(
     Returns the _build_score_json dict.
 
     progressive=True: run the SAME memory system through the shared staged
-    gauntlet (common.staged_eval.run_gauntlet, coverage="sample"): stage1 →
+    gauntlet (common.evaluate.run_gauntlet, coverage="sample"): stage1 →
     stage2 → stage3 with promotion thresholds, per-stage artifacts under
     out_dir/<stage>/, cross-stage Phase-1 memory reuse via out_dir/memory_cache/,
     and a stages.json at the out_dir root. `stages` overrides the family
@@ -152,7 +152,7 @@ async def run_baseline(
     # normalizes null/"full"/"all" → None, and returns the wire spec.
     from common.tokens import init_global_tracker
     from common.sampling import derive_sample_seed
-    from common.staged_eval import resolve_single_stage_spec
+    from common.evaluate import resolve_single_stage_spec
 
     # Same fixed step-0 seed derivation as the gauntlet (no search steps here);
     # a no-op at whole-split n=None, only selecting a subset when a field caps.
@@ -222,14 +222,14 @@ async def _run_baseline_progressive(
     memory_cache: bool,
 ) -> Dict[str, Dict[str, Any]]:
     """progressive=True branch of run_baseline. Drives the fixed memory system
-    through common.staged_eval.run_gauntlet with an IN-PROCESS stage runner
+    through common.evaluate.run_gauntlet with an IN-PROCESS stage runner
     (contrast forge, whose runner is a Singularity exec). The promotion /
     elimination / cost-accounting / stages.json logic lives entirely in
     run_gauntlet (identical to forge); only stage EXECUTION + artifact layout +
     memcache mounting are this closure's concern."""
     from common.tokens import init_global_tracker
     from common.sampling import derive_sample_seed
-    from common.staged_eval import (
+    from common.evaluate import (
         DEFAULT_STAGES, _benchmark_family, _resolve_dataset_stages, run_gauntlet,
     )
     from common.memory_cache import harness_fingerprint

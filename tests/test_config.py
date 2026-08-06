@@ -129,7 +129,7 @@ def test_require_schema_nested_missing_and_conditional():
     require_schema(ok, schema, resolved_cfg=ok, context="forge")  # no raise
 
 def test_missing_sizing_config_progressive_false_and_true():
-    from common.staged_eval import missing_sizing_config
+    from common.evaluate import missing_sizing_config
     # progressive=false: single_stage must list every locomo leaf (null ok)
     assert missing_sizing_config("locomo", {"single_stage": {"n_conversations": None, "n_qa": None}}, False, "") == []
     assert missing_sizing_config("locomo", {"single_stage": {"n_conversations": None}}, False, "") == [".single_stage.n_qa"]

@@ -500,7 +500,7 @@ def _run_launch_main_eval(single_stage, dataset="locomo"):
 def test_alma_non_progressive_sizes_from_single_stage():
     """mode=eval + progressive=false sizes the single pass from single_stage
     (stage='single', spec == single_stage_wire_spec) — NOT from stage3."""
-    from common.staged_eval import single_stage_wire_spec
+    from common.evaluate import single_stage_wire_spec
     single_stage = {"n_conversations": 2, "n_qa": 5}
     captured = _run_launch_main_eval(single_stage, dataset="locomo")
     assert captured.get("stage") == "single", captured.get("stage")

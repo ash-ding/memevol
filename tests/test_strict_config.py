@@ -56,7 +56,7 @@ def _load(mod_name, rel):
 def _strict_check_flat(default_cfg, file_cfg, cli, dataset, progressive, context):
     """Mirror of the strict block each run.py runs after `resolve_config`."""
     from common.config import provided_keys, require_present_keys, ConfigCompletenessError
-    from common.staged_eval import missing_sizing_config
+    from common.evaluate import missing_sizing_config
     require_present_keys(provided_keys(file_cfg, cli), set(default_cfg) - {"strict_config"}, context)
     miss = missing_sizing_config(dataset, file_cfg, progressive, path_prefix="")
     if miss:
