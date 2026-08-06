@@ -304,7 +304,7 @@ def test_stage_plan_order_and_thresholds():
     assert plan[0][2] is not None and plan[1][2] is not None and plan[2][2] is None
 
 
-# ---------------- coverage=full: uncapped wire specs ----------------
+# ---------------- progressive=false: uncapped wire specs ----------------
 
 def test_full_wire_spec_shapes():
     from forge.orchestrator import full_wire_spec
@@ -316,8 +316,8 @@ def test_full_wire_spec_shapes():
 
 
 def test_gauntlet_single_stage_from_single_stage_block():
-    """run_gauntlet(coverage='full') now resolves its plan via
-    resolve_sampling_plan: progressive=False (coverage != 'sample') sizes ONE
+    """run_gauntlet(progressive=False) now resolves its plan via
+    resolve_sampling_plan: progressive=False (progressive=False) sizes ONE
     pass from the required `single_stage` block — replacing the old automatic
     full_wire_spec whole-split."""
     import asyncio
@@ -332,7 +332,7 @@ def test_gauntlet_single_stage_from_single_stage_block():
 
     cfg = {"locomo": {"single_stage": {"n_conversations": 2, "n_qa": 20}}}
     out = asyncio.run(run_gauntlet(
-        datasets_config=cfg, coverage="full", smoke=False,
+        datasets_config=cfg, progressive=False, smoke=False,
         sample_seed_for=lambda ds: None, run_stage_fn=run_stage, read_metrics_fn=read_metrics))
     assert [s for s, _ in seen] == ["single"]                       # one pass, no gauntlet
     assert seen[0][1] == {"n_samples": 2, "n_qa": 20}               # sized by single_stage
@@ -340,8 +340,8 @@ def test_gauntlet_single_stage_from_single_stage_block():
     assert out["locomo"]["stage"] == 4.0                            # "single" -> FULL_STAGE
 
 
-def test_gauntlet_coverage_full_missing_single_stage_raises():
-    """progressive=false (coverage='full') with no `single_stage` block must
+def test_gauntlet_progressive_false_missing_single_stage_raises():
+    """progressive=false (progressive=false) with no `single_stage` block must
     raise — no silent automatic whole-split anymore."""
     import asyncio
     from common.evaluate import run_gauntlet
@@ -352,37 +352,11 @@ def test_gauntlet_coverage_full_missing_single_stage_raises():
 
     raised = False
     try:
-        asyncio.run(run_gauntlet(datasets_config={"locomo": {"stages": {}}}, coverage="full",
+        asyncio.run(run_gauntlet(datasets_config={"locomo": {"stages": {}}}, progressive=False,
             smoke=False, sample_seed_for=lambda ds: None, run_stage_fn=run_stage, read_metrics_fn=read_metrics))
     except ValueError as e:
         raised = "single_stage" in str(e)
     assert raised
-
-
-def test_coverage_config_validation():
-    import yaml
-    from forge.orchestrator import build_arg_parser, _resolve_config
-    with tempfile.TemporaryDirectory() as td:
-        p = os.path.join(td, "c.yaml")
-        with open(p, "w") as f:
-            yaml.safe_dump({"datasets": {"locomo": {}}, "coverage": "everything"}, f)
-        try:
-            _resolve_config(build_arg_parser().parse_args(["--config", p]))
-        except ValueError as exc:
-            assert "coverage" in str(exc)
-        else:
-            raise AssertionError("bad coverage value accepted")
-        with open(p, "w") as f:
-            yaml.safe_dump({"datasets": {"locomo": {}}}, f)
-        # --no-strict-config: this fixture is deliberately partial (only the
-        # coverage-relevant keys) — this test is about coverage validation,
-        # not strict-config completeness.
-        cfg = _resolve_config(build_arg_parser().parse_args(
-            ["--config", p, "--coverage", "full", "--no-strict-config"]))
-        assert cfg["coverage"] == "full"
-        cfg = _resolve_config(build_arg_parser().parse_args(
-            ["--config", p, "--no-strict-config"]))
-        assert cfg["coverage"] == "sample"  # default unchanged
 
 
 def test_get_task_list_none_means_whole_split():
@@ -511,7 +485,7 @@ def test_search_configs_default_smoke_test_false():
         assert cfg["smoke_test"] is False and "mode" not in cfg
 
 
-# ---------------- stage sizes: null = full coverage ----------------
+# ---------------- stage sizes: null = whole split ----------------
 
 def test_stage_null_wire_equals_full():
     from forge.orchestrator import stage_wire_spec, full_wire_spec, _resolve_dataset_stages
@@ -573,7 +547,7 @@ def test_stage_all_null_valid():
 
 def test_stage3_null_sampling_equals_full_dynamicmem():
     """The core guarantee: a stage3-null wire spec samples the SAME item set
-    as coverage=full for a real DynamicMem user."""
+    as progressive=false for a real DynamicMem user."""
     if not os.path.isdir(DM_USER):
         print("  (dynamicmem user_data missing — skipped)")
         return

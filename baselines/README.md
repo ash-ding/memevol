@@ -606,7 +606,7 @@ surfacing the right memory.
 ### Step 5 — final numbers on the TEST split
 
 ```bash
-# Whole test split (the default --split; = forge.heldout coverage=full)
+# Whole test split (the default --split; = forge.heldout progressive=false)
 cd baselines/harness/<name> && uv run python run.py --dataset locomo
 uv run python run.py --dataset dynamicmem
 uv run python run.py --dataset longmemeval_s

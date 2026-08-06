@@ -126,24 +126,15 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "model": "gpt-5-mini",
     "judge_model": "gpt-5-mini",
     "max_sample_concurrent": 3,
-    # Evaluation coverage (search loop AND forge.heldout):
-    #   sample — the staged gauntlet (stage1→2→3 nested sampling + thresholds)
-    #   full   — ONE evaluation per benchmark sized by the REQUIRED
-    #            `single_stage` config block (no stage1/2, no elimination;
-    #            wire stage "single", artifacts under <ds>/single/).
-    # The sanity gate and smoke_test runs are unaffected. CLI: --coverage.
-    # SUPERSEDED 2026-07-25 by `progressive` below — `coverage` is kept as a
-    # back-compat read/write alias (derived from `progressive` at resolve
-    # time: progressive=True → "sample", False → "full") and as the literal
-    # value `evaluate_harness(coverage=...)` still consumes.
-    "coverage": "sample",
-    # Progressive sampling (2026-07-25): whether a candidate goes through the
-    # staged stage1→2→3 gauntlet (True, default — preserves today's
-    # behavior) or gets ONE whole-split pass (False — same effect as the
-    # legacy `coverage: full`). CLI: --progressive / --no-progressive.
-    # `--coverage full`/`sample` is kept as a back-compat alias: giving it
-    # (YAML or CLI) without an explicit `progressive` maps full→False,
-    # sample→True; an explicit `progressive` always wins.
+    # Evaluation workload shape (search loop AND forge.heldout). The single knob:
+    #   progressive: true  — the staged gauntlet (stage1→2→3 nested sampling +
+    #                        promotion thresholds), sized by each dataset's
+    #                        `stages` block.
+    #   progressive: false — ONE evaluation per benchmark sized by the REQUIRED
+    #                        `single_stage` block (no stage1/2, no elimination;
+    #                        wire stage "single", artifacts under <ds>/single/).
+    # The sanity gate and smoke_test runs are unaffected.
+    # CLI: --progressive / --no-progressive.
     "progressive": True,
     # When True, each search step samples a DIFFERENT (but still
     # deterministic + reproducible) subset per benchmark, via
@@ -288,7 +279,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 # the REQUIRED/Cond primitives + the walk/raise machinery. `datasets` is
 # validated separately (dynamic per-dataset keys) by _forge_strict_validate's
 # custom loop, not by this static schema.
-# Meta-exempt (NOT required): run_name, coverage (back-compat alias),
+# Meta-exempt (NOT required): run_name,
 # strict_config (the escape hatch itself).
 # ---------------------------------------------------------------------------
 
@@ -321,7 +312,7 @@ FORGE_REQUIRED_SCHEMA = {
     "gpu": {"enabled": REQUIRED},
     "prompts": {"version": REQUIRED},
     # `datasets` validated by _forge_strict_validate's custom loop (dynamic keys).
-    # Meta-exempt (NOT required): run_name, coverage, strict_config.
+    # Meta-exempt (NOT required): run_name, strict_config.
 }
 
 # forge.heldout drives the SAME _resolve_config but never reads the
@@ -331,7 +322,7 @@ FORGE_REQUIRED_SCHEMA = {
 # real config surface (verified via forge/heldout.py's cfg[...] reads):
 # model, judge_model, max_sample_concurrent, memory_cache, gpu.enabled, llm,
 # datasets. `progressive` is intentionally absent here too — heldout forces
-# it via `_apply_heldout_coverage_default`/`_reject_progressive_on_heldout`,
+# it via `_apply_heldout_progressive_default`/`_reject_progressive_on_heldout`,
 # not the operator's config.
 HELDOUT_REQUIRED_SCHEMA = {
     "model": REQUIRED,
@@ -345,7 +336,7 @@ HELDOUT_REQUIRED_SCHEMA = {
                        {"project_id": REQUIRED, "region": REQUIRED, "credentials": REQUIRED}),
     },
     # `datasets` validated by _forge_strict_validate's dataset loop (heldout is
-    # progressive=false → single_stage leaves). Meta-exempt: run_name, coverage,
+    # progressive=false → single_stage leaves). Meta-exempt: run_name,
     # progressive, strict_config.
 }
 
@@ -378,7 +369,7 @@ def _forge_provided_tree(file_cfg: Dict[str, Any], args: argparse.Namespace) -> 
     --datasets, --smoke-test, --gpu, --no-memory-cache, --no-data-isolation,
     --k-per-step, --anthropic-transport, --sanity-max-retries,
     --no-adopt-orphans, --no-seed/--seed-source, --claude-auth,
-    --proposer-disallowed-tools, --coverage) are NOT overlaid here. Under
+    --proposer-disallowed-tools) are NOT overlaid here. Under
     strict mode (`--config` + strict_config not disabled), using one of those
     flags WITHOUT also listing the corresponding key in the YAML still trips
     the completeness gate (the flag's effect on `cfg` is real, but the
@@ -417,28 +408,6 @@ def _forge_provided_tree(file_cfg: Dict[str, Any], args: argparse.Namespace) -> 
     return tree
 
 
-def _sync_coverage_progressive(cfg: Dict[str, Any], *, source: str = "progressive") -> None:
-    """Keep `cfg['coverage']` and `cfg['progressive']` mutually consistent.
-
-    `progressive` is canonical; `coverage` ("sample"/"full") is kept only as
-    a back-compat read/write alias — the persisted config.yaml snapshot must
-    never show a contradictory pair (e.g. `progressive: true` alongside
-    `coverage: full`). `source` picks which field is authoritative THIS call:
-
-      "progressive" (default) — cfg["coverage"] is derived from
-        cfg["progressive"] (True → "sample", False → "full"). Used by
-        `_resolve_config` once `progressive` has settled from CLI/YAML/alias.
-      "coverage" — cfg["progressive"] is derived from cfg["coverage"]
-        (=="sample" → True). Used by callers (e.g. `forge.heldout`) that
-        override `coverage` AFTER `_resolve_config` already ran, so the two
-        fields don't drift apart again in the persisted snapshot.
-    """
-    if source == "coverage":
-        cfg["progressive"] = (cfg.get("coverage", "sample") == "sample")
-    else:
-        cfg["coverage"] = "sample" if cfg.get("progressive", True) else "full"
-
-
 def _resolve_config(args: argparse.Namespace, *,
                     required_schema: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Build the effective run config from defaults, optional YAML, and CLI.
@@ -454,7 +423,7 @@ def _resolve_config(args: argparse.Namespace, *,
     """
     cfg: Dict[str, Any] = copy.deepcopy(DEFAULT_CONFIG)
     # Raw YAML dict (empty when no --config given) — kept around so the
-    # progressive/coverage alias resolution below can tell "explicitly set
+    # progressive resolution below can tell "explicitly set
     # in the file" apart from "left at its DEFAULT_CONFIG value".
     file_cfg: Dict[str, Any] = {}
 
@@ -586,34 +555,13 @@ def _resolve_config(args: argparse.Namespace, *,
         ds_list = [d.strip() for d in cli_datasets.split(",") if d.strip()]
         cfg["datasets"] = {ds: {} for ds in ds_list}
 
-    # coverage: CLI override + validation.
-    if getattr(args, "coverage", None) is not None:
-        cfg["coverage"] = args.coverage
-    if cfg.get("coverage", "sample") not in ("sample", "full"):
-        raise ValueError(
-            f"coverage must be 'sample' or 'full', got {cfg.get('coverage')!r}"
-        )
-
-    # progressive / random_sample / sampling_seed (2026-07-25).
-    # Precedence: an explicit `progressive` (YAML key OR --progressive/
-    # --no-progressive) always wins. Otherwise `coverage` is honored as a
-    # back-compat ALIAS (YAML key OR --coverage): full → progressive=False,
-    # sample → progressive=True. Absent both, DEFAULT_CONFIG's
-    # progressive=True stands.
-    progressive_explicit = ("progressive" in file_cfg) or (
-        getattr(args, "progressive", None) is not None
-    )
-    coverage_explicit = ("coverage" in file_cfg) or (
-        getattr(args, "coverage", None) is not None
-    )
+    # progressive / random_sample / sampling_seed.
+    # `progressive` (YAML key OR --progressive/--no-progressive) is the single
+    # knob: the staged stage1→2→3 gauntlet (True, default) vs ONE single-stage
+    # pass (False, sized by each dataset's `single_stage` block). Absent,
+    # DEFAULT_CONFIG's progressive=True stands.
     if getattr(args, "progressive", None) is not None:
         cfg["progressive"] = bool(args.progressive)
-    elif not progressive_explicit and coverage_explicit:
-        cfg["progressive"] = (cfg["coverage"] == "sample")
-    # `coverage` stays derivable from `progressive` for the
-    # evaluate_harness(coverage=...) call sites — always re-synced here so
-    # it never drifts from the canonical `progressive` flag.
-    _sync_coverage_progressive(cfg, source="progressive")
 
     if getattr(args, "random_sample", False):
         cfg["random_sample"] = True
@@ -1163,7 +1111,7 @@ def _build_objectives(
         if stddev is not None:
             out[f"robustness_{ds}"] = float(stddev)
         # Staged-evaluation telemetry: highest stage this benchmark reached
-        # (1/2/3; 4 = coverage=full; 0 = smoke-size run). `accuracy_<ds>` is
+        # (1/2/3; 4 = progressive=false single pass; 0 = smoke-size run). `accuracy_<ds>` is
         # the score AT that stage — compare candidates at the same stage_<ds>.
         if m.get("stage") is not None:
             out[f"stage_{ds}"] = float(m["stage"])
@@ -1288,18 +1236,17 @@ async def evaluate_harness(
     memory_cache: bool = True,
     gpu: bool = False,
     llm_cfg: Optional[Dict[str, Any]] = None,
-    coverage: str = "sample",
+    progressive: bool = True,
     data_isolation_binds: Optional[List[str]] = None,
     sample_seed_for: Callable[[str], Optional[str]] = lambda ds: None,
 ) -> Dict[str, Dict[str, Any]]:
     """Run the evaluation on every dataset (serial).
 
-    coverage="sample" (progressive=True): the STAGED gauntlet below, from the
-    dataset's `stages` block. coverage="full" (progressive=False): ONE pass
-    per benchmark (plan = [("single", spec, no threshold)], via
-    `common.evaluate.resolve_sampling_plan`), sized by the dataset's
-    REQUIRED `single_stage` config block (raises ValueError if absent — no
-    automatic whole-split fallback) — same loop, no promotion gates.
+    progressive=True (default): the STAGED gauntlet below, from the dataset's
+    `stages` block. progressive=False: ONE pass per benchmark (plan =
+    [("single", spec, no threshold)], via `common.evaluate.resolve_sampling_plan`),
+    sized by the dataset's REQUIRED `single_stage` config block (raises ValueError
+    if absent — no automatic whole-split fallback) — same loop, no promotion gates.
 
     Per benchmark (independent promotion): run stage1 → stage2 → stage3,
     publishing each stage's artifacts to `harnesses/<id>/<ds>/<stage>/`.
@@ -1425,7 +1372,7 @@ async def evaluate_harness(
     # is on (see propose_eval_one, Task 6).
     return await evaluate_memo(
         datasets_config=datasets_config,
-        progressive=(coverage != "full"),
+        progressive=progressive,
         executor=Executor(
             run_stage=_run_stage_fn,
             read_metrics=_read_metrics_fn,
@@ -1639,7 +1586,7 @@ async def propose_eval_one(
         memory_cache=cfg.get("memory_cache", True),
         gpu=cfg["gpu"]["enabled"],
         llm_cfg=cfg.get("llm"),
-        coverage=cfg.get("coverage", "sample"),
+        progressive=cfg["progressive"],
         data_isolation_binds=_isolation_binds(cfg),
         sample_seed_for=sample_seed_for,
     )
@@ -2012,7 +1959,7 @@ async def _adopt_orphan(
         memory_cache=cfg.get("memory_cache", True),
         gpu=cfg["gpu"]["enabled"],
         llm_cfg=cfg.get("llm"),
-        coverage=cfg.get("coverage", "sample"),
+        progressive=cfg["progressive"],
         data_isolation_binds=_isolation_binds(cfg),
     )
     entry = _build_adopted_entry(harness_dir, per_ds)
@@ -2196,21 +2143,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         help="Debug escape hatch: bind FULL datasets (incl. "
                              "the test split) into search-mode containers "
                              "instead of the search-split-only overlay.")
-    parser.add_argument("--coverage", default=None, choices=["sample", "full"],
-                        help="DEPRECATED alias for --progressive/--no-progressive "
-                             "(overrides cfg.coverage): sample = staged gauntlet "
-                             "(default, progressive=True); full = one whole-split "
-                             "evaluation per benchmark, no stage1/2, no threshold "
-                             "elimination (progressive=False). Ignored if "
-                             "--progressive/--no-progressive is also given.")
     parser.add_argument("--progressive", dest="progressive",
                         action="store_true", default=None,
-                        help="Run the staged stage1→2→3 gauntlet (default). "
-                             "Supersedes --coverage sample.")
+                        help="Run the staged stage1→2→3 gauntlet (default).")
     parser.add_argument("--no-progressive", dest="progressive",
                         action="store_false", default=None,
-                        help="Skip the gauntlet — ONE whole-split pass per "
-                             "benchmark. Supersedes --coverage full.")
+                        help="Skip the gauntlet — ONE single-stage pass per "
+                             "benchmark, sized by each dataset's `single_stage` block.")
     parser.add_argument("--random-sample", action="store_true",
                         help="Sample a DIFFERENT (deterministic) subset each "
                              "search step, seeded from --sampling-seed via "

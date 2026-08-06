@@ -1,5 +1,5 @@
 """progressive/random_sample/sampling_seed resolve with the right defaults,
-CLI/YAML precedence, and the coverage<->progressive alias mapping.
+CLI/YAML precedence.
 
 Zero-dependency runner (no pytest in the venvs):
 
@@ -22,8 +22,8 @@ def _resolve(yaml_text, extra_argv=None):
     over an argv list (--config path [+ extra flags]).
 
     Always passes --no-strict-config: this file's fixtures are deliberately
-    partial (only the progressive/coverage-relevant keys), and this file
-    tests progressive/coverage semantics, not strict-config completeness
+    partial (only the progressive-relevant keys), and this file
+    tests progressive semantics, not strict-config completeness
     (that's tests/test_strict_config_forge.py's job)."""
     from forge.orchestrator import _resolve_config, build_arg_parser
     with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
@@ -47,49 +47,24 @@ def test_defaults_preserve_current_behavior():
     assert cfg["progressive"] is True
     assert cfg["random_sample"] is False
     assert cfg["sampling_seed"] == 42
-    assert cfg["coverage"] == "sample"  # derived, stays in sync
+    # `coverage` is gone (2026-08) — `progressive` is the single knob.
 
 
-# ---------------- --coverage alias ----------------
+# ---------------- progressive from CLI / YAML ----------------
 
-def test_coverage_full_maps_to_non_progressive():
-    cfg = _resolve(_BASE_YAML, ["--coverage", "full"])
+def test_no_progressive_cli_flag():
+    cfg = _resolve(_BASE_YAML, ["--no-progressive"])
     assert cfg["progressive"] is False
-    assert cfg["coverage"] == "full"
 
 
-def test_coverage_sample_maps_to_progressive():
-    cfg = _resolve(_BASE_YAML, ["--coverage", "sample"])
+def test_progressive_cli_overrides_yaml():
+    cfg = _resolve("datasets:\n  locomo: {}\nprogressive: false\n", ["--progressive"])
     assert cfg["progressive"] is True
-    assert cfg["coverage"] == "sample"
 
 
-def test_yaml_coverage_full_without_progressive_key_maps_too():
-    """The alias also fires from a YAML-only `coverage: full` (no CLI flag
-    at all) — matches today's configs that pre-date `progressive`."""
-    cfg = _resolve("datasets:\n  locomo: {}\ncoverage: full\n")
-    assert cfg["progressive"] is False
-    assert cfg["coverage"] == "full"
-
-
-# ---------------- explicit progressive always wins over coverage ----------------
-
-def test_explicit_progressive_wins_over_coverage_cli():
-    cfg = _resolve(_BASE_YAML, ["--coverage", "full", "--progressive"])
-    assert cfg["progressive"] is True
-    assert cfg["coverage"] == "sample"  # re-derived from the winning flag
-
-
-def test_no_progressive_wins_over_coverage_sample():
-    cfg = _resolve(_BASE_YAML, ["--coverage", "sample", "--no-progressive"])
-    assert cfg["progressive"] is False
-    assert cfg["coverage"] == "full"
-
-
-def test_yaml_progressive_false_wins_over_default_coverage():
+def test_yaml_progressive_false():
     cfg = _resolve("datasets:\n  locomo: {}\nprogressive: false\n")
     assert cfg["progressive"] is False
-    assert cfg["coverage"] == "full"
 
 
 # ---------------- random_sample / sampling_seed ----------------

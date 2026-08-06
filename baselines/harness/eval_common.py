@@ -118,7 +118,7 @@ async def run_baseline(
     Sizing is config-driven (no sizing CLI flags — config file only):
 
     progressive=False (default): ONE single-stage pass sized by the REQUIRED
-    `single_stage` block. Runs through run_gauntlet(coverage='full') — a one-item
+    `single_stage` block. Runs through run_gauntlet(progressive=False) — a one-item
     ('single', spec, None) plan (via resolve_sampling_plan → resolve_single_stage_spec:
     a null/omitted field = the whole split; absent `single_stage` raises ValueError,
     no silent whole-split). A per-run sample_seed is derived (fixed step 0, honoring
@@ -126,7 +126,7 @@ async def run_baseline(
     and the per-user QA sampling; it is a no-op at whole-split n=None.
 
     progressive=True: run the SAME memory system through the shared staged
-    gauntlet (common.evaluate.run_gauntlet, coverage="sample"): stage1 →
+    gauntlet (common.evaluate.run_gauntlet, progressive=true): stage1 →
     stage2 → stage3 with promotion thresholds, per-stage artifacts under
     out_dir/<stage>/, cross-stage Phase-1 memory reuse via out_dir/memory_cache/,
     and a stages.json at the out_dir root. `stages` overrides the family
@@ -139,10 +139,10 @@ async def run_baseline(
     score.json/token_usage.json copied to the out_dir root)."""
     # Both progressive AND non-progressive go through the SAME run_gauntlet
     # machinery (non-progressive → a one-item ('single', spec, None) plan built by
-    # run_gauntlet(coverage='full')). No separate hand-rolled single pass — the
+    # run_gauntlet(progressive=False)). No separate hand-rolled single pass — the
     # single-stage path is unified here, so its artifacts (out_dir/single/ +
     # out_dir/stages.json + the final-stage score.json/token_usage.json copied to
-    # out_dir root) match the progressive path and forge's coverage=full.
+    # out_dir root) match the progressive path and forge's progressive=false.
     return await _run_baseline_gauntlet(
         dataset=dataset, split=split, memo_class=memo_class,
         qa_model=qa_model, judge_model=judge_model, out_dir=out_dir,
@@ -195,7 +195,7 @@ async def _run_baseline_gauntlet(
     stages.json logic lives entirely in run_gauntlet (identical to forge); only
     stage EXECUTION + artifact layout + memcache mounting are this closure's
     concern. progressive=False no longer has a separate hand-rolled path —
-    run_gauntlet(coverage='full') builds the one-item plan (raises if single_stage
+    run_gauntlet(progressive=False) builds the one-item plan (raises if single_stage
     absent)."""
     from common.tokens import init_global_tracker
     from common.sampling import derive_sample_seed
@@ -212,7 +212,7 @@ async def _run_baseline_gauntlet(
         params: Dict[str, Any] = {"stages": copy.deepcopy(stages or DEFAULT_STAGES[family])}
         _resolve_dataset_stages(dataset, params)
     else:
-        # single pass: run_gauntlet(coverage='full') → resolve_sampling_plan builds
+        # single pass: run_gauntlet(progressive=False) → resolve_sampling_plan builds
         # [('single', resolve_single_stage_spec(single_stage), None)] — the shared
         # resolver presence-checks (absent → ValueError, never silent whole-split),
         # validates (rejects unknown fields / a stray threshold), normalizes.

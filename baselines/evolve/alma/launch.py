@@ -176,7 +176,7 @@ async def _run_single_stage(
     """One workflow pass at a single tier (no gauntlet). Writes score.json /
     traces/ / token_usage.json under out_dir and returns the score dict. Used
     for mode=check (alma's sanity gate) ONLY — progressive=False eval now goes
-    through run_gauntlet(coverage='full') like forge + eval_common."""
+    through run_gauntlet with progressive=False like forge + eval_common."""
     out_dir.mkdir(parents=True, exist_ok=True)
     task_list = _task_list(env_module, status, spec)
     log.info(f"Task list ({status}, stage={stage}, size={len(task_list)}): "
@@ -221,12 +221,12 @@ async def _run_gauntlet_eval(
     judge_model: str,
     max_sample_concurrent: int,
     use_memcache: bool,
-    coverage: str = "sample",
+    progressive: bool = True,
     tracker,
 ) -> Dict[str, Dict[str, Any]]:
     """Drive one candidate through the shared common.evaluate.run_gauntlet with an
     IN-PROCESS stage runner — for BOTH the progressive stage1→2→3 gauntlet
-    (coverage="sample") and a single ('single', spec, None) pass (coverage="full").
+    (progressive=True) and a single ('single', spec, None) pass (progressive=False).
     Same pattern as baselines/harness/eval_common.py's runner, but
     alma's per-STEP seed (already folded into `sample_seed`) rides every stage
     spec. Per-stage artifacts under out_dir/<stage>/, cross-stage Phase-1 memory
@@ -323,7 +323,7 @@ async def _run_gauntlet_eval(
 
     metrics = await evaluate_memo(
         datasets_config=datasets_config,
-        progressive=(coverage != "full"),
+        progressive=progressive,
         executor=Executor(
             run_stage=_run_stage_fn,
             read_metrics=_read_metrics_fn,
@@ -399,9 +399,9 @@ async def main(
 
     # 4. Route the eval.
     #  - mode=eval → the SHARED run_gauntlet, both progressive and single-stage:
-    #      progressive → the stage1→2→3 gauntlet ({"stages": ...}, coverage="sample");
+    #      progressive → the stage1→2→3 gauntlet ({"stages": ...}, progressive=True);
     #      else        → a single ('single', spec, None) pass sized by the REQUIRED
-    #                    `single_stage` block ({"single_stage": ...}, coverage="full";
+    #                    `single_stage` block ({"single_stage": ...}, progressive=False;
     #                    run_gauntlet raises if it is absent — no silent whole-split).
     #    No hand-rolled single-stage eval any more — unified with forge + eval_common.
     #  - mode=check → alma's cheap sanity gate: ONE sanity-size pass (NOT the
@@ -414,7 +414,7 @@ async def main(
             module_path=module_path, memo_sha=memory_id, status=status,
             out_dir=run_dir, sample_seed=sample_seed, model=model, max_logs=max_logs,
             judge_model=judge_model, max_sample_concurrent=max_sample_concurrent,
-            use_memcache=memory_cache, coverage=("sample" if progressive else "full"),
+            use_memcache=memory_cache, progressive=progressive,
             tracker=tracker,
         )
     else:  # mode == "check"

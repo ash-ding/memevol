@@ -22,7 +22,7 @@ def test_gauntlet_eliminates_below_threshold():
     def read_metrics(ds, stage):
         return {"raw_score": 0.0, "score_max": 1, "tokens": {"x": 1}}
     out = asyncio.run(run_gauntlet(
-        datasets_config=_cfg(), coverage="sample", smoke=False,
+        datasets_config=_cfg(), progressive=True, smoke=False,
         sample_seed_for=lambda ds: None, run_stage_fn=run_stage, read_metrics_fn=read_metrics))
     assert seen == ["stage1"]                       # stopped after stage1
     assert out["locomo"]["eliminated"] is True
@@ -36,7 +36,7 @@ def test_gauntlet_full_runs_all_stages_and_passes_seed():
     def read_metrics(ds, stage):
         return {"raw_score": 1.0, "score_max": 1, "tokens": {}}
     out = asyncio.run(run_gauntlet(
-        datasets_config=_cfg(), coverage="sample", smoke=False,
+        datasets_config=_cfg(), progressive=True, smoke=False,
         sample_seed_for=lambda ds: "SEED7", run_stage_fn=run_stage, read_metrics_fn=read_metrics))
     assert [s for s, _ in specs] == ["stage1", "stage2", "stage3"]   # promoted through
     assert all(seed == "SEED7" for _, seed in specs)                 # seed injected into every stage spec
@@ -55,13 +55,13 @@ def test_evaluate_memo_progressive_forwards_executor():
     out = asyncio.run(evaluate_memo(
         datasets_config=_cfg(), progressive=True,
         executor=Executor(run_stage=run_stage, read_metrics=read_metrics)))
-    assert seen == ["stage1", "stage2", "stage3"], seen   # progressive → coverage='sample'
+    assert seen == ["stage1", "stage2", "stage3"], seen   # progressive=True → the staged gauntlet
     assert out["locomo"]["eliminated"] is False
 
 
 def test_evaluate_memo_single_stage_one_pass():
     # evaluate_memo(progressive=False) → ONE ('single', spec, None) pass
-    # (coverage='full'), sized by single_stage. No gauntlet.
+    # (progressive=False), sized by single_stage. No gauntlet.
     from common.evaluate import evaluate_memo, Executor, FULL_STAGE
     seen = []
     async def run_stage(ds, stage, spec):

@@ -14,11 +14,10 @@ Flow per harness:
   1. Copy the harness dir into this run's workspace (source stays untouched;
      per-run isolation, same principle as the search loop).
   2. ensure_image (per-harness delta resolved from its requirements.txt).
-  3. evaluate_harness(split="test", coverage="full") — held-out evaluation
-     is ALWAYS ONE whole-test-split pass per benchmark (coverage="full",
-     equivalently progressive=false). Requesting the staged gauntlet
-     (progressive=true / coverage="sample") is REJECTED with an error
-     (exit 2, before any harness runs) — see
+  3. evaluate_harness(split="test", progressive=False) — held-out evaluation
+     is ALWAYS ONE single-stage pass per benchmark (progressive=false).
+     Requesting the staged gauntlet (progressive=true) is REJECTED with an
+     error (exit 2, before any harness runs) — see
      `_reject_progressive_on_heldout` — because held-out numbers must come
      from a uniform full evaluation, not a subset that can eliminate
      candidates early.
@@ -26,7 +25,7 @@ Flow per harness:
 Outputs under workspace/<run_name>/:
   heldout_results.json   {harness_id: {objectives (accuracy_<ds>,
                           stage_<ds>, tokens_total, ...), per_ds}}
-  harnesses/<id>/<ds>/...  the usual per-stage artifacts (single/ for coverage=full,
+  harnesses/<id>/<ds>/...  the usual per-stage artifacts (single/ for progressive=false,
                           sized by each dataset's REQUIRED single_stage config block)
   config.yaml, orchestrator.log — same bookkeeping as any run.
 
@@ -55,7 +54,6 @@ from forge.orchestrator import (
     _build_objectives,
     _resolve_config,
     _setup_logging,
-    _sync_coverage_progressive,
     _write_resolved_config,
     build_arg_parser,
     evaluate_harness,
@@ -67,7 +65,7 @@ log = logging.getLogger("forge.heldout")
 
 def _heldout_arg_parser() -> argparse.ArgumentParser:
     """The orchestrator's parser (so every config override keeps working)
-    plus the heldout-specific --harness flag and a full-coverage default."""
+    plus the heldout-specific --harness flag and a single-stage default."""
     parser = build_arg_parser()
     parser.add_argument(
         "--harness", action="append", dest="harnesses", metavar="DIR",
@@ -109,7 +107,7 @@ async def _run(cfg: Dict[str, Any], harness_paths: List[str]) -> None:
             results[hid] = {"error": f"image build failed: {exc}"}
             continue
 
-        log.info(f"heldout: evaluating {hid} (coverage={cfg['coverage']}, "
+        log.info(f"heldout: evaluating {hid} (progressive={cfg['progressive']}, "
                  f"datasets={list(cfg['datasets'])})")
         per_ds = await evaluate_harness(
             hid, image_path,
@@ -120,7 +118,7 @@ async def _run(cfg: Dict[str, Any], harness_paths: List[str]) -> None:
             memory_cache=cfg.get("memory_cache", True),
             gpu=cfg["gpu"]["enabled"],
             llm_cfg=cfg.get("llm"),
-            coverage=cfg.get("coverage", "sample"),
+            progressive=cfg["progressive"],
         )
         results[hid] = {
             "objectives": _build_objectives(per_ds, harness_dir),
@@ -149,85 +147,58 @@ async def _run(cfg: Dict[str, Any], harness_paths: List[str]) -> None:
 def _yaml_raw(args) -> Dict[str, Any]:
     """The --config YAML as written (pre-merge) — for heldout-specific keys
     (`harnesses:`) and for distinguishing explicit YAML values from
-    DEFAULT_CONFIG fallbacks (`coverage`)."""
+    DEFAULT_CONFIG fallbacks (`progressive`)."""
     if not getattr(args, "config", None):
         return {}
     with open(args.config) as f:
         return yaml.safe_load(f) or {}
 
 
-def _apply_heldout_coverage_default(
+def _apply_heldout_progressive_default(
     cfg: Dict[str, Any], args, raw_yaml: Dict[str, Any]
 ) -> None:
-    """Held-out evaluation is a final-numbers flow — default to FULL coverage
-    when NEITHER `coverage` NOR `progressive` is given anywhere (CLI or
-    YAML). `progressive` is the canonical knob (`coverage` is only a
-    back-compat alias), so an explicit `progressive:` in the YAML must win
-    over the "default to full" override even when the YAML omits
-    `coverage:` — forcing `coverage="full"` in that case used to silently
-    flip `progressive` back to False, discarding the user's explicit intent
-    (`progressive: true` + no `coverage:` was resolved to `progressive=False,
-    coverage="full"` instead of `progressive=True, coverage="sample"`).
-
-    Mutates `cfg` in place. Precedence:
-      1. Neither `coverage` nor `progressive` given anywhere → heldout's own
-         default: `coverage="full"` (DEFAULT_CONFIG's `progressive=True` /
-         `coverage="sample"` is a search-loop default, not a heldout one).
-      2. `progressive` given explicitly (YAML key or --progressive/
-         --no-progressive) → respect it as authoritative and (re-)derive
-         `coverage` from it, matching `_resolve_config`'s own precedence
-         (progressive wins over the coverage alias) — regardless of whether
-         `coverage:` also happens to be present.
-      3. Otherwise (`coverage` given, `progressive` not) → `_resolve_config`
-         already derived `progressive` from `coverage` consistently; re-sync
-         here is idempotent (safety net, not a behavior change).
-    """
-    coverage_given = getattr(args, "coverage", None) is not None or "coverage" in raw_yaml
-    progressive_given = getattr(args, "progressive", None) is not None or "progressive" in raw_yaml
-    if not coverage_given and not progressive_given:
-        cfg["coverage"] = "full"
-    if progressive_given:
-        _sync_coverage_progressive(cfg, source="progressive")
-    else:
-        _sync_coverage_progressive(cfg, source="coverage")
+    """Held-out evaluation is a final-numbers flow — default to `progressive=False`
+    (ONE single-stage pass per benchmark) when `progressive` is not given anywhere
+    (CLI or YAML), overriding DEFAULT_CONFIG's `progressive=True` (a search-loop
+    default, not a heldout one). An explicit `progressive:` (YAML key or
+    --progressive/--no-progressive) is respected. Mutates `cfg` in place."""
+    progressive_given = (
+        getattr(args, "progressive", None) is not None or "progressive" in raw_yaml
+    )
+    if not progressive_given:
+        cfg["progressive"] = False
 
 
 def _reject_progressive_on_heldout(cfg: Dict[str, Any]) -> None:
     """Fail fast if the resolved heldout config still requests the staged
-    gauntlet after `_apply_heldout_coverage_default` has run.
+    gauntlet (`progressive=True`) after `_apply_heldout_progressive_default`
+    has run.
 
     Held-out test evaluation exists to produce final, comparable numbers —
-    that requires ONE full, uniform pass over the whole test split. The
-    staged gauntlet (`progressive=True`, equivalently the back-compat
-    `coverage="sample"` alias) evaluates small per-stage subsets and
-    ELIMINATES candidates early on a threshold check: a harness cut at
-    stage1 only ever gets a ~20-item score, never the full-split score.
-    That's semantically invalid as a held-out result, so we refuse to run
-    rather than silently producing a partial/eliminated number.
+    that requires ONE single-stage pass sized by `single_stage` (typically the
+    whole test split). The staged gauntlet evaluates small per-stage subsets and
+    ELIMINATES candidates early on a threshold check: a harness cut at stage1
+    only ever gets a ~20-item score, never the full-split score. That's
+    semantically invalid as a held-out result, so we refuse to run rather than
+    silently producing a partial/eliminated number.
 
-    Checks BOTH spellings defensively — `progressive` is the canonical
-    knob, but `coverage` is also checked directly in case some future code
-    path leaves the two inconsistent (`_sync_coverage_progressive` is
-    supposed to prevent that, but this guard does not rely on that
-    invariant holding). Must be called BEFORE any harness is staged or
-    evaluated (see `main()` — right after `_apply_heldout_coverage_default`,
-    before the workspace/run_name setup and `_run(...)`).
+    Must be called BEFORE any harness is staged or evaluated (see `main()` —
+    right after `_apply_heldout_progressive_default`, before the workspace/
+    run_name setup and `_run(...)`).
     """
-    if cfg.get("progressive") is True or cfg.get("coverage") == "sample":
+    if cfg.get("progressive") is True:
         msg = (
             "forge.heldout: refusing to run — this config requests the "
-            "staged gauntlet (progressive=true / coverage=sample), which is "
-            "not valid for held-out test evaluation.\n"
-            "Held-out numbers must come from ONE full, uniform pass over the "
+            "staged gauntlet (progressive=true), which is not valid for "
+            "held-out test evaluation.\n"
+            "Held-out numbers must come from ONE single-stage pass over the "
             "whole test split. The staged gauntlet samples small per-stage "
             "subsets and ELIMINATES candidates early via threshold checks — "
             "a harness cut at stage1 only ever gets a ~20-item score, not "
             "the full-split score — which invalidates final held-out "
             "numbers.\n"
-            "Fix: set `progressive: false` (or the back-compat "
-            "`coverage: full`) in your heldout config, or drop both fields "
-            "entirely (heldout defaults to full coverage when neither is "
-            "given anywhere)."
+            "Fix: set `progressive: false` in your heldout config, or drop it "
+            "entirely (heldout defaults to a single-stage pass)."
         )
         log.warning(msg)
         sys.exit(2)
@@ -254,7 +225,7 @@ def main() -> None:
     cfg = _resolve_config(args, required_schema=HELDOUT_REQUIRED_SCHEMA)
     raw_yaml = _yaml_raw(args)
     harnesses = _resolve_harnesses(args, raw_yaml)
-    _apply_heldout_coverage_default(cfg, args, raw_yaml)
+    _apply_heldout_progressive_default(cfg, args, raw_yaml)
     _reject_progressive_on_heldout(cfg)
 
     run_name = cfg.get("run_name") or _dt.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -264,7 +235,7 @@ def main() -> None:
     paths.workspace.mkdir(parents=True, exist_ok=True)
     _attach_run_log()
     _write_resolved_config(cfg)
-    log.info(f"heldout run: {paths.workspace} (test split, coverage={cfg['coverage']})")
+    log.info(f"heldout run: {paths.workspace} (test split, progressive={cfg['progressive']})")
 
     asyncio.run(_run(cfg, harnesses))
 

@@ -158,7 +158,7 @@ def test_progressive_false_single_stage_path():
         assert score["locomo"]["raw_score"] == 1.0
         assert score["locomo"]["stage"] == 4.0          # FULL_STAGE (single pass)
         assert not score["locomo"]["eliminated"]
-        # Artifacts now match forge's coverage=full / the progressive path: the
+        # Artifacts now match forge's progressive=false / the progressive path: the
         # reached-stage score.json + token_usage.json copied to the out_dir root, the
         # pass's own copy under out_dir/single/, and a stages.json at the root.
         assert (out_dir / "score.json").exists()

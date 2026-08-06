@@ -227,7 +227,7 @@ def _compute_split() -> Tuple[List[str], List[str]]:
 
 def get_task_list(status: str, eval_n_samples: Optional[int], seed: Optional[str] = None) -> List[str]:
     """Return question_id strings for the requested split, capped at
-    eval_n_samples. None = no cap (coverage=full: the whole split)."""
+    eval_n_samples. None = no cap (whole split: the whole split)."""
     from common.sampling import shuffle_prefix
     search_qids, test_qids = _compute_split()
     pool = search_qids if status == "search" else test_qids

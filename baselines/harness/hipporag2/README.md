@@ -125,7 +125,7 @@ uses):
 - **`progressive: false` (default)** REQUIRES a `single_stage` block — ONE pass
   sized by its fields (`common.evaluate.single_stage_wire_spec`; a `null`
   or omitted field = the WHOLE split for that dimension, byte-identical to the
-  main method's `forge.heldout` `coverage=full` when all-null). Omitting
+  main method's `forge.heldout` `progressive=false` when all-null). Omitting
   `single_stage` raises a clear `ValueError` (no silent whole-split).
 - **`progressive: true`** runs the staged stage1→2→3 gauntlet; a `stages` block
   overrides the family `DEFAULT_STAGES`.
