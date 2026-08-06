@@ -2,7 +2,7 @@
 
 Zero-dependency runner (no pytest in the venvs):
 
-    venv/bin/python tests/test_llm_providers.py          # root venv
+    uv run python tests/test_llm_providers.py          # repo-root uv project
 
 Covers common/llm.py:
   - _provider_for_model routing

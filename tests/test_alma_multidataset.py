@@ -2,7 +2,7 @@
 
 Zero-dependency runner (no pytest in the venvs):
 
-    venv/bin/python tests/test_alma_multidataset.py
+    uv run python tests/test_alma_multidataset.py
 """
 import sys
 import traceback

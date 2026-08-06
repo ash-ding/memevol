@@ -35,40 +35,30 @@ calls.
 
 ## Setup
 
-hipporag2 has its own venv, built from its own self-contained
-`requirements.txt` (`-r ../../core-requirements.txt` + HippoRAG's runtime
-deps — chromadb, langchain-chroma, finch-clust, networkx, nltk, rank_bm25,
+hipporag2 is its own uv project (`pyproject.toml` + `.python-version` +
+committed `uv.lock`, plus HippoRAG's runtime deps — chromadb,
+langchain-chroma, finch-clust, networkx, nltk, rank_bm25,
 sentence-transformers):
 
 ```bash
-baselines/setup_venv.sh hipporag2
+cd baselines/harness/hipporag2
+uv sync
+# hipporag2 ALSO needs the external HippoRAG package as an EDITABLE install
+# (memo.py: `from hipporag import HippoRAG`) — `hipporag` is NOT vendored and
+# NOT a pyproject.toml dependency, so `uv sync` alone does not install it:
+uv pip install -e /export/scratch_large/ding/code/HippoRAG   # point at your HippoRAG checkout
 ```
 
-Unlike every other baseline, this ALSO needs an editable install of the
-external [HippoRAG](https://github.com/OSU-NLP-Group/HippoRAG) package
-itself (`memo.py: from hipporag import HippoRAG`) — `hipporag` is NOT
-vendored and NOT a line in `requirements.txt`. `setup_venv.sh hipporag2`
-does this automatically from `HIPPORAG_SRC` (default
-`/export/scratch_large/ding/code/HippoRAG`):
+This is the ONLY baseline whose setup needs a second step beyond `uv sync`.
 
-```bash
-HIPPORAG_SRC=/export/scratch_large/ding/code/HippoRAG baselines/setup_venv.sh hipporag2
-```
-
-or, into an already-built venv:
-
-```bash
-baselines/harness/hipporag2/venv/bin/pip install -e /export/scratch_large/ding/code/HippoRAG
-```
-
-This creates `baselines/harness/hipporag2/venv/`. The repo-root `venv/`
-is dev/test only and cannot run hipporag2.
+This creates `baselines/harness/hipporag2/.venv/`. The repo-root
+`.venv/` is dev/test only and cannot run hipporag2.
 
 ## Usage
 
 ```bash
-baselines/harness/hipporag2/venv/bin/python baselines/harness/hipporag2/run.py \
-    --config baselines/harness/hipporag2/config.example.yaml \
+cd baselines/harness/hipporag2 && uv run python run.py \
+    --config config.example.yaml \
     [--dataset {dynamicmem,locomo,longmemeval_s,longmemeval_m}] \
     [--split test|search] \
     [--progressive|--no-progressive] \
@@ -112,17 +102,17 @@ Examples:
 
 ```bash
 # OpenAI API embedding (no GPU needed), config-driven eval
-baselines/harness/hipporag2/venv/bin/python baselines/harness/hipporag2/run.py \
-    --config baselines/harness/hipporag2/config.example.yaml \
+cd baselines/harness/hipporag2 && uv run python run.py \
+    --config config.example.yaml \
     --embedding text-embedding-3-small
 
 # Local GPU embedding (NVIDIA)
-baselines/harness/hipporag2/venv/bin/python baselines/harness/hipporag2/run.py \
+uv run python run.py \
     --config my_hr.yaml --dataset longmemeval_s --embedding nvidia/NV-Embed-v2 \
     --embedding_batch_size 2 --embedding_dtype float16
 
 # Quick check (size via a config with single_stage: {n_users: 2})
-baselines/harness/hipporag2/venv/bin/python baselines/harness/hipporag2/run.py \
+uv run python run.py \
     --config my_hr.yaml --dataset dynamicmem
 ```
 

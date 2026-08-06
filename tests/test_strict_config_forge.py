@@ -3,7 +3,7 @@
 _forge_provided_tree, gated into _resolve_config via common.config.strict_on).
 
 Zero-dep runner — run under the ROOT (forge) venv:
-    venv/bin/python tests/test_strict_config_forge.py
+    uv run python tests/test_strict_config_forge.py
 
 Kept SEPARATE from tests/test_strict_config.py (Task 2, baseline run.py
 strict-config cases) because that file needs the BASELINES venv (imports

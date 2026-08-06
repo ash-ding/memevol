@@ -2,7 +2,7 @@
 
 Zero-dependency runner (no pytest in the venvs):
 
-    venv/bin/python tests/test_data_isolation.py
+    uv run python tests/test_data_isolation.py
 
 Covers:
   - stage_search_data: deterministic filtered artifacts (locomo first-6,

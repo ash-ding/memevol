@@ -5,7 +5,7 @@ is BASELINE-FREE — it must NOT import any concrete baseline's memo (cc,
 hipporag2, amem); those live in their own tests/test_<name>_baseline.py, run
 in that baseline's own venv. This file runs in the shared dev/test env:
 
-    venv/bin/python tests/test_baselines_multidataset.py
+    uv run python tests/test_baselines_multidataset.py
 """
 import sys, traceback
 from pathlib import Path

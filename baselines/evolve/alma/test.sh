@@ -16,7 +16,7 @@
 # --- Evaluate a specific memo on held-out test users (progressive gauntlet) ---
 # <SHA> must exist under baselines/evolve/alma/memo_archive/dynamicmem/memo_structure_<SHA>.py
 # Results land in baselines/evolve/alma/results/dynamicmem/<SHA>_test_eval/
-baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
+uv run --project baselines/evolve/alma python baselines/evolve/alma/run.py \
     --config baselines/evolve/alma/config.example.yaml \
     --meta_model gpt-5 \
     --execution_model gpt-5-mini \
@@ -27,7 +27,7 @@ baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
 
 # --- Evaluate the no-memory baseline on held-out users ---
 # Establishes the floor reward; useful for comparing any learned memo.
-baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
+uv run --project baselines/evolve/alma python baselines/evolve/alma/run.py \
     --config baselines/evolve/alma/config.example.yaml \
     --meta_model gpt-5 \
     --execution_model gpt-5-mini \
@@ -40,7 +40,7 @@ baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
 # --no-progressive runs ONE pass; sizes come from the config's REQUIRED
 # `single_stage` block. For a quick plumbing check, point --config at a config
 # whose `single_stage` uses tiny sizes.
-baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
+uv run --project baselines/evolve/alma python baselines/evolve/alma/run.py \
     --config baselines/evolve/alma/config.example.yaml \
     --meta_model gpt-5 \
     --execution_model gpt-5-mini \

@@ -2,7 +2,7 @@
 
 Zero-dependency runner (no pytest in the venvs):
 
-    venv/bin/python tests/test_heldout.py
+    uv run python tests/test_heldout.py
 
 Covers:
   - _stage_harness: copy-into-run isolation, missing-harness.py / duplicate-id

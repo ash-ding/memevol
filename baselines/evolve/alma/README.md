@@ -9,19 +9,20 @@ method in memevol's root; it now lives here as a baseline so a new method
 
 ### Setup
 
-alma has its own venv, built from its own self-contained `requirements.txt`
-(`-r ../../core-requirements.txt` + alma's extra deps — langchain-chroma,
-chromadb, networkx, huggingface-hub):
+alma has its own `pyproject.toml` + committed `uv.lock` (shared-core deps +
+alma's extra deps — langchain-chroma, chromadb, networkx, huggingface-hub):
 
 ```bash
-baselines/setup_venv.sh alma
+cd baselines/evolve/alma && uv sync
 ```
 
-This creates `baselines/evolve/alma/venv/`. Run everything below with
-`baselines/evolve/alma/venv/bin/python` in place of the bare `python` shown
-(the repo-root `venv/` is dev/test only and cannot run alma).
+(a thin wrapper over `uv sync`; equivalently `cd baselines/evolve/alma && uv sync`).
+This creates `baselines/evolve/alma/.venv/`. Run everything below with
+`uv run python <script>` from this directory (uv auto-uses the project's
+`.venv/`), or `uv run --project baselines/evolve/alma python <script>` from
+elsewhere.
 
-Run from the **project root**:
+Run from this directory (`baselines/evolve/alma/`):
 
 Evaluation **sizes live in the `--config` YAML only** — there is NO sizing CLI
 flag (the flat `--eval_n_*/--check_n_*` and the `--stages` flags were removed).
@@ -40,26 +41,26 @@ YAML < CLI flags). `config.example.yaml` is a documented, runnable example:
 
 ```bash
 # Config-first: everything from the YAML, override --status / --steps on the CLI
-baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
-    --config baselines/evolve/alma/config.example.yaml \
+cd baselines/evolve/alma && uv run python run.py \
+    --config config.example.yaml \
     --status search --steps 10
 ```
 
 ```bash
 # Smoke test — copy config.example.yaml, set tiny sizes in its `stages`
 # (progressive: true) or `single_stage` (progressive: false) block, then:
-baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
-    --config baselines/evolve/alma/config.smoke.yaml \
+cd baselines/evolve/alma && uv run python run.py \
+    --config config.smoke.yaml \
     --status search --steps 2
 
 # Full training — stage1→2→3 gauntlet (stages from the config), 10 steps
-baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
-    --config baselines/evolve/alma/config.example.yaml \
+uv run python run.py \
+    --config config.example.yaml \
     --status search --progressive --steps 10
 
 # Evaluate a saved memo on held-out users (007–010)
-baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
-    --config baselines/evolve/alma/config.example.yaml \
+uv run python run.py \
+    --config config.example.yaml \
     --status test --memo_SHA <SHA> --progressive
 ```
 
@@ -137,20 +138,20 @@ support was added (`--dataset` defaults to `dynamicmem`, and its prompt
 fragments are a byte-identical extraction of the original hardcoded text —
 see `tests/test_alma_multidataset.py::test_dynamicmem_prompts_byte_identical`).
 
-Example commands (mirroring "Quick start" above, run from the project root):
+Example commands (mirroring "Quick start" above, run from this directory):
 
 ```bash
 # LoCoMo — search loop, 1 step, per-step random subset. Sizes come from the
 # config's `stages` block (a LoCoMo config sets n_conversations/n_qa); the
 # CLI carries only the per-invocation knobs.
-baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
-    --config baselines/evolve/alma/config.locomo.yaml \
+cd baselines/evolve/alma && uv run python run.py \
+    --config config.locomo.yaml \
     --dataset locomo --status search --steps 1 \
     --progressive --random_sample --sampling_seed 42 \
     --meta_model gpt-5-mini --execution_model gpt-5-mini --judge_model gpt-5-mini
 
 # LongMemEval (s or m variant) — evaluate a saved memo on the held-out split
-baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
-    --config baselines/evolve/alma/config.example.yaml \
+uv run python run.py \
+    --config config.example.yaml \
     --dataset longmemeval_s --status test --memo_SHA <SHA> --progressive
 ```

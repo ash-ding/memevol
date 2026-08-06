@@ -1,8 +1,8 @@
-# Virtual environment
+# Virtual environments (uv sync creates .venv/ per project — root + each baseline)
+.venv/
 venv/
 memevol_env/
-# Per-baseline venvs (each baseline has its own; see baselines/setup_venv.sh)
-baselines/*/*/venv/
+# uv.lock and pyproject.toml ARE tracked (reproducible envs); .venv/ is not.
 
 # Python cache
 __pycache__/

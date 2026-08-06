@@ -1,0 +1,33 @@
+# alma baseline — standalone uv project (ALMA meta-agent search loop).
+#
+#   cd baselines/evolve/alma && uv sync      # -> .venv/ (CPython 3.12 via .python-version)
+#
+# Isolated per-baseline env (uv sync + committed uv.lock for reproducibility).
+# The shared-core block is the closure common/ + datasets/ need — duplicated
+# into every baseline pyproject on purpose (independence over DRY).
+[project]
+name = "memevol-baseline-alma"
+version = "0.0.0"
+description = "ALMA meta-agent search loop"
+requires-python = ">=3.12"
+dependencies = [
+    # --- shared core (common/ + datasets/) ---
+    "openai==1.107.3",
+    "anthropic[vertex]",
+    "python-dotenv",
+    "httpx",
+    "PyYAML",
+    "jsonschema",
+    "scipy",
+    "numpy",
+    "rich",
+    "tiktoken",
+    # --- alma-specific ---
+    "langchain-chroma",   # generated harnesses: langchain_chroma.Chroma
+    "chromadb",           # vector DB backing langchain-chroma
+    "networkx",           # generated harnesses: graph memory
+    "huggingface-hub",    # chromadb default embedder model download
+]
+
+[tool.uv]
+package = false   # this dir is an app env, not a buildable package

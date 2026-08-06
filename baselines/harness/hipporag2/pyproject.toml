@@ -1,0 +1,38 @@
+# hipporag2 baseline — standalone uv project (HippoRAG2 graph-RAG retrieval memory).
+#
+#   cd baselines/harness/hipporag2 && uv sync      # -> .venv/ (CPython 3.12 via .python-version)
+#
+# Isolated per-baseline env (uv sync + committed uv.lock for reproducibility).
+# The shared-core block is the closure common/ + datasets/ need — duplicated
+# into every baseline pyproject on purpose (independence over DRY).
+[project]
+name = "memevol-baseline-hipporag2"
+version = "0.0.0"
+description = "HippoRAG2 graph-RAG retrieval memory"
+requires-python = ">=3.12"
+dependencies = [
+    # --- shared core (common/ + datasets/) ---
+    "openai==1.107.3",
+    "anthropic[vertex]",
+    "python-dotenv",
+    "httpx",
+    "PyYAML",
+    "jsonschema",
+    "scipy",
+    "numpy",
+    "rich",
+    "tiktoken",
+    # --- hipporag2-specific ---
+    # NOTE: the external `hipporag` pkg is NOT here — editable-installed post-sync
+    # (uv pip install -e $HIPPORAG_SRC). Lines below are HippoRAG's runtime deps.
+    "chromadb",
+    "langchain-chroma",
+    "finch-clust",
+    "networkx",
+    "nltk",
+    "rank_bm25",
+    "sentence-transformers>=3.2.1",   # BGE-m3 embedder + reranker
+]
+
+[tool.uv]
+package = false   # this dir is an app env, not a buildable package

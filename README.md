@@ -200,13 +200,12 @@ env-var override.
 git clone https://github.com/ash-ding/memevol.git
 cd memevol
 
-# Forge's host venv is intentionally minimal — only YAML parsing,
+# Forge's host env is intentionally minimal — only YAML parsing,
 # the SDK proposer driver, and subprocess management. All ML
 # dependencies (chromadb, sentence-transformers, ...) live in the
-# Singularity images.
-python3.12 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+# Singularity images. Managed with uv (pyproject.toml + uv.lock):
+uv sync            # → .venv/ (CPython 3.12 from .python-version)
+# then run forge with `uv run python -m forge.orchestrator ...`
 
 cp .env.example .env
 # Edit .env: OPENAI_API_KEY=sk-...
@@ -239,14 +238,14 @@ split is physically invisible inside search containers).
 ```bash
 # Smoke test: ONE propose → eval → score round at sanity sizes
 # (--smoke-test forces steps=1 / k_per_step=1 unless overridden; ~1-2 min)
-venv/bin/python -m forge.orchestrator --config configs/search_example.yaml --smoke-test
+uv run python -m forge.orchestrator --config configs/search_example.yaml --smoke-test
 
 # Real search — copy the documented example config and edit it
 # (steps, benchmark, stage sizes, models), then:
-venv/bin/python -m forge.orchestrator --config configs/my_search.yaml --run-name my_search
+uv run python -m forge.orchestrator --config configs/my_search.yaml --run-name my_search
 
 # CLI overrides (any YAML field has a matching CLI flag)
-venv/bin/python -m forge.orchestrator \
+uv run python -m forge.orchestrator \
   --config configs/search_example.yaml \
   --steps 3 --datasets locomo --gpu
 ```
@@ -270,10 +269,10 @@ is set.
 
 ```bash
 # Config-first: list the harnesses in the YAML (see configs/test_example.yaml)
-venv/bin/python -m forge.heldout --config configs/test_example.yaml
+uv run python -m forge.heldout --config configs/test_example.yaml
 
 # Or point at specific harness dir(s) from a finished search run
-venv/bin/python -m forge.heldout --config configs/test_example.yaml \
+uv run python -m forge.heldout --config configs/test_example.yaml \
   --harness workspace/my_search/harnesses/3_9f00aa11
 
 # → workspace/heldout_<ts>/heldout_results.json + per-benchmark artifacts

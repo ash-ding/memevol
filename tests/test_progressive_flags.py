@@ -3,7 +3,7 @@ CLI/YAML precedence, and the coverage<->progressive alias mapping.
 
 Zero-dependency runner (no pytest in the venvs):
 
-    venv/bin/python tests/test_progressive_flags.py
+    uv run python tests/test_progressive_flags.py
 """
 import os
 import sys

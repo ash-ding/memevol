@@ -15,7 +15,7 @@
 
 # --- Full progressive search (gauntlet; stages from the config) ---
 # stage1 -> stage2 -> stage3 gauntlet per candidate, 10 meta-learning steps.
-baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
+uv run --project baselines/evolve/alma python baselines/evolve/alma/run.py \
     --config baselines/evolve/alma/config.example.yaml \
     --meta_model gpt-5 \
     --execution_model gpt-5-mini \
@@ -31,7 +31,7 @@ baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
 # --- Progressive + per-step random sampling ---
 # Each search step draws a DIFFERENT deterministic task subset (seeded by
 # --sampling_seed + step) — reduces overfitting to one fixed subset.
-baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
+uv run --project baselines/evolve/alma python baselines/evolve/alma/run.py \
     --config baselines/evolve/alma/config.example.yaml \
     --meta_model gpt-5 \
     --execution_model gpt-5-mini \
@@ -49,7 +49,7 @@ baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
 # sized by the config's REQUIRED `single_stage` block (a null field = whole
 # split for that dimension). For a quick smoke run, point --config at a config
 # whose `single_stage` uses tiny sizes.
-baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
+uv run --project baselines/evolve/alma python baselines/evolve/alma/run.py \
     --config baselines/evolve/alma/config.example.yaml \
     --meta_model gpt-5 \
     --execution_model gpt-5-mini \
@@ -62,7 +62,7 @@ baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
 
 # --- Resume from checkpoint ---
 # Checkpoint files live under baselines/evolve/alma/logs/ after the first step.
-baselines/evolve/alma/venv/bin/python baselines/evolve/alma/run.py \
+uv run --project baselines/evolve/alma python baselines/evolve/alma/run.py \
     --config baselines/evolve/alma/config.example.yaml \
     --meta_model gpt-5 \
     --execution_model gpt-5-mini \

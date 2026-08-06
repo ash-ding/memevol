@@ -1,5 +1,5 @@
 """run_gauntlet promotes/eliminates via injected fakes; sample_seed rides in spec.
-    venv/bin/python tests/test_run_gauntlet.py
+    uv run python tests/test_run_gauntlet.py
 """
 import sys, asyncio, traceback
 from pathlib import Path

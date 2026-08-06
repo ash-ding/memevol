@@ -1,7 +1,7 @@
 # =============================================================================
 # lightmem (LightMem compression + offline-update memory) baseline — exhaustive config.
-# Launch: baselines/harness/lightmem/venv/bin/python baselines/harness/lightmem/run.py \
-#             --config baselines/harness/lightmem/config.example.yaml
+# Launch: cd baselines/harness/lightmem && uv run python run.py \
+#             --config config.example.yaml
 # CLI flags override any key here (precedence: DEFAULT_CONFIG < this file < CLI).
 #
 # STRICT-CONFIG (default on): with --config, EVERY key below must be present
