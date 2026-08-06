@@ -1,6 +1,6 @@
 """Tests for the cc harness baseline (baselines/harness/cc/memo.py — native
 agentic answer via Claude Code). Zero-dependency runner; run in cc's OWN venv
-(baselines/harness/cc/venv/), not the shared baselines/venv/ dev env:
+(baselines/harness/cc/venv/), not the repo-root venv/ dev env:
 
     baselines/harness/cc/venv/bin/python tests/test_cc_baseline.py
 """

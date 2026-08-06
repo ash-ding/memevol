@@ -33,7 +33,7 @@ torch, nltk, rank_bm25, scikit-learn, litellm):
 
     baselines/setup_venv.sh amem
 
-This creates `baselines/harness/amem/venv/`. The shared `baselines/venv/` is
+This creates `baselines/harness/amem/venv/`. The repo-root `venv/` is
 dev/test only and cannot run amem.
 
 ## Usage
@@ -130,5 +130,5 @@ Time, not money, is the binding constraint. The build is API-bound, so raising
 `--max_sample_concurrent` (within OpenAI rate limits) is the main lever.
 
 Tests: `baselines/harness/amem/venv/bin/python tests/test_amem_baseline.py`
-(amem's own venv — heavy imports; the shared `baselines/venv/` is dev/test
+(amem's own venv — heavy imports; the repo-root `venv/` is dev/test
 core only and doesn't have them).

@@ -3,7 +3,6 @@
 Zero-dependency runner (no pytest in the venvs):
 
     venv/bin/python tests/test_staged_eval.py          # root venv
-    baselines/venv/bin/python tests/test_staged_eval.py
 
 Covers:
   - datasets/dynamicmem/env.py::sample_items_staged (per-checkpoint A/C

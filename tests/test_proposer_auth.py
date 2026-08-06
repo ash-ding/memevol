@@ -3,7 +3,6 @@
 Zero-dependency runner (no pytest in the venvs):
 
     venv/bin/python tests/test_proposer_auth.py          # root venv
-    baselines/venv/bin/python tests/test_proposer_auth.py
 
 Covers forge/proposer.py:
   - _resolve_anthropic_api_key (env precedence, .env fallback)

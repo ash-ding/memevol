@@ -23,13 +23,10 @@ producing comparable metrics: per-user reward, judge-scored accuracy, and
 ```
 baselines/
 ├── registry.py          # shared dataset registry (both sides import it)
-├── core-requirements.txt  # shared-core deps EVERY baseline installs (via -r)
-├── requirements.txt     # DEV/TEST ONLY (-r core-requirements.txt) — baselines/venv/
+├── core-requirements.txt  # shared-core deps EVERY baseline installs (via -r ../../)
 ├── setup_venv.sh         # bootstrap: baselines/setup_venv.sh <name> [python] →
 │                        #   baselines/<evolve|harness>/<name>/venv/
-├── venv/                # shared DEV/TEST venv (gitignored) — runs the shared
-│                        #   contract tests + imports common/+datasets/; NEVER
-│                        #   runs a real baseline
+│                        # (shared contract tests run in the repo-root venv/, not here)
 ├── evolve/              # SEARCH-METHOD baselines — compared against forge ITSELF
 │   ├── alma/            #   LLM-meta-agent search loop (memevol's original method)
 │   │                    #     own requirements.txt + venv/ (gitignored)
@@ -90,12 +87,18 @@ deps): `baselines/setup_venv.sh <name>` creates
 `baselines/{evolve,harness}/<name>/venv/`. hipporag2 additionally needs an
 editable install of the external [HippoRAG](https://github.com/OSU-NLP-Group/HippoRAG)
 repo (`HIPPORAG_SRC=/path/to/HippoRAG baselines/setup_venv.sh hipporag2`; the
-`hipporag` package itself is not vendored or in any `requirements.txt`). The
-shared **`baselines/venv/`** (`pip install -r baselines/requirements.txt`, just
-`-r core-requirements.txt`) is **dev/test only** — it runs the shared contract
-tests and imports `common/` + `datasets/`, and never runs a real baseline.
-Every baseline writes artifacts under its own `logs/` and `results/`
-directories (gitignored).
+`hipporag` package itself is not vendored or in any `requirements.txt`).
+
+There is **no shared baselines dev/test venv** — the shared contract tests
+(`tests/test_baselines_multidataset.py`, `test_config.py`, `test_sampling_plan.py`,
+…) are baseline-free and run in the **repo-root `venv/`** (forge's venv, which
+already imports `common/` + `datasets/` and is a superset of
+`core-requirements.txt`): `venv/bin/python tests/test_baselines_multidataset.py`.
+A baseline's OWN behavioral test (`tests/test_<name>_baseline.py`) runs in that
+baseline's venv (it needs that baseline's deps). `core-requirements.txt` stays —
+it is the `-r ../../core-requirements.txt` target every per-baseline
+`requirements.txt` pulls in. Every baseline writes artifacts under its own
+`logs/` and `results/` directories (gitignored).
 
 ## Shared progressive sampling, seeding & memory cache
 

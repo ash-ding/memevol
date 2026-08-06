@@ -40,7 +40,7 @@ redis, sentence-transformers):
 
     baselines/setup_venv.sh zep
 
-This creates `baselines/harness/zep/venv/`. The shared `baselines/venv/` is
+This creates `baselines/harness/zep/venv/`. The repo-root `venv/` is
 dev/test only and cannot run zep.
 
 ## Usage

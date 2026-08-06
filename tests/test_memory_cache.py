@@ -3,7 +3,7 @@ instrumentation).
 
 Zero-dependency runner:
 
-    baselines/venv/bin/python tests/test_memory_cache.py
+    venv/bin/python tests/test_memory_cache.py
 """
 import asyncio
 import json
