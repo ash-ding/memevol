@@ -83,17 +83,16 @@ def _init_to_note_units(init: Dict) -> List[Tuple[str, str]]:
 
 
 class AMemMemo(MemoClass):
-    _cfg: Dict = {}   # overridden per-run by eval_common.make_memo_class
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, config=None):
+        super().__init__(config)
         self._system = None          # AgenticMemorySystem (lazy — built on first hook call)
         self._retriever_llm = None   # LLMController for the query→keywords rewrite
 
     def _ensure_system(self):
         if self._system is not None:
             return
-        model = self._cfg.get("amem_llm_model", "gpt-4o-mini")
+        model = self.config.get("amem_llm_model", "gpt-4o-mini")
         # Mirrors test_advanced.py::advancedMemAgent.__init__ (openai backend):
         # one AgenticMemorySystem + a separate retriever_llm, same model.
         # Constructing AgenticMemorySystem builds a SentenceTransformer, whose
@@ -135,7 +134,7 @@ class AMemMemo(MemoClass):
     async def retrieve_memory_for_query(self, recorder) -> Dict:
         self._ensure_system()
         query = recorder.init.get("query", "")
-        k = int(self._cfg.get("retrieve_k", 10))
+        k = int(self.config.get("retrieve_k", 10))
         with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
             keywords = self._rewrite_query(query)   # LLM call; no ST construction
             # Uniform invariant: every self._system.* call runs under HF `datasets`

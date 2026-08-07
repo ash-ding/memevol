@@ -491,13 +491,12 @@ from typing import Dict, Optional
 from common.memo_class import MemoClass
 
 class MyMemo(MemoClass):
-    _cfg: Dict = {}                     # filled by eval_common.make_memo_class
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, config=None):
+        super().__init__(config)        # each instance gets its own self.config copy
         self._instance_id = uuid.uuid4().hex[:12]   # per-user state scoping
         self._system = ...              # construct the wrapped memory system
-                                        #   using self._cfg (model names, top-k, ...)
+                                        #   using self.config (model names, top-k, ...)
 
     async def build_memory_from_data(self, recorder) -> None:
         init = recorder.init
@@ -539,7 +538,7 @@ adjust the flags your system needs. Core shape:
 
 ```python
 from baselines.registry import DATASETS
-from baselines.harness.eval_common import make_memo_class, run_baseline, print_result
+from baselines.harness.eval_common import run_baseline, print_result
 from baselines.harness.<name>.memo import MyMemo
 from common.config import resolve_config
 
@@ -551,20 +550,22 @@ p.add_argument("--split", default=None, choices=["test", "search"])
 p.add_argument("--progressive", action=argparse.BooleanOptionalAction, default=None)
 ...
 cfg = resolve_config(DEFAULT_CONFIG, a.config, cli)   # defaults < YAML < CLI
-memo_cls = make_memo_class(MyMemo, top_k=cfg["top_k"], ...)   # → sets _cfg
 result = asyncio.run(run_baseline(
     dataset=cfg["dataset"], split=cfg["split"],
     single_stage=cfg["single_stage"], stages=cfg["stages"],   # native YAML dicts
-    memo_class=memo_cls, qa_model=cfg["model"], judge_model=cfg["judge_model"],
+    memo_class=MyMemo, memo_config=dict(top_k=cfg["top_k"], ...),
+    qa_model=cfg["model"], judge_model=cfg["judge_model"],
     out_dir=Path(__file__).resolve().parent / "results" / cfg["dataset"] / cfg["split"],
     progressive=cfg["progressive"], sampling_seed=cfg["sampling_seed"],
 ))
 print_result(cfg["dataset"], cfg["progressive"], result, out_dir)
 ```
 
-`make_memo_class` exists because the workflow instantiates the memo class
-with **no arguments** — your CLI config travels as the `_cfg` class
-attribute. No `__init__.py` files needed (namespace packages).
+`memo_config` reaches your instances through the constructor: the framework
+creates a FRESH memo per user/conversation as `MyMemo(config=memo_config)`,
+and each instance keeps its own private copy at `self.config` (never share
+mutable state across users). No `__init__.py` files needed (namespace
+packages).
 
 ### Step 3 — dependencies
 

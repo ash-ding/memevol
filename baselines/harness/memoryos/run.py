@@ -18,7 +18,7 @@ try:
 except ImportError:
     pass
 from baselines.registry import DATASETS
-from baselines.harness.eval_common import make_memo_class, run_baseline, print_result
+from baselines.harness.eval_common import run_baseline, print_result
 from baselines.harness.memoryos.memo import MemoryOSMemo
 from common.config import resolve_config
 
@@ -108,8 +108,7 @@ def main():
             raise ConfigCompletenessError(f"memoryos config: missing sizing leaf(s): {sorted(_miss)} "
                                           f"(strict-config mode; set strict_config: false to disable)")
 
-    memo_class = make_memo_class(
-        MemoryOSMemo,
+    memo_config = dict(
         memoryos_llm_model=cfg["memoryos_llm_model"], base_url=cfg["base_url"],
         short_term_capacity=cfg["short_term_capacity"],
         mid_term_capacity=cfg["mid_term_capacity"],
@@ -122,7 +121,7 @@ def main():
     result = asyncio.run(run_baseline(
         dataset=cfg["dataset"], split=cfg["split"],
         single_stage=cfg["single_stage"],
-        memo_class=memo_class,
+        memo_class=MemoryOSMemo, memo_config=memo_config,
         qa_model=cfg["llm_model"], judge_model=cfg["judge_model"],
         out_dir=out_dir,
         max_sample_concurrent=cfg["max_sample_concurrent"],

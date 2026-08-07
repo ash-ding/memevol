@@ -318,7 +318,7 @@ class _CountingMemo(MemoClass):
 def test_progressive_real_memcache_reuse():
     import common.llm as llm_mod
     from datasets.locomo.workflow import LoCoMoWorkflow
-    from baselines.harness.eval_common import run_baseline, make_memo_class
+    from baselines.harness.eval_common import run_baseline
 
     _BUILD_CALLS.clear()
 
@@ -328,8 +328,9 @@ def test_progressive_real_memcache_reuse():
     async def _fake_judge(self, query, predicted, reference, qa_metadata=None):
         return 1, "fake-judge: forced pass"
 
-    # make_memo_class wrapper must be picklable (the fix in eval_common):
-    memo_class = make_memo_class(_CountingMemo)
+    # plain memo classes pickle without any wrapper magic now (constructor
+    # config injection, 2026-08-06):
+    memo_class = _CountingMemo
 
     # thresholds 0.0 → promote through all 3 stages; n_conversations=1 with a
     # constant per-run seed → the SAME single user each stage → same cache key.

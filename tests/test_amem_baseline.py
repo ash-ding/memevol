@@ -124,9 +124,9 @@ def test_retrieve_rewrites_query_and_wraps_memory_string():
     assert m._system.k == 10                  # upstream default retrieve_k
 
 
-def test_retrieve_respects_cfg_retrieve_k():
+def test_retrieve_respects_config_retrieve_k():
     m = _memo_with_fakes()
-    m._cfg = {"retrieve_k": 4}                # instance attr shadows class default
+    m.config = {"retrieve_k": 4}              # per-instance config (constructor-injected in prod)
     asyncio.run(m.retrieve_memory_for_query(SimpleNamespace(init={"query": "q"})))
     assert m._system.k == 4
 

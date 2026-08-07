@@ -136,17 +136,16 @@ def _page_to_passage(page: Dict[str, Any]) -> str:
 
 
 class MemoryOSMemo(MemoClass):
-    _cfg: Dict = {}   # overridden per-run by eval_common.make_memo_class
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, config=None):
+        super().__init__(config)
         self._memo: Optional[Memoryos] = None
         self._instance_id = uuid.uuid4().hex[:12]   # per-user on-disk store
 
     def _ensure_system(self) -> None:
         if self._memo is not None:
             return
-        cfg = self._cfg
+        cfg = self.config
         save_dir = OUTPUTS_DIR / self._instance_id
         if save_dir.exists():
             shutil.rmtree(save_dir, ignore_errors=True)

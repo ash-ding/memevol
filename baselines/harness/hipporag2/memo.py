@@ -67,8 +67,8 @@ def _init_to_passages(init: Dict) -> List[str]:
 
 
 class HippoRAGMemo(MemoClass):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, config=None):
+        super().__init__(config)
         self._hippo = None
         self._passages: List[str] = []
         # NOTE: the recorders actually handed to build_memory_from_data/retrieve_memory_for_query
@@ -88,7 +88,7 @@ class HippoRAGMemo(MemoClass):
     def _ensure_hippo(self):
         if self._hippo is not None:
             return
-        cfg = self._cfg
+        cfg = self.config
         factory = cfg.get("_hippo_factory")
         embedding = cfg["embedding"]
         save_dir = str(OUTPUTS_DIR / f"{self._instance_id}_{embedding.replace('/', '_')}")
@@ -118,7 +118,7 @@ class HippoRAGMemo(MemoClass):
     async def retrieve_memory_for_query(self, recorder) -> Dict:
         self._ensure_hippo()   # defensive no-op if build_memory_from_data already ran
         query = recorder.init.get("query", "")
-        k = int(self._cfg.get("top_k", 5))
+        k = int(self.config.get("top_k", 5))
         # Prefer retrieve-only; fall back to rag_qa(...).docs if absent.
         if hasattr(self._hippo, "retrieve"):
             sols = self._hippo.retrieve(queries=[query], num_to_retrieve=k)

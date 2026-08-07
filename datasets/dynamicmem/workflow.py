@@ -108,7 +108,8 @@ class DynamicMemWorkflow(BaseWorkflow):
         for item in sampled:
             sampled_by_cp.setdefault(item["checkpoint_id"], []).append(item)
 
-        memo = self.memo_class()
+        memo = (self.memo_class(config=self.memo_config)
+                if self.memo_config is not None else self.memo_class())
         recorder = self.recorder_class()
         recorder.user_id = user_tag
         await self.phase1_log_init(recorder, app_logs)

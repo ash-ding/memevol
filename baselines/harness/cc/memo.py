@@ -192,8 +192,8 @@ async def ask_cc(question: str, tmp_dir: str, model: str, max_turns: int = 30,
 
 
 class CCMemo(MemoClass):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, config=None):
+        super().__init__(config)
         self._tmp_dir = None
         self._key = None
 
@@ -230,9 +230,9 @@ class CCMemo(MemoClass):
         prompt) with tool access to this user's temp dir. Requires
         build_memory_from_data/retrieve_memory_for_query to have already run at least once
         (sets self._tmp_dir + self._key)."""
-        ask = self._cfg.get("_ask_cc", ask_cc)
-        return await ask(question, self._tmp_dir, self._cfg["model"],
-                         self._cfg.get("max_turns", 30),
+        ask = self.config.get("_ask_cc", ask_cc)
+        return await ask(question, self._tmp_dir, self.config["model"],
+                         self.config.get("max_turns", 30),
                          system_prompt=_system_prompt(self._key))
 
     def __del__(self):

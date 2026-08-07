@@ -35,7 +35,6 @@ def test_hipporag_memo_retrieve_returns_passages(monkeypatch=None):
     shared QA agent (not HippoRAG's own reader) answers."""
     import asyncio
     from baselines.harness.hipporag2.memo import HippoRAGMemo
-    from baselines.harness.eval_common import make_memo_class
 
     class _FakeHippo:
         def __init__(self, **kw): pass
@@ -43,9 +42,8 @@ def test_hipporag_memo_retrieve_returns_passages(monkeypatch=None):
         def retrieve(self, queries, num_to_retrieve=5):
             class _S: docs = ["passage about hi"]
             return [_S()]
-    Cls = make_memo_class(HippoRAGMemo, embedding="e", llm_model="m", judge_model="j",
-                          _hippo_factory=lambda **kw: _FakeHippo())
-    memo = Cls()
+    memo = HippoRAGMemo(config=dict(embedding="e", llm_model="m", judge_model="j",
+                          _hippo_factory=lambda **kw: _FakeHippo()))
     class _Rec:  # minimal recorder
         user_id = "u1"
         init = {"conversation": {"speaker_a": "A", "speaker_b": "B",

@@ -50,7 +50,7 @@ OUTPUTS_DIR = Path(__file__).resolve().parent / "outputs"
 # SimpleMem settings that are read ONLY from its global `settings` singleton
 # (env / config.py), never from the SimpleMemSystem constructor. We stamp them
 # into os.environ before the first system is built so per-run config takes hold.
-# Keyed by _cfg name → SimpleMem env var name.
+# Keyed by config name → SimpleMem env var name.
 _ENV_FROM_CFG = {
     "embedding_model": "EMBEDDING_MODEL",
     "window_size": "WINDOW_SIZE",
@@ -110,10 +110,9 @@ def _entry_to_passage(entry: MemoryEntry) -> str:
 
 
 class SimpleMemMemo(MemoClass):
-    _cfg: Dict = {}   # overridden per-run by eval_common.make_memo_class
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, config=None):
+        super().__init__(config)
         self._system: Optional[SimpleMemSystem] = None   # lazy — built on first hook call
         self._instance_id = uuid.uuid4().hex[:12]        # per-user LanceDB scoping
         self._next_id = 1                                # sequential Dialogue ids across BUILD calls
@@ -121,7 +120,7 @@ class SimpleMemMemo(MemoClass):
     def _ensure_system(self):
         if self._system is not None:
             return
-        cfg = self._cfg
+        cfg = self.config
         # Stamp settings that SimpleMem reads only from env (idempotent; identical
         # for every user, so process-global env is safe).
         for key, env in _ENV_FROM_CFG.items():

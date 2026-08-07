@@ -197,8 +197,14 @@ class BaseWorkflow(ABC):
         max_logs: Optional[int] = None,
         eval_n_qa: Optional[int] = None,
         judge_model: str = "gpt-5-mini",
+        memo_config: Optional[Dict] = None,
     ):
         self.memo_class = memo_class
+        # Optional constructor config for the per-user memo instances. None →
+        # zero-arg instantiation (forge-evolved harnesses; their settings are
+        # baked into the generated code). A dict → passed as memo_class(config=...)
+        # (the parameterized harness baselines).
+        self.memo_config = memo_config
         self.memo_sha = ""                  # set by caller (for logging only)
         self.status = "search"
         self.max_logs = max_logs
@@ -454,7 +460,8 @@ class BaseWorkflow(ABC):
         sample_seed = (stage_spec or {}).get("sample_seed")
         init_data, qa_pairs = await self.load_user_data(user_dir, qa_size, sample_seed=sample_seed)
 
-        memo = self.memo_class()
+        memo = (self.memo_class(config=self.memo_config)
+                if self.memo_config is not None else self.memo_class())
 
         # Cross-stage memory cache: Phase-1 input for this benchmark family is
         # independent of the QA count, so the final memory built at an earlier

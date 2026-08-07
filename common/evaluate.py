@@ -414,6 +414,7 @@ async def evaluate_memo(
     smoke: bool = False,
     max_logs: Optional[int] = None,
     memo_sha: str = "",
+    memo_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """Evaluate one memo on one dataset/split — the single, EXECUTION-INDEPENDENT
     entry point. It runs the whole evaluation in the CURRENT process; isolation
@@ -509,7 +510,7 @@ async def evaluate_memo(
 
         workflow = workflow_cls(
             memo_class=memo_class, model=qa_model, max_logs=max_logs,
-            judge_model=judge_model,
+            judge_model=judge_model, memo_config=memo_config,
         )
         workflow.memo_sha = memo_sha
         workflow.status = split

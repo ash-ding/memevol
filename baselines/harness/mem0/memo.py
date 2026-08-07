@@ -106,10 +106,9 @@ def _init_to_messages(init: Dict) -> List[Dict[str, str]]:
 
 
 class Mem0Memo(MemoClass):
-    _cfg: Dict = {}   # overridden per-run by eval_common.make_memo_class
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, config=None):
+        super().__init__(config)
         self._memory: Optional[Memory] = None
         self._instance_id = uuid.uuid4().hex[:12]
         self._user_id = f"u_{self._instance_id}"
@@ -117,7 +116,7 @@ class Mem0Memo(MemoClass):
     def _ensure_system(self) -> None:
         if self._memory is not None:
             return
-        cfg = self._cfg
+        cfg = self.config
         store = OUTPUTS_DIR / self._instance_id
         if store.exists():
             shutil.rmtree(store, ignore_errors=True)
@@ -147,10 +146,10 @@ class Mem0Memo(MemoClass):
         # message list at once, so batching is both its intended usage and the
         # difference between a few dozen LLM calls and several hundred. The
         # batch size is a knob because the extraction prompt has to fit.
-        size = max(1, int(self._cfg.get("add_batch_size") or 20))
+        size = max(1, int(self.config.get("add_batch_size") or 20))
         for i in range(0, len(messages), size):
             self._memory.add(messages[i:i + size], user_id=self._user_id,
-                             infer=bool(self._cfg.get("infer", True)))
+                             infer=bool(self.config.get("infer", True)))
 
     async def retrieve_memory_for_query(self, recorder) -> Dict:
         self._ensure_system()
@@ -158,8 +157,8 @@ class Mem0Memo(MemoClass):
         res = self._memory.search(
             query,
             filters={"user_id": self._user_id},
-            top_k=int(self._cfg.get("top_k") or 20),
-            threshold=float(self._cfg.get("threshold") or 0.0),
+            top_k=int(self.config.get("top_k") or 20),
+            threshold=float(self.config.get("threshold") or 0.0),
         )
         results = res.get("results") if isinstance(res, dict) else res
         passages = [str(r.get("memory", "")) for r in (results or []) if r.get("memory")]

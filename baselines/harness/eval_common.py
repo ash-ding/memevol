@@ -3,39 +3,17 @@ simplemem, zep, mem0, memoryos): adapt a fixed MemoClass into the shared,
 execution-independent `common.evaluate.evaluate_memo` — the SAME function
 forge's container and alma's subprocess run — so a baseline's score is
 identical-by-construction to the main method's data path, not merely
-comparable. What lives here is only the baseline-side glue: make_memo_class
-(config injection + picklability) and the thin run_baseline wrapper.
+comparable. Config reaches the per-user memo instances through the
+constructor (`memo_config` → `memo_class(config=...)`, see
+common/memo_class.py) — the old make_memo_class dynamic-subclass injection
+was removed 2026-08-06.
 """
 from __future__ import annotations
 
-import sys
 from pathlib import Path
 from typing import Any, Dict, Optional, Type
 
 from common.memo_class import MemoClass
-
-
-def make_memo_class(base_cls: Type[MemoClass], **cfg) -> Type[MemoClass]:
-    """Workflow instantiates memo_class() with NO args (common/workflow.py:465),
-    so per-run config travels as a class attribute the instance reads via
-    self._cfg.
-
-    The generated class is made PICKLABLE: the cross-stage memory cache
-    (common/memory_cache.py) pickles the built memo, and a bare `type(...)`
-    subclass of an ABC gets `__module__ == "abc"` and is unresolvable by
-    pickle (attribute lookup fails) — so the pickle would silently fail and
-    every memcache save/load would degrade to a rebuild. Anchoring the class in
-    the base's module (so `getattr(module, qualname) is cls`) fixes that.
-    NOTE: called once per run (run.py's main), so the single stable name is
-    safe; a second call with the same base rebinds the module attribute."""
-    name = f"Configured{base_cls.__name__}"
-    cls = type(name, (base_cls,), {"_cfg": cfg})
-    cls.__module__ = base_cls.__module__
-    cls.__qualname__ = name
-    mod = sys.modules.get(base_cls.__module__)
-    if mod is not None:
-        setattr(mod, name, cls)
-    return cls
 
 
 async def run_baseline(
@@ -44,6 +22,7 @@ async def run_baseline(
     split: str,
     single_stage: Optional[Dict[str, Any]] = None,
     memo_class: Type[MemoClass],
+    memo_config: Optional[Dict[str, Any]] = None,
     qa_model: str,
     judge_model: str,
     out_dir: Path,
@@ -76,7 +55,8 @@ async def run_baseline(
     from common.sampling import derive_sample_seed
 
     metrics = await evaluate_memo(
-        memo_class=memo_class, dataset=dataset, split=split,
+        memo_class=memo_class, memo_config=memo_config,
+        dataset=dataset, split=split,
         progressive=progressive, out_dir=out_dir,
         qa_model=qa_model, judge_model=judge_model,
         stages=stages, single_stage=single_stage,

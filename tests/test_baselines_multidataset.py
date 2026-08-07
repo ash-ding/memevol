@@ -1,6 +1,6 @@
 """Shared-contract tests for the baseline harness layer (registry resolution,
 BaseWorkflow/DynamicMemWorkflow default-answer signature, sizing wire specs,
-task-list derivation, eval_common's make_memo_class + run_baseline). This file
+task-list derivation, eval_common's run_baseline). This file
 is BASELINE-FREE — it must NOT import any concrete baseline's memo (cc,
 hipporag2, amem); those live in their own tests/test_<name>_baseline.py, run
 in that baseline's own venv. This file runs in the shared dev/test env:
@@ -191,16 +191,28 @@ def test_task_list_identical_to_main_method():
     assert task_list(locomo_env, "locomo", {"n_conversations": 2}) == locomo_env.get_task_list("test", 2)
 
 
-def test_make_memo_class_no_arg_instantiable():
-    from baselines.harness.eval_common import make_memo_class
+def test_memo_constructor_config():
+    """Config reaches memo instances through the CONSTRUCTOR (2026-08-06,
+    replacing the make_memo_class dynamic-subclass injection): each instance
+    gets its own private copy at self.config, mutations never leak across
+    instances (the fresh-instance-per-user guarantee extends to config), and
+    plain instances pickle without any class-anchoring magic."""
+    import pickle
     from common.memo_class import MemoClass
-    class Base(MemoClass):
-        async def build_memory_from_data(self, r): return None
-        async def retrieve_memory_for_query(self, r): return {"cfg": self._cfg}
-    Cls = make_memo_class(Base, model="x", k=3)
-    inst = Cls()  # workflow instantiates with NO args
-    assert inst._cfg == {"model": "x", "k": 3}
-    assert isinstance(inst, MemoClass)
+
+    cfg = {"model": "x", "k": 3}
+    a = MemoClass(config=cfg)
+    b = MemoClass(config=cfg)
+    assert a.config == {"model": "x", "k": 3}
+    # per-instance copy: mutating one instance (or the caller dict) leaks nowhere
+    a.config["k"] = 99
+    cfg["model"] = "mutated"
+    assert b.config == {"model": "x", "k": 3}
+    # zero-arg still works (forge-evolved harnesses are never handed a config)
+    assert MemoClass().config == {}
+    # plain instances pickle round-trip, config included (memcache relies on it)
+    restored = pickle.loads(pickle.dumps(a))
+    assert restored.config["k"] == 99
 
 
 # -------------------- integration: run_baseline end-to-end (locomo) --------------------
