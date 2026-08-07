@@ -1,15 +1,23 @@
 """Forge in-container runner.
 
-Invoked by forge/evaluator.py inside Singularity:
+Invoked by forge/evaluator.py inside Singularity — ONE container per
+(harness, dataset) runs the WHOLE evaluation plan:
 
-    python /app/forge/launch.py --harness-dir /harness --out-dir /out ...
+    python /app/forge/launch.py --harness-dir /harness --out-dir /out \
+        --dataset locomo --split search --plan-json '{"progressive": true, ...}'
 
 Steps:
-  1. Dynamically load MemoStructure subclass from /harness/harness.py.
-  2. Run datasets.dynamicmem.workflow.DynamicMemWorkflow across task users.
-     (The workflow is methodology-neutral per-user execution — two phases,
-     timeouts, trace capture, token tracker — and is reused directly.)
-  3. Write score.json, traces/, token_usage.json → /out.
+  1. Dynamically load the MemoStructure subclass from /harness/harness.py.
+  2. One call into the shared, execution-independent
+     common.evaluate.evaluate_memo — the staged stage1→2→3 gauntlet
+     (progressive), the single_stage single pass, or the sanity-size smoke
+     run, all inside THIS container (promotion/elimination decisions
+     included; the host no longer orchestrates stages).
+  3. evaluate_memo writes /out/<stage>/{score.json,token_usage.json,traces/},
+     /out/stages.json and the reached-stage root copies; this runner
+     additionally writes /out/metrics.json (evaluate_memo's return dict —
+     raw_score/score_max/per_user_stddev/tokens/stage/eliminated) for the
+     host to read back.
 
 The harness_dir is bind-mounted read-only; /out is bind-mounted read-write.
 Binds are SELECTIVE (v10): only common/, datasets/, forge/{__init__,launch,
@@ -28,34 +36,14 @@ import os
 import sys
 import traceback
 from pathlib import Path
-from typing import Any, List, Type
-
-import numpy as np
+from typing import Type
 
 _project_root = Path(__file__).resolve().parent.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
 from common.harness_base import MemoStructure
-from common.tokens import init_global_tracker
-
-# Workflow registry — add new benchmarks here. The env module must expose
-# `get_task_list(status, eval_n_samples)`. (Token tracker is now lazy-read
-# from `common.tokens.GLOBAL_TOKEN_TRACKER` by `Judge`/`Agent` directly —
-# no per-module injection needed.)
-from datasets.dynamicmem import env as dm_env
-from datasets.dynamicmem.workflow import DynamicMemWorkflow
-from datasets.locomo import env as locomo_env
-from datasets.locomo.workflow import LoCoMoWorkflow
-from datasets.longmemeval import env as lme_env
-from datasets.longmemeval.workflow import LongMemEvalSWorkflow, LongMemEvalMWorkflow
-
-WORKFLOWS = {
-    "dynamicmem":    (DynamicMemWorkflow,   dm_env),
-    "locomo":        (LoCoMoWorkflow,       locomo_env),
-    "longmemeval_s": (LongMemEvalSWorkflow, lme_env),
-    "longmemeval_m": (LongMemEvalMWorkflow, lme_env),
-}
+from datasets.registry import DATASETS
 
 
 def _load_harness_class(harness_dir: Path) -> Type[MemoStructure]:
@@ -105,44 +93,9 @@ def _load_harness_class(harness_dir: Path) -> Type[MemoStructure]:
     )
 
 
-def _build_score(records: List[Any], score_max: int = 10) -> dict:
-    rewards: List[float] = []
-    per_user: dict = {}
-    invalid: list = []
-    for rec in records:
-        if isinstance(rec, Exception):
-            invalid.append({
-                "user_id": getattr(rec, "user_id", "unknown"),
-                "error": repr(rec),
-            })
-            continue
-        uid = getattr(rec, "user_id", "unknown")
-        r = float(getattr(rec, "reward", 0.0))
-        steps = getattr(rec, "steps", [])
-        fi = getattr(rec, "failure_info", None)
-        rewards.append(r)
-        per_user[uid] = {"reward": r, "n_qa": len(steps), "failure_info": fi}
-    overall = float(np.mean(rewards)) if rewards else 0.0
-    se = (
-        float(np.std(rewards, ddof=1) / np.sqrt(len(rewards)))
-        if len(rewards) > 1 else 0.0
-    )
-    return {
-        "benchmark_eval_score": {
-            "benchmark_overall_eval_score": overall,
-            "benchmark_overall_eval_standard_deviation": se,
-            # Maximum score the judge can produce — orchestrator uses this to
-            # normalize each benchmark to [0, 1] before mean. All three current
-            # benchmarks report 1 (DynamicMem TCE holistic 0.0-1.0 partial
-            # credit; LoCoMo/LongMemEval 0/1 binary).
-            "score_max": int(score_max),
-        },
-        "per_user": per_user,
-        "invalid_users": invalid,
-    }
-
-
 def _write_error(out_dir: Path, err: str) -> None:
+    """Load-failure artifacts: an error score.json + a matching metrics.json so
+    the host always has both to read back."""
     out_dir.mkdir(parents=True, exist_ok=True)
     payload = {
         "benchmark_eval_score": {
@@ -154,20 +107,20 @@ def _write_error(out_dir: Path, err: str) -> None:
     }
     with (out_dir / "score.json").open("w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
+    with (out_dir / "metrics.json").open("w", encoding="utf-8") as f:
+        json.dump({
+            "raw_score": 0.0, "score_max": 1, "per_user_stddev": None,
+            "tokens": 0, "stage": 0.0, "eliminated": True, "error": err,
+        }, f, indent=2, ensure_ascii=False)
 
 
 async def _async_main(args: argparse.Namespace) -> None:
+    from common.evaluate import evaluate_memo
+    from common.memory_cache import harness_fingerprint
+
     harness_dir = Path(args.harness_dir)
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-
-    if args.dataset not in WORKFLOWS:
-        _write_error(
-            out_dir,
-            f"unknown dataset '{args.dataset}'; known: {sorted(WORKFLOWS)}",
-        )
-        return
-    workflow_cls, env_module = WORKFLOWS[args.dataset]
 
     try:
         memo_class = _load_harness_class(harness_dir)
@@ -176,55 +129,44 @@ async def _async_main(args: argparse.Namespace) -> None:
         _write_error(out_dir, err)
         return
 
-    tracker = init_global_tracker()
+    # The evaluation plan, serialized by the host (forge/evaluator.py):
+    #   progressive: bool — gauntlet vs single_stage single pass
+    #   smoke: bool       — ONE sanity_check-sized pass (sanity gate / smoke_test)
+    #   stages: dict|null — per-stage sizes (resolved by the host config layer)
+    #   single_stage: dict|null — single-pass sizes (progressive=false)
+    #   sample_seed: str|null   — per-run nested-sampling seed
+    plan = json.loads(args.plan_json)
 
-    # Stage spec: benchmark-native size fields normalized by the orchestrator
-    # (see forge/orchestrator.py::stage_wire_spec). `n_samples` caps the task
-    # list — a deterministic PREFIX of the split, so a smaller stage's task
-    # list is always a prefix of a larger one (staged nesting).
-    stage_spec = json.loads(args.stage_spec)
-    # n_samples None = no cap (a null single_stage/stage field = the whole split).
-    n_samples = stage_spec.get("n_samples")
-    task_list = env_module.get_task_list(
-        status=args.split,
-        eval_n_samples=None if n_samples is None else int(n_samples),
-        seed=stage_spec.get("sample_seed"),
-    )
+    try:
+        metrics = await evaluate_memo(
+            memo_class=memo_class,
+            dataset=args.dataset,
+            split=args.split,
+            progressive=bool(plan.get("progressive", True)),
+            out_dir=out_dir,
+            qa_model=args.model,
+            judge_model=args.judge_model,
+            stages=plan.get("stages"),
+            single_stage=plan.get("single_stage"),
+            max_sample_concurrent=args.max_sample_concurrent,
+            sample_seed=plan.get("sample_seed"),
+            memory_cache=bool(args.memcache_dir),
+            memcache_fingerprint=harness_fingerprint(harness_dir),
+            memcache_dir=Path(args.memcache_dir) if args.memcache_dir else None,
+            smoke=bool(plan.get("smoke", False)),
+            max_logs=args.max_logs,
+            memo_sha=harness_dir.name,
+        )
+    except Exception as exc:
+        # Config/plan errors (e.g. a missing single_stage block that slipped
+        # past the host) or unexpected evaluator failures: leave readable
+        # artifacts rather than a bare traceback + empty /out.
+        err = f"[{type(exc).__name__}] {exc}\n{traceback.format_exc()}"
+        _write_error(out_dir, err)
+        return
 
-    workflow = workflow_cls(
-        memo_class=memo_class,
-        model=args.model,
-        max_logs=args.max_logs,
-        judge_model=args.judge_model,
-    )
-    workflow.memo_sha = harness_dir.name
-    workflow.status = args.split
-    workflow.output_run_dir = out_dir
-
-    # Cross-stage memory cache: active for the gauntlet tiers (stage1..3) and
-    # the progressive=false single pass ("single"; "full" kept for back-compat
-    # — no caller emits it anymore); sanity/dev runs never read or write it
-    # (harness code can still change during the sanity-fix retry loop).
-    if args.memcache_dir and args.stage in ("stage1", "stage2", "stage3", "full", "single"):
-        from common.memory_cache import harness_fingerprint
-        workflow.memory_cache_dir = Path(args.memcache_dir)
-        workflow.harness_fingerprint = harness_fingerprint(harness_dir)
-
-    records, rlen = await workflow.run_all_users(
-        task_list=task_list,
-        stage=args.stage,
-        stage_spec=stage_spec,
-        max_sample_concurrent=args.max_sample_concurrent,
-    )
-
-    score = _build_score(records[:rlen], score_max=workflow.judge_score_max)
-    with (out_dir / "score.json").open("w", encoding="utf-8") as f:
-        json.dump(score, f, indent=2, ensure_ascii=False)
-
-    workflow.save_full_traces(records[:rlen])
-
-    with (out_dir / "token_usage.json").open("w", encoding="utf-8") as f:
-        json.dump(tracker.summary(), f, indent=2, ensure_ascii=False)
+    with (out_dir / "metrics.json").open("w", encoding="utf-8") as f:
+        json.dump(metrics, f, indent=2, ensure_ascii=False)
 
     # chroma / httpx background threads can delay normal interpreter
     # shutdown. Artifacts are flushed; exit abruptly.
@@ -235,24 +177,16 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--harness-dir", required=True)
     parser.add_argument("--out-dir", required=True)
-    parser.add_argument("--dataset", default="dynamicmem", choices=sorted(WORKFLOWS))
-    parser.add_argument("--split", default="search", choices=["search", "test"],
-                        help="Benchmark split (the user-facing `mode` maps search/test/dev onto this)")
-    parser.add_argument("--stage", default="stage3",
-                        choices=["sanity", "stage1", "stage2", "stage3", "full", "single"],
-                        help="Staged-evaluation tier this run belongs to "
-                             "('single' = the progressive=false one-pass tier, "
-                             "sized by the dataset's single_stage config block; "
-                             "'full' is a legacy alias, no longer emitted). "
-                             "Gates the cross-stage memory cache (active for "
-                             "stage1..3 + single/full); sizes come from --stage-spec.")
-    parser.add_argument("--stage-spec", required=True,
-                        help='JSON stage spec, e.g. \'{"n_samples": 2, "n_qa": 20}\' '
-                             '(dynamicmem: n_samples/n_checkpoints/n_task_a/n_task_c; '
-                             'locomo: n_samples/n_qa; longmemeval: n_samples).')
+    parser.add_argument("--dataset", default="dynamicmem", choices=sorted(DATASETS))
+    parser.add_argument("--split", default="search", choices=["search", "test"])
+    parser.add_argument("--plan-json", required=True,
+                        help='JSON evaluation plan, e.g. \'{"progressive": true, '
+                             '"smoke": false, "stages": {...}, "single_stage": null, '
+                             '"sample_seed": null}\'. The whole gauntlet (or single '
+                             'pass) runs inside THIS container via evaluate_memo.')
     parser.add_argument("--memcache-dir", default=None,
                         help="RW dir for cross-stage memory snapshots "
-                             "(omit to disable caching)")
+                             "(omit to disable caching; never used for smoke)")
     parser.add_argument("--model", default="gpt-5-mini")
     parser.add_argument("--judge-model", default="gpt-5-mini")
     parser.add_argument("--max-logs", type=int, default=None)

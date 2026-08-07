@@ -315,45 +315,24 @@ def test_full_wire_spec_shapes():
     assert full_wire_spec("longmemeval_s") == {"n_samples": None}
 
 
-def test_gauntlet_single_stage_from_single_stage_block():
-    """run_gauntlet(progressive=False) now resolves its plan via
-    resolve_sampling_plan: progressive=False (progressive=False) sizes ONE
+def test_single_stage_plan_from_single_stage_block():
+    """resolve_sampling_plan(progressive=False) sizes ONE ('single', spec, None)
     pass from the required `single_stage` block — replacing the old automatic
-    full_wire_spec whole-split."""
-    import asyncio
-    from common.evaluate import run_gauntlet
-    seen = []
-
-    async def run_stage(ds, stage, spec):
-        seen.append((stage, spec)); return None
-
-    def read_metrics(ds, stage):
-        return {"raw_score": 1.0, "score_max": 1, "tokens": {}}
-
-    cfg = {"locomo": {"single_stage": {"n_conversations": 2, "n_qa": 20}}}
-    out = asyncio.run(run_gauntlet(
-        datasets_config=cfg, progressive=False, smoke=False,
-        sample_seed_for=lambda ds: None, run_stage_fn=run_stage, read_metrics_fn=read_metrics))
-    assert [s for s, _ in seen] == ["single"]                       # one pass, no gauntlet
-    assert seen[0][1] == {"n_samples": 2, "n_qa": 20}               # sized by single_stage
-    assert out["locomo"]["eliminated"] is False
-    assert out["locomo"]["stage"] == 4.0                            # "single" -> FULL_STAGE
+    full_wire_spec whole-split. (evaluate_memo consumes this plan; its behavior
+    is covered end-to-end in tests/test_run_gauntlet.py.)"""
+    from common.evaluate import resolve_sampling_plan
+    plan = resolve_sampling_plan(
+        "locomo", {"single_stage": {"n_conversations": 2, "n_qa": 20}}, progressive=False)
+    assert plan == [("single", {"n_samples": 2, "n_qa": 20}, None)]
 
 
-def test_gauntlet_progressive_false_missing_single_stage_raises():
-    """progressive=false (progressive=false) with no `single_stage` block must
-    raise — no silent automatic whole-split anymore."""
-    import asyncio
-    from common.evaluate import run_gauntlet
-
-    async def run_stage(ds, stage, spec): return None
-
-    def read_metrics(ds, stage): return {"raw_score": 1.0, "score_max": 1, "tokens": {}}
-
+def test_single_stage_plan_missing_single_stage_raises():
+    """progressive=false with no `single_stage` block must raise — no silent
+    automatic whole-split anymore."""
+    from common.evaluate import resolve_sampling_plan
     raised = False
     try:
-        asyncio.run(run_gauntlet(datasets_config={"locomo": {"stages": {}}}, progressive=False,
-            smoke=False, sample_seed_for=lambda ds: None, run_stage_fn=run_stage, read_metrics_fn=read_metrics))
+        resolve_sampling_plan("locomo", {"stages": {}}, progressive=False)
     except ValueError as e:
         raised = "single_stage" in str(e)
     assert raised

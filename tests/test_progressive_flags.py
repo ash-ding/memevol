@@ -127,45 +127,41 @@ def test_launch_style_seed_forwarding_varies_task_list():
     assert set(step0) <= set(pick({"n_samples": None}))  # still within the split
 
 
-def test_single_stage_name_recognized_by_all_container_wire_gates():
-    """Fix-round regression lock (2026-07-26 review): resolve_sampling_plan
-    (progressive=false) emits the plan/stage name "single" — every place
-    that gates on the stage-name literal (memcache mount + wall-clock
-    timeout, on BOTH the host orchestrator side and the in-container
-    launch.py side) must recognize it, or memory_cache=True silently
-    becomes a no-op / the container crashes with an argparse error. This is
-    a static/source guard on top of the behavioral
-    test_evaluate_harness_full_wires_memcache_dir in test_heldout.py, which
-    exercises the actual gate end-to-end."""
-    import inspect
-    import forge.launch as launch_mod
+def test_plan_kinds_recognized_by_evaluator_timeouts():
+    """Regression lock (single-container rework, 2026-08): the evaluator picks
+    its wall-clock cap from the plan kind — every kind the orchestrator can
+    emit (smoke / gauntlet / single) must have a timeout entry, or a
+    progressive=false run would silently fall back to the default cap."""
     import forge.evaluator as evaluator_mod
-    import forge.orchestrator as orchestrator_mod
-
-    launch_src = inspect.getsource(launch_mod)
-    # --stage argparse choices
-    choices_start = launch_src.index('choices=["sanity", "stage1", "stage2", "stage3"')
-    assert '"single"' in launch_src[choices_start:choices_start + 200]
-    # memcache mount gate
-    gate_start = launch_src.index("args.stage in (")
-    assert '"single"' in launch_src[gate_start:gate_start + 100]
-
-    assert "single" in evaluator_mod.SUBPROCESS_TIMEOUT
-
-    orch_src = inspect.getsource(orchestrator_mod.evaluate_harness)
-    gate_start = orch_src.index("stage_name in (")
-    assert '"single"' in orch_src[gate_start:gate_start + 100]
+    for kind in ("smoke", "gauntlet", "single"):
+        assert kind in evaluator_mod.SUBPROCESS_TIMEOUT, kind
+    # gauntlet cap must cover the whole stage1+2+3 budget in one container
+    assert evaluator_mod.SUBPROCESS_TIMEOUT["gauntlet"] >= (2 + 4 + 8) * 3600
 
 
-def test_launch_py_forwards_sample_seed_to_get_task_list():
-    # Lightweight source check: guard against someone reverting the
-    # forge/launch.py forwarding line back to the old no-seed call.
+def test_memcache_mounted_for_eval_never_smoke():
+    """The cross-stage memory cache must be wired for gauntlet + single evals
+    and NEVER for smoke/sanity (harness code can still change during the
+    sanity-fix retry loop) — both on the host (orchestrator mounts the
+    persistent dir) and inside evaluate_memo (skips smoke)."""
     import inspect
-    import forge.launch as launch_mod
-    src = inspect.getsource(launch_mod)
+    import forge.orchestrator as orchestrator_mod
+    import common.evaluate as evaluate_mod
+    orch_src = inspect.getsource(orchestrator_mod.evaluate_harness)
+    assert "if memory_cache and not smoke:" in orch_src
+    em_src = inspect.getsource(evaluate_mod.evaluate_memo)
+    assert "if memory_cache and not smoke:" in em_src
+
+
+def test_evaluate_memo_forwards_sample_seed_to_get_task_list():
+    # Lightweight source check: guard against someone reverting the shared
+    # evaluate_memo's task-list call back to the old no-seed form.
+    import inspect
+    import common.evaluate as evaluate_mod
+    src = inspect.getsource(evaluate_mod.evaluate_memo)
     call_start = src.index("task_list = env_module.get_task_list(")
     call_snippet = src[call_start:call_start + 300]
-    assert "seed=stage_spec.get(\"sample_seed\")" in call_snippet
+    assert "seed=spec.get(\"sample_seed\")" in call_snippet
 
 
 # ---------------- runner ----------------

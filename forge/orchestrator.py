@@ -84,7 +84,7 @@ from common.config import (
 from common.evaluate import (  # re-export: config moved to common/ 2026-07-25
     STAGE_ORDER, DEFAULT_STAGES, FULL_STAGE, _FAMILY_FIELDS,
     _benchmark_family, _wire_size, stage_wire_spec, full_wire_spec,
-    stage_plan, _resolve_dataset_stages, run_gauntlet,
+    stage_plan, _resolve_dataset_stages, resolve_sampling_plan,
     missing_sizing_config,
 )
 from common.sampling import derive_sample_seed
@@ -951,7 +951,20 @@ def _read_dataset_metrics(harness_dir: Path, dataset: str, subdir: Optional[str]
     if subdir:
         ds_dir = ds_dir / subdir
 
-    # score.json: raw_score + score_max + per_user_stddev
+    # Preferred: metrics.json — evaluate_memo's return dict written by the
+    # container (single-container evals, 2026-08). Carries stage/eliminated too.
+    metrics_json = ds_dir / "metrics.json"
+    if metrics_json.exists():
+        try:
+            with metrics_json.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict) and "raw_score" in data:
+                return {**metrics, **data}
+        except Exception as exc:
+            log.warning(f"could not parse {dataset} metrics.json for {harness_dir.name}: {exc}")
+
+    # Legacy fallback: score.json (raw_score + score_max + per_user_stddev) —
+    # pre-2026-08 workspaces + host-side failure markers.
     score_json = ds_dir / "score.json"
     if score_json.exists():
         try:
@@ -1029,29 +1042,29 @@ def _publish_run_artifacts(run_dir: Path, dst_dir: Path) -> None:
     promotion) would silently operate on stale results.
     """
     dst_dir.mkdir(parents=True, exist_ok=True)
-    for name in ("score.json", "token_usage.json", "subprocess.log"):
-        stale = dst_dir / name
-        if stale.exists():
+    # The container writes the WHOLE evaluation layout into /out now (per-stage
+    # subdirs + stages.json + metrics.json + root copies), so publish is a full
+    # tree move: clear every prior eval artifact from dst_dir EXCEPT the
+    # protected persistent entries (the host-managed memory_cache mount and the
+    # separately-published sanity/ dir), then copy everything the run produced.
+    _PROTECTED = {"memory_cache", "sanity"}
+    if run_dir.exists():
+        for stale in dst_dir.iterdir():
+            if stale.name in _PROTECTED:
+                continue
             try:
-                stale.unlink()
+                if stale.is_dir():
+                    shutil.rmtree(stale, ignore_errors=True)
+                else:
+                    stale.unlink()
             except OSError as exc:
                 log.warning(f"publish: could not remove stale {stale}: {exc}")
-    stale_traces = dst_dir / "traces"
-    if stale_traces.exists():
-        shutil.rmtree(stale_traces, ignore_errors=True)
-
-    for name in ("score.json", "token_usage.json", "subprocess.log"):
-        src = run_dir / name
-        if src.exists():
-            shutil.copy2(str(src), str(dst_dir / name))
-    for sub in ("traces",):
-        src_dir = run_dir / sub
-        if not src_dir.exists():
-            continue
-        dst_sub = dst_dir / sub
-        dst_sub.mkdir(exist_ok=True)
-        for p in src_dir.iterdir():
-            shutil.copy2(str(p), str(dst_sub / p.name))
+        for src in run_dir.iterdir():
+            dst = dst_dir / src.name
+            if src.is_dir():
+                shutil.copytree(str(src), str(dst), dirs_exist_ok=True)
+            else:
+                shutil.copy2(str(src), str(dst))
     # Drop the staging dir entirely. If a copy above failed, rmtree still
     # runs — the score.json that ends up in dst_dir remains the source of
     # truth, and duplicating staging on a partial failure isn't useful.
@@ -1197,8 +1210,12 @@ async def sanity_check_harness(
                 # Sanity exists only inside the search loop — always the
                 # search split (held-out flows never run sanity).
                 split="search",
-                stage="sanity",
-                stage_spec=stage_wire_spec(ds, params["stages"]["sanity_check"]),
+                # smoke plan → evaluate_memo(smoke=True) in-container: ONE
+                # sanity_check-sized pass (sizes from the stages block),
+                # artifacts at the /out root.
+                plan={"progressive": True, "smoke": True,
+                      "stages": params.get("stages"), "single_stage": None,
+                      "sample_seed": None},
                 model=model,
                 judge_model=params.get("judge_model", judge_model),
                 max_sample_concurrent=max_sample_concurrent,
@@ -1264,28 +1281,36 @@ async def evaluate_harness(
     """
     harness_dir = paths.harnesses_dir / harness_id
 
-    # --- injected stage EXECUTION (container exec + publish + memcache) ------
-    # run_gauntlet owns only the promotion/elimination/cost/telemetry logic;
-    # the container run, artifact publishing, memcache-dir gating and the
-    # scoreless-crash synthesis stay here (the CALLER's concern). The output
-    # dir + real split are captured in this closure, not run_gauntlet params:
-    # the "sanity" (smoke) stage publishes at the dataset root on the search
-    # split; gauntlet/full stages publish to a per-stage subdir on `split`.
-    async def _run_stage_fn(ds: str, stage_name: str,
-                            spec: Dict[str, Any]) -> Optional[Exception]:
-        ds_judge = datasets_config[ds].get("judge_model", judge_model)
+    # ONE container per (harness, dataset) runs the WHOLE plan (all gauntlet
+    # stages + promotion decisions happen in-container via the shared
+    # evaluate_memo). The host only: launches the container, publishes /out
+    # into harnesses/<id>/<ds>/, narrates the in-container stage decisions
+    # from stages.json, and reads back metrics.json.
+    per_ds: Dict[str, Dict[str, Any]] = {}
+    for ds, params in datasets_config.items():
+        # Pre-flight sizing validation (cheap, pure) — a config error like a
+        # missing `single_stage` block must fail fast HERE, not surface as an
+        # opaque in-container crash after a Singularity launch.
+        if not smoke:
+            resolve_sampling_plan(ds, params, progressive=progressive)
+        ds_judge = params.get("judge_model", judge_model)
         dst_root = _dataset_dir(harness_dir, ds)
-        if stage_name == "sanity":
-            dst, stage_split = dst_root, "search"
-        else:
-            dst, stage_split = dst_root / stage_name, split
-        run_dir = paths.runs_dir / f"{harness_id}_{int(time.time())}_{ds}_{stage_name}"
-        # Cross-stage memory cache: gauntlet tiers + the progressive=false
-        # single pass (launch.py gates on the stage name too; sanity/dev
-        # execs never get the mount). "full" kept for back-compat — no
-        # caller emits it anymore, resolve_sampling_plan names it "single".
+        # smoke runs live on the search split (they exist only inside the
+        # search loop); everything else uses the caller's split.
+        stage_split = "search" if smoke else split
+        plan = {
+            "progressive": progressive,
+            "smoke": smoke,
+            "stages": params.get("stages"),
+            "single_stage": params.get("single_stage"),
+            "sample_seed": sample_seed_for(ds),
+        }
+        run_dir = paths.runs_dir / f"{harness_id}_{int(time.time())}_{ds}"
+        # Persistent cross-stage memory cache (host dir bound at /memcache);
+        # never mounted for smoke (harness code can still change during the
+        # sanity-fix retry loop).
         memcache_dir: Optional[Path] = None
-        if memory_cache and stage_name in ("stage1", "stage2", "stage3", "full", "single"):
+        if memory_cache and not smoke:
             memcache_dir = dst_root / "memory_cache"
             memcache_dir.mkdir(parents=True, exist_ok=True)
         crashed: Optional[Exception] = None
@@ -1296,8 +1321,7 @@ async def evaluate_harness(
                 out_dir=run_dir,
                 dataset=ds,
                 split=stage_split,
-                stage=stage_name,
-                stage_spec=spec,
+                plan=plan,
                 model=model,
                 judge_model=ds_judge,
                 max_sample_concurrent=max_sample_concurrent,
@@ -1308,80 +1332,53 @@ async def evaluate_harness(
                 data_isolation_binds=data_isolation_binds,
             )
         except Exception as exc:
-            log.error(f"evaluation crashed for {harness_id} [{ds}/{stage_name}]: {exc}")
+            log.error(f"evaluation crashed for {harness_id} [{ds}]: {exc}")
             crashed = exc
         # Always publish + cleanup. If the container died mid-write,
-        # subprocess.log + any partial score.json are still useful for triage.
-        _publish_run_artifacts(run_dir, dst)
-        if not (dst / "score.json").exists():
-            _write_failure(dst, f"eval_crashed: {crashed}" if crashed else "no score.json produced")
-            if crashed is None:
-                # Container exited without a score (rc!=0, OOM-kill, ...).
-                # Surface it as a crash so stages.json records it and the
-                # gauntlet stops here — a scoreless run must never be
-                # indistinguishable from a genuine 0-score run.
-                crashed = RuntimeError(
-                    f"container produced no score.json [{ds}/{stage_name}]"
-                )
-        return crashed
-
-    def _read_metrics_fn(ds: str, stage_name: str) -> Dict[str, Any]:
-        # smoke's "sanity" run publishes at the dataset root (no subdir);
-        # gauntlet/full stages live under their per-stage subdir.
-        subdir = None if stage_name == "sanity" else stage_name
-        return _read_dataset_metrics(harness_dir, ds, subdir=subdir)
-
-    def _stages_writer(ds: str, summary: Dict[str, Any]) -> None:
-        dst_root = _dataset_dir(harness_dir, ds)
-        reached = summary["reached"]
-        # Narrate each gated stage's promote/eliminate decision (run_gauntlet
-        # itself stays logger-free — this closure is the only place forge
-        # logs it). Only stages with a threshold gate anything; a crashed
-        # stage already got a log.error from _run_stage_fn above, so it's
-        # skipped here to avoid a redundant/misleading ELIMINATED-by-score line.
-        for stage_name, info in summary["stages"].items():
-            threshold = info.get("threshold")
-            if threshold is None or "crashed" in info:
-                continue
-            normalized = info["normalized"]
-            if stage_name == reached and summary["eliminated"]:
-                log.info(
-                    f"{harness_id} [{ds}] ELIMINATED at {stage_name}: "
-                    f"{normalized:.3f} < threshold {threshold}"
-                )
-            else:
-                log.info(
-                    f"{harness_id} [{ds}] promoted past {stage_name}: "
-                    f"{normalized:.3f} >= {threshold}"
-                )
-        # Final (highest-reached) stage artifacts to the dataset root (CC
-        # browsing + the frontier reader default path).
-        for fname in ("score.json", "token_usage.json"):
-            src = dst_root / reached / fname
-            if src.exists():
-                shutil.copy2(src, dst_root / fname)
-        with (dst_root / "stages.json").open("w", encoding="utf-8") as f:
-            json.dump(
-                {"reached": reached, "eliminated": summary["eliminated"],
-                 "stages": summary["stages"]},
-                f, indent=2, ensure_ascii=False,
-            )
-
-    # sample_seed_for defaults to `lambda ds: None` (unchanged behavior);
-    # callers pass the real per-step seed function when cfg.random_sample
-    # is on (see propose_eval_one, Task 6).
-    # NOTE: still the per-stage-container path (run_gauntlet + injected stage
-    # runner). The single-container evaluate_memo switch lands with the
-    # launch.py/evaluator rework (next commit).
-    return await run_gauntlet(
-        datasets_config=datasets_config,
-        progressive=progressive,
-        smoke=smoke,
-        sample_seed_for=sample_seed_for,
-        run_stage_fn=_run_stage_fn,
-        read_metrics_fn=_read_metrics_fn,
-        stages_writer=_stages_writer,
-    )
+        # subprocess.log + any partial artifacts are still useful for triage.
+        _publish_run_artifacts(run_dir, dst_root)
+        if not (dst_root / "score.json").exists():
+            _write_failure(dst_root, f"eval_crashed: {crashed}" if crashed else "no score.json produced")
+        # Narrate the in-container promote/eliminate decisions (evaluate_memo
+        # stays logger-free; stages.json is its record).
+        stages_path = dst_root / "stages.json"
+        if stages_path.exists() and not smoke:
+            try:
+                summary = json.loads(stages_path.read_text(encoding="utf-8"))
+                reached = summary.get("reached", "")
+                for stage_name, info in summary.get("stages", {}).items():
+                    threshold = info.get("threshold")
+                    if threshold is None or "crashed" in info:
+                        continue
+                    normalized = info["normalized"]
+                    if stage_name == reached and summary.get("eliminated"):
+                        log.info(
+                            f"{harness_id} [{ds}] ELIMINATED at {stage_name}: "
+                            f"{normalized:.3f} < threshold {threshold}"
+                        )
+                    else:
+                        log.info(
+                            f"{harness_id} [{ds}] promoted past {stage_name}: "
+                            f"{normalized:.3f} >= {threshold}"
+                        )
+            except Exception as exc:
+                log.warning(f"{harness_id} [{ds}] could not narrate stages.json: {exc}")
+        # Metrics: the container writes metrics.json (evaluate_memo's return
+        # dict). A missing/unreadable one (container crash before any stage)
+        # degrades to a 0-score eliminated entry — never indistinguishable
+        # from a genuine 0-score run (score.json got the failure marker above).
+        m: Dict[str, Any] = {}
+        metrics_path = dst_root / "metrics.json"
+        if metrics_path.exists():
+            try:
+                m = json.loads(metrics_path.read_text(encoding="utf-8"))
+            except Exception as exc:
+                log.error(f"{harness_id} [{ds}] unreadable metrics.json: {exc}")
+        if not m:
+            m = {"raw_score": 0.0, "score_max": 10, "per_user_stddev": None,
+                 "tokens": 0, "stage": 0.0, "eliminated": True}
+        per_ds[ds] = m
+    return per_ds
 
 
 # ---------------------------------------------------------------------------

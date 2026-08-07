@@ -1,4 +1,5 @@
-"""run_gauntlet promotes/eliminates via injected fakes; sample_seed rides in spec.
+"""evaluate_memo (the pure, execution-independent evaluator) promotes/eliminates
+through the staged gauntlet; sample_seed rides in every stage spec.
     uv run python tests/test_run_gauntlet.py
 """
 import sys, asyncio, traceback
@@ -8,39 +9,43 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
-def _cfg():
-    from common.evaluate import DEFAULT_STAGES
-    return {"locomo": {"stages": DEFAULT_STAGES["locomo"]}}
-
-
 def test_gauntlet_eliminates_below_threshold():
-    from common.evaluate import run_gauntlet
+    # reward 0.0 → normalized 0.0 < locomo stage1 threshold 0.30 → eliminated
     seen = []
-    async def run_stage(ds, stage, spec):
-        seen.append(stage); return None
-    # stage1 normalized 0.0 < locomo stage1 threshold 0.30 → eliminated after stage1
-    def read_metrics(ds, stage):
-        return {"raw_score": 0.0, "score_max": 1, "tokens": {"x": 1}}
-    out = asyncio.run(run_gauntlet(
-        datasets_config=_cfg(), progressive=True, smoke=False,
-        sample_seed_for=lambda ds: None, run_stage_fn=run_stage, read_metrics_fn=read_metrics))
-    assert seen == ["stage1"]                       # stopped after stage1
-    assert out["locomo"]["eliminated"] is True
+    out = _run_evaluate_memo(0.0, seen, progressive=True)
+    assert seen == ["stage1"], seen                 # stopped after stage1
+    assert out["eliminated"] is True and out["stage"] == 1.0
 
 
-def test_gauntlet_full_runs_all_stages_and_passes_seed():
-    from common.evaluate import run_gauntlet
+def test_gauntlet_passes_seed_into_every_stage_spec():
+    # sample_seed rides every stage spec (constant → nesting holds); captured
+    # off the workflow's stage_spec by the fake run_all_users.
     specs = []
-    async def run_stage(ds, stage, spec):
-        specs.append((stage, spec.get("sample_seed"))); return None
-    def read_metrics(ds, stage):
-        return {"raw_score": 1.0, "score_max": 1, "tokens": {}}
-    out = asyncio.run(run_gauntlet(
-        datasets_config=_cfg(), progressive=True, smoke=False,
-        sample_seed_for=lambda ds: "SEED7", run_stage_fn=run_stage, read_metrics_fn=read_metrics))
-    assert [s for s, _ in specs] == ["stage1", "stage2", "stage3"]   # promoted through
-    assert all(seed == "SEED7" for _, seed in specs)                 # seed injected into every stage spec
-    assert out["locomo"]["eliminated"] is False
+    async def _capture(self, task_list, *, stage="stage3", stage_spec=None,
+                       max_sample_concurrent=6):
+        specs.append((stage, (stage_spec or {}).get("sample_seed")))
+        recs = [_FakeRec(u, 1.0) for u in task_list]
+        return recs, len(recs)
+    import tempfile, shutil
+    from datasets.locomo.workflow import LoCoMoWorkflow
+    from common.evaluate import evaluate_memo
+    from common.harness_base import MemoStructure
+    class _M(MemoStructure):
+        async def retrieve_memory_for_query(self, r): return {}
+    out_dir = Path(tempfile.mkdtemp(prefix="test_seed_spec_"))
+    orig = LoCoMoWorkflow.run_all_users
+    LoCoMoWorkflow.run_all_users = _capture
+    try:
+        out = asyncio.run(evaluate_memo(
+            memo_class=_M, dataset="locomo", split="test", progressive=True,
+            out_dir=out_dir, qa_model="m", judge_model="m",
+            max_sample_concurrent=1, memory_cache=False, sample_seed="SEED7"))
+    finally:
+        LoCoMoWorkflow.run_all_users = orig
+        shutil.rmtree(out_dir, ignore_errors=True)
+    assert [st for st, _ in specs] == ["stage1", "stage2", "stage3"]
+    assert all(seed == "SEED7" for _, seed in specs)
+    assert out["eliminated"] is False
 
 
 class _FakeRec:

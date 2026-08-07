@@ -1,11 +1,13 @@
-"""Shared staged-evaluation config + gauntlet driver, used by forge AND the
-baselines (which must not import forge). The stage sizes/plan/nesting live here;
-run_gauntlet (Task 5) drives the promotion loop with an injected stage runner.
-Moved from forge/orchestrator.py 2026-07-25."""
+"""Shared evaluation layer, used by forge AND the baselines (which must not
+import forge). The stage sizes/plan/nesting live here, and `evaluate_memo` — the
+single, execution-independent evaluator — runs the whole staged gauntlet /
+single pass / smoke run in the current process (isolation is the caller's
+wrapper: forge wraps it in a Singularity container, alma in a plain subprocess,
+harness baselines call it directly)."""
 from __future__ import annotations
 
 import copy
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
 # Staged evaluation — per-benchmark stage schema
@@ -304,135 +306,6 @@ def _resolve_dataset_stages(ds: str, params: Dict[str, Any]) -> None:
 # CALLER's concern (captured in its closure), so they are NOT parameters here.
 # ---------------------------------------------------------------------------
 
-# Type aliases for the injected seam (documentation only; not enforced).
-RunStageFn = Callable[[str, str, Dict[str, Any]], Awaitable[Optional[Exception]]]
-ReadMetricsFn = Callable[[str, str], Dict[str, Any]]
-SampleSeedFn = Callable[[str], Optional[str]]
-StagesWriter = Callable[[str, Dict[str, Any]], None]
-
-
-async def run_gauntlet(
-    *,
-    datasets_config: Dict[str, Dict[str, Any]],
-    progressive: bool,
-    smoke: bool,
-    sample_seed_for: SampleSeedFn,
-    run_stage_fn: RunStageFn,
-    read_metrics_fn: ReadMetricsFn,
-    stages_writer: Optional[StagesWriter] = None,
-) -> Dict[str, Dict[str, Any]]:
-    """Drive the per-benchmark staged gauntlet.
-
-    Execution is injected via ``run_stage_fn(ds, stage_name, spec) ->
-    Optional[Exception]`` (forge: container; baseline: in-process). The
-    promotion / elimination / cost-accounting / telemetry / stages.json logic
-    lives HERE (identical for forge and baselines). ``read_metrics_fn(ds,
-    stage_name) -> Dict`` reads that stage's metrics (raw_score, score_max,
-    tokens). ``sample_seed_for(ds) -> Optional[str]`` supplies the per-run seed,
-    injected into every stage spec as ``spec['sample_seed']`` (constant across a
-    run's stages so stage1 ⊂ stage2 ⊂ stage3 nesting holds); when it returns
-    None the spec is left untouched. ``stages_writer(ds, summary)`` (optional)
-    persists the per-benchmark stage summary (forge writes stages.json + copies
-    the final-stage artifacts to the dataset root).
-
-    Behavior mirrors forge's former inline ``evaluate_harness`` loop exactly:
-
-    - ``smoke=True``: one ``sanity_check``-sized run per benchmark, no gating,
-      telemetry ``stage=0.0`` / ``eliminated=False`` (stages_writer NOT called).
-    - ``progressive=False``: a single ``('single', spec, None)`` plan (no
-      promotion gates), sized by the dataset's REQUIRED `single_stage` config
-      block via ``resolve_sampling_plan`` — raises ``ValueError`` if that dataset
-      has no `single_stage` block (sizing is config-file only). Reached stage
-      telemetry is ``FULL_STAGE``.
-    - ``progressive=True`` (default): the stage1 → stage2 →
-      stage3 gauntlet from the dataset's `stages` block; after a gated stage
-      the normalized score must be >= its threshold to advance, else the
-      benchmark stops ("eliminated"). A crashed stage (a non-None
-      ``run_stage_fn`` return) also eliminates and stops.
-
-    Cost accounting sums tokens across ALL executed stages. Returns the same
-    per-dataset metrics dict shape forge builds today (raw_score, score_max,
-    per_user_stddev, tokens, stage, eliminated).
-    """
-    scores: Dict[str, Dict[str, Any]] = {}
-    for ds, params in datasets_config.items():
-        seed = sample_seed_for(ds)
-
-        def _spec(base: Dict[str, Any]) -> Dict[str, Any]:
-            # Copy so the caller's plan specs are never mutated; the per-run
-            # seed rides along in every stage spec (constant → nesting holds).
-            s = dict(base)
-            if seed is not None:
-                s["sample_seed"] = seed
-            return s
-
-        if smoke:
-            # Sanity-size single run, no gating, artifacts at the dataset root.
-            spec = _spec(stage_wire_spec(ds, params["stages"]["sanity_check"]))
-            await run_stage_fn(ds, "sanity", spec)
-            m = read_metrics_fn(ds, "sanity")
-            m["stage"] = 0.0  # 0 = sanity-size smoke run (not a gauntlet tier)
-            m["eliminated"] = False
-            scores[ds] = m
-            continue
-
-        # ---- staged gauntlet (progressive=True) OR single pass (progressive=False,
-        # sized by the REQUIRED `single_stage` block — raises if absent) ----
-        plan: List[Tuple[str, Dict[str, Any], Optional[float]]] = resolve_sampling_plan(
-            ds, params, progressive=progressive
-        )
-
-        stage_summary: Dict[str, Any] = {}
-        final_metrics: Dict[str, Any] = {}
-        reached = ""
-        eliminated = False
-        for stage_name, base_spec, threshold in plan:
-            spec = _spec(base_spec)
-            crashed = await run_stage_fn(ds, stage_name, spec)
-            m = read_metrics_fn(ds, stage_name)
-            score_max = int(m.get("score_max", 10)) or 1
-            normalized = float(m.get("raw_score", 0.0)) / score_max
-            stage_summary[stage_name] = {
-                "raw_score": m["raw_score"],
-                "score_max": m["score_max"],
-                "normalized": normalized,
-                "threshold": threshold,
-                "tokens": m["tokens"],
-                "spec": spec,
-            }
-            # Cost accounting spans ALL executed stages, not just the last.
-            # (Guarded so non-numeric token payloads — e.g. injected test fakes
-            #  — don't blow up; forge's tokens are always ints, so this is a
-            #  no-op for the real path.)
-            if isinstance(m.get("tokens"), (int, float)):
-                m["tokens"] += sum(
-                    s["tokens"] for n, s in stage_summary.items() if n != stage_name
-                )
-            final_metrics = m
-            reached = stage_name
-            if crashed is not None:
-                eliminated = True
-                stage_summary[stage_name]["crashed"] = repr(crashed)
-                break
-            if threshold is not None and normalized < threshold:
-                eliminated = True
-                break
-
-        stage_num = {
-            "stage1": 1.0, "stage2": 2.0, "stage3": 3.0,
-            "full": FULL_STAGE,     # legacy plan name (no other caller emits it anymore)
-            "single": FULL_STAGE,   # progressive=false single pass — same tier as "full"
-        }.get(reached, 0.0)
-        final_metrics["stage"] = stage_num
-        final_metrics["eliminated"] = eliminated
-        if stages_writer is not None:
-            stages_writer(
-                ds, {"stages": stage_summary, "reached": reached, "eliminated": eliminated}
-            )
-        scores[ds] = final_metrics
-    return scores
-
-
 # ---------------------------------------------------------------------------
 # evaluate_memo — the single, execution-independent evaluation entry point.
 # ---------------------------------------------------------------------------
@@ -537,6 +410,7 @@ async def evaluate_memo(
     sample_seed: Optional[str] = None,
     memory_cache: bool = True,
     memcache_fingerprint: Optional[str] = None,
+    memcache_dir: Optional["Path"] = None,
     smoke: bool = False,
     max_logs: Optional[int] = None,
     memo_sha: str = "",
@@ -568,10 +442,13 @@ async def evaluate_memo(
 
     ``sample_seed`` rides every stage spec (constant across stages so the
     stage1 ⊂ stage2 ⊂ stage3 nesting holds). ``memory_cache`` mounts the
-    cross-stage Phase-1 memory cache at out_dir/memory_cache (skipped for
-    smoke); ``memcache_fingerprint`` overrides the source-dir fingerprint
-    (alma fingerprints its single staged memo file). ``max_logs`` /
-    ``memo_sha`` are forwarded to the workflow (alma's knobs)."""
+    cross-stage Phase-1 memory cache at ``memcache_dir`` (default
+    out_dir/memory_cache; forge's container passes its persistent host-bound
+    /memcache so snapshots survive across evaluator invocations), skipped for
+    smoke; ``memcache_fingerprint`` overrides the source-dir fingerprint
+    (alma fingerprints its single staged memo file; forge fingerprints the
+    whole harness dir). ``max_logs`` / ``memo_sha`` are forwarded to the
+    workflow (alma's knobs — forge passes memo_sha=harness id)."""
     import json as _json
     import shutil as _shutil
     from pathlib import Path
@@ -600,15 +477,16 @@ async def evaluate_memo(
     tracker = init_global_tracker()
 
     # ---- cross-stage memory cache (gauntlet + single; never smoke/sanity) ----
-    memcache_dir: Optional[Path] = None
     fingerprint = ""
     if memory_cache and not smoke:
         fingerprint = memcache_fingerprint if memcache_fingerprint is not None else ""
         if not fingerprint:
             src_dir = _memo_source_dir(memo_class)
             fingerprint = _dir_fingerprint(src_dir) if src_dir is not None else ""
-        memcache_dir = out_dir / "memory_cache"
+        memcache_dir = Path(memcache_dir) if memcache_dir is not None else out_dir / "memory_cache"
         memcache_dir.mkdir(parents=True, exist_ok=True)
+    else:
+        memcache_dir = None
 
     stage_summary: Dict[str, Any] = {}
     final_metrics: Dict[str, Any] = {}
