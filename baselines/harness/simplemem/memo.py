@@ -42,7 +42,7 @@ ensure_sentence_transformers()     # import ST past memevol's datasets/ shadow (
 install_embedding_cache()          # share the ~0.6B Qwen3 embedder across per-user systems
 # Import the vendored simplemem chain (which pulls in lancedb) with HF `datasets`
 # active, so lancedb's import-time `from datasets import Dataset` resolves to the
-# HF library, not memevol's `datasets/` package.
+# HF library, not memevol's `benchmarks/` package.
 SimpleMemSystem, Dialogue, MemoryEntry = import_simplemem_system()   # vendored, byte-identical
 
 OUTPUTS_DIR = Path(__file__).resolve().parent / "outputs"
@@ -77,7 +77,7 @@ def _init_to_dialogues(init: Dict, start_id: int) -> Tuple[List[Dialogue], int]:
         for e in init["app_logs"]:
             _add(e.get("app_name", "app"), app_log_to_passage(e), e.get("timestamp", ""))
     elif "conversation" in init:
-        from datasets.locomo.env import extract_sessions   # memevol datasets — NOT the HF library
+        from benchmarks.locomo.env import extract_sessions   # memevol datasets — NOT the HF library
         # extract_sessions yields (session_idx, date_time, turns) — date_time is the
         # per-session timestamp, applied to every turn in that session.
         for _idx, date_time, turns in extract_sessions(init["conversation"]):

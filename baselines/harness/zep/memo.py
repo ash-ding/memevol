@@ -120,7 +120,7 @@ def _init_to_episodes(init: Dict) -> List[Dict[str, Any]]:
             for i, e in enumerate(init["app_logs"])
         ]
     if "conversation" in init:
-        from datasets.locomo.env import extract_sessions
+        from benchmarks.locomo.env import extract_sessions
         eps: List[Dict[str, Any]] = []
         for idx, date_time, turns in extract_sessions(init["conversation"]):
             ref = _parse_dt(date_time)

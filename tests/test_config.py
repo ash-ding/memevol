@@ -139,10 +139,10 @@ def test_missing_sizing_config_progressive_false_and_true():
         "stage2": {"n_conversations": 4, "n_qa": 40, "threshold": 0.35},
         "stage3": {"n_conversations": 6, "n_qa": 60},
     }}
-    assert missing_sizing_config("locomo", full, True, "datasets.locomo") == []
+    assert missing_sizing_config("locomo", full, True, "benchmarks.locomo") == []
     # missing threshold on stage1
     bad = {"stages": dict(full["stages"], stage1={"n_conversations": 2, "n_qa": 20})}
-    assert missing_sizing_config("locomo", bad, True, "datasets.locomo") == ["datasets.locomo.stages.stage1.threshold"]
+    assert missing_sizing_config("locomo", bad, True, "benchmarks.locomo") == ["benchmarks.locomo.stages.stage1.threshold"]
 
 
 def main():

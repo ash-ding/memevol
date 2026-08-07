@@ -7,7 +7,7 @@ Each user directory holds exactly two files:
     user_data/<NNN_user_NNN>/app_log_large.json   # list[app_log], chronological
     user_data/<NNN_user_NNN>/task_packs.json      # dict with 5 checkpoints
 
-Pure data-layer module: stdlib + datasets.dynamicmem.tce_prompts (pure) only.
+Pure data-layer module: stdlib + benchmarks.dynamicmem.tce_prompts (pure) only.
 No LLM client here; judging lives in workflow.py + tce_prompts.py.
 
 Provides:
@@ -36,7 +36,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from datasets.dynamicmem.tce_prompts import (
+from benchmarks.dynamicmem.tce_prompts import (
     flatten_observability,
     flatten_snapshot,
     normalize_task_a_current_value,
@@ -50,7 +50,7 @@ log = logging.getLogger("main")
 #
 # Data (user_data/<user>/{app_log_large.json,task_packs.json}) sits directly
 # under this package directory:
-#     datasets/dynamicmem/user_data/
+#     benchmarks/dynamicmem/user_data/
 # Override with the DYNAMICMEM_DATA env var if you want to point elsewhere.
 # ---------------------------------------------------------------------------
 

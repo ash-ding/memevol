@@ -6,7 +6,7 @@ Three integration concerns, all handled here (NO edits to vendored graphiti_core
      copy under `src/`, not any pip-installed graphiti-core.
      `ensure_src_on_path()` prepends `src/` to sys.path[0].
 
-  2. `datasets` SHADOW — memevol's benchmark package `datasets/` collides with
+  2. `datasets` SHADOW — memevol's benchmark package `benchmarks/` collides with
      the HuggingFace `datasets` library that sentence-transformers imports (BGE-m3
      embedder + BGE reranker both build on sentence-transformers). Transplanted
      VERBATIM from baselines/harness/amem/_st_shim.py:

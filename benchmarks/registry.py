@@ -12,15 +12,15 @@ from __future__ import annotations
 from types import ModuleType
 from typing import Dict, List, Tuple
 
-from datasets.dynamicmem import env as dm_env
-from datasets.dynamicmem.env import DynamicMemRecorder
-from datasets.dynamicmem.workflow import DynamicMemWorkflow
-from datasets.locomo import env as locomo_env
-from datasets.locomo.env import LoCoMoRecorder
-from datasets.locomo.workflow import LoCoMoWorkflow
-from datasets.longmemeval import env as lme_env
-from datasets.longmemeval.env import LongMemEvalRecorder
-from datasets.longmemeval.workflow import LongMemEvalSWorkflow, LongMemEvalMWorkflow
+from benchmarks.dynamicmem import env as dm_env
+from benchmarks.dynamicmem.env import DynamicMemRecorder
+from benchmarks.dynamicmem.workflow import DynamicMemWorkflow
+from benchmarks.locomo import env as locomo_env
+from benchmarks.locomo.env import LoCoMoRecorder
+from benchmarks.locomo.workflow import LoCoMoWorkflow
+from benchmarks.longmemeval import env as lme_env
+from benchmarks.longmemeval.env import LongMemEvalRecorder
+from benchmarks.longmemeval.workflow import LongMemEvalSWorkflow, LongMemEvalMWorkflow
 
 # dataset → (workflow_cls, env_module, recorder_cls).
 # env_module must expose get_task_list(status, eval_n_samples).

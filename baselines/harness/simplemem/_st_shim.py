@@ -7,11 +7,11 @@ byte-identical):
      ``sys.path`` so SimpleMem's absolute imports (``from simplemem.core...``)
      resolve to our vendored copy under baselines/harness/simplemem/src/.
 
-  2. HuggingFace ``datasets`` vs memevol's ``datasets/`` — SimpleMem's import
+  2. HuggingFace ``datasets`` vs memevol's ``benchmarks/`` — SimpleMem's import
      chain pulls in ``lancedb`` (``core/database`` init does ``from datasets
      import Dataset`` at import) and, at embedder construction, sentence-
      transformers (``model_card`` does ``from datasets import __version__``).
-     memevol ships a benchmark package ALSO named ``datasets/`` that shadows the
+     memevol ships a benchmark package ALSO named ``benchmarks/`` that shadows the
      HF library on ``sys.path``. We make ``datasets`` resolve to HF for those
      spots.
 
@@ -92,7 +92,7 @@ def hf_datasets_active():
     CACHED module objects only (never re-imports → no pyarrow re-registration).
     memevol's ``datasets`` view is restored on exit.
 
-    Do NOT run memevol-``datasets`` imports (e.g. ``datasets.locomo.env``) inside
+    Do NOT run memevol-``datasets`` imports (e.g. ``benchmarks.locomo.env``) inside
     this block — they would resolve to HF. Callers MUST NOT ``await`` inside: the
     sys.modules swap is process-global and would corrupt a concurrently-scheduled
     coroutine's ``datasets`` view (safe today — every memo hook body is
@@ -129,7 +129,7 @@ def import_simplemem_system():
     datasets import Dataset`` at import. Under ``hf_datasets_active`` the cached HF
     ``datasets`` is already in ``sys.modules``, so that resolves to HF with no
     re-import. memevol's ``datasets`` view is restored on exit, so memo.py can
-    still ``from datasets.locomo.env import ...`` afterward. Requires the HF
+    still ``from benchmarks.locomo.env import ...`` afterward. Requires the HF
     ``datasets`` package to be installed."""
     ensure_simplemem_importable()
     holder = {}

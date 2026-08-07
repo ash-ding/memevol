@@ -172,7 +172,7 @@ def test_hooks_take_priority():
 # ---------------- helpers ----------------
 
 def test_user_key_sanitization():
-    k = mc.user_key("/app/datasets/dynamicmem/user_data/001_user_001")
+    k = mc.user_key("/app/benchmarks/dynamicmem/user_data/001_user_001")
     assert k == "001_user_001"
     k2 = mc.user_key("conv-26")
     assert k2 == "conv-26"
@@ -198,9 +198,9 @@ def test_harness_fingerprint_stable_and_sensitive():
 # ---------------- dynamicmem workflow-level: prefix cps not re-ingested ----------------
 
 def test_dynamicmem_cache_skips_ingested_checkpoints():
-    from datasets.dynamicmem.workflow import DynamicMemWorkflow
+    from benchmarks.dynamicmem.workflow import DynamicMemWorkflow
 
-    user_dir = str(REPO / "datasets" / "dynamicmem" / "user_data" / "001_user_001")
+    user_dir = str(REPO / "benchmarks" / "dynamicmem" / "user_data" / "001_user_001")
 
     ingested_batches = INGESTED_BATCHES
     ingested_batches.clear()
@@ -243,8 +243,8 @@ def test_dynamicmem_cache_skips_ingested_checkpoints():
 
 def test_base_workflow_cache_skips_phase1():
     """LoCoMo-style: second run with cache loads final memory, no ingest."""
-    from datasets.locomo.workflow import LoCoMoWorkflow
-    from datasets.locomo.env import get_task_list
+    from benchmarks.locomo.workflow import LoCoMoWorkflow
+    from benchmarks.locomo.env import get_task_list
 
     conv = get_task_list("search", 1)[0]
     ingest_calls = INGESTED_BATCHES

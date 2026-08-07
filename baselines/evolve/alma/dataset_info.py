@@ -26,7 +26,7 @@ _DYNAMICMEM = {
 """,  # meta_agent_prompt.py TASK_DESCRIPTION['dynamicmem'], lines 9-20
     "gen_intro": """The agent will be used in the DynamicMem personalisation benchmark.
 Your memory structure aims to help a downstream QA agent accurately answer questions about a specific user's habits, preferences, and behavioural patterns.""",  # lines 445-446
-    "recorder_env_import": "from datasets.dynamicmem.env import Basic_Recorder",
+    "recorder_env_import": "from benchmarks.dynamicmem.env import Basic_Recorder",
     "recorder_class_name": "DynamicMemRecorder",
     "gen_protocol": """    == DynamicMem Two-Phase Protocol ==
 
@@ -155,7 +155,7 @@ _LOCOMO = {
     - Selective Retrieval: for a given QA question, surfacing only the relevant turns rather than the whole conversation.
 """,
     "gen_intro": "The agent will be used in the LoCoMo conversational-memory benchmark.\nYour memory structure aims to help a downstream QA agent accurately answer questions about a two-speaker, multi-session conversation.",
-    "recorder_env_import": "from datasets.locomo.env import Basic_Recorder",
+    "recorder_env_import": "from benchmarks.locomo.env import Basic_Recorder",
     "recorder_class_name": "LoCoMoRecorder",
     "gen_protocol": """    == LoCoMo Two-Phase Protocol ==
 
@@ -284,7 +284,7 @@ _LONGMEMEVAL_COMMON = {
     - Selective Retrieval: for a given question, surfacing only the relevant sessions/messages rather than the whole haystack.
 """,
     "gen_intro": "The agent will be used in the LongMemEval long-context QA benchmark.\nYour memory structure aims to help a downstream QA agent accurately answer a question that depends on a few relevant sessions buried in a large chat-session haystack.",
-    "recorder_env_import": "from datasets.longmemeval.env import Basic_Recorder",
+    "recorder_env_import": "from benchmarks.longmemeval.env import Basic_Recorder",
     "recorder_class_name": "LongMemEvalRecorder",
     "gen_protocol": """    == LongMemEval Two-Phase Protocol ==
 

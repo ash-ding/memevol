@@ -5,10 +5,10 @@ Zero-dependency runner (no pytest in the venvs):
     uv run python tests/test_evaluate.py          # repo-root uv project
 
 Covers:
-  - datasets/dynamicmem/env.py::sample_items_staged (per-checkpoint A/C
+  - benchmarks/dynamicmem/env.py::sample_items_staged (per-checkpoint A/C
     counts, nesting across stages, determinism)
-  - datasets/locomo/env.py QA sampling (prefix nesting)
-  - datasets/longmemeval/env.py 300/200 stratified split
+  - benchmarks/locomo/env.py QA sampling (prefix nesting)
+  - benchmarks/longmemeval/env.py 300/200 stratified split
   - forge/orchestrator.py stages config schema (defaults, validation,
     old-field migration error, wire-spec normalization)
 """
@@ -22,7 +22,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("OPENAI_API_KEY", "test-dummy-key")
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DM_USER = os.path.join(REPO, "datasets", "dynamicmem", "user_data", "001_user_001")
+DM_USER = os.path.join(REPO, "benchmarks", "dynamicmem", "user_data", "001_user_001")
 
 
 def _item_key(i):
@@ -32,7 +32,7 @@ def _item_key(i):
 # ---------------- DynamicMem: sample_items_staged ----------------
 
 def test_dm_staged_counts():
-    from datasets.dynamicmem.env import load_user_checkpoints, sample_items_staged
+    from benchmarks.dynamicmem.env import load_user_checkpoints, sample_items_staged
     _, cps = load_user_checkpoints(DM_USER)
     out = sample_items_staged(cps, n_checkpoints=3, n_task_a=5, n_task_c=5, seed=DM_USER)
     assert len(out) == 30, f"expected 3cp*10, got {len(out)}"
@@ -49,7 +49,7 @@ def test_dm_staged_counts():
 
 def test_dm_staged_caps_at_available():
     """Requesting more than a bucket holds returns what exists (no crash)."""
-    from datasets.dynamicmem.env import load_user_checkpoints, sample_items_staged
+    from benchmarks.dynamicmem.env import load_user_checkpoints, sample_items_staged
     _, cps = load_user_checkpoints(DM_USER)
     out = sample_items_staged(cps, n_checkpoints=1, n_task_a=999, n_task_c=999, seed=DM_USER)
     a = sum(1 for i in out if i["task_family"] == "state_completion")
@@ -59,7 +59,7 @@ def test_dm_staged_caps_at_available():
 
 def test_dm_staged_nesting():
     """sanity ⊂ stage1 ⊂ stage2 ⊂ stage3 (same seed)."""
-    from datasets.dynamicmem.env import load_user_checkpoints, sample_items_staged
+    from benchmarks.dynamicmem.env import load_user_checkpoints, sample_items_staged
     _, cps = load_user_checkpoints(DM_USER)
     sanity = sample_items_staged(cps, n_checkpoints=1, n_task_a=1, n_task_c=1, seed=DM_USER)
     s1 = sample_items_staged(cps, n_checkpoints=1, n_task_a=5, n_task_c=5, seed=DM_USER)
@@ -74,7 +74,7 @@ def test_dm_staged_nesting():
 
 
 def test_dm_staged_deterministic():
-    from datasets.dynamicmem.env import load_user_checkpoints, sample_items_staged
+    from benchmarks.dynamicmem.env import load_user_checkpoints, sample_items_staged
     _, cps = load_user_checkpoints(DM_USER)
     a = sample_items_staged(cps, n_checkpoints=2, n_task_a=3, n_task_c=3, seed=DM_USER)
     b = sample_items_staged(cps, n_checkpoints=2, n_task_a=3, n_task_c=3, seed=DM_USER)
@@ -84,7 +84,7 @@ def test_dm_staged_deterministic():
 # ---------------- LoCoMo: prefix-nested QA sampling ----------------
 
 def test_locomo_qa_nesting():
-    from datasets.locomo.env import load_user_data, get_task_list
+    from benchmarks.locomo.env import load_user_data, get_task_list
     conv = get_task_list("search", 1)[0]
     _, _, qa20 = load_user_data(conv, 20)
     _, _, qa40 = load_user_data(conv, 40)
@@ -100,17 +100,17 @@ def test_test_split_honours_sample_cap():
     """Audit M7: get_task_list(status='test') ignored eval_n_samples for
     dynamicmem/locomo, so mode=test stage sizing silently ran the full
     held-out split at every gauntlet tier."""
-    from datasets.locomo.env import get_task_list as locomo_tasks
+    from benchmarks.locomo.env import get_task_list as locomo_tasks
     assert len(locomo_tasks("test", 1)) == 1
     assert len(locomo_tasks("test", 2)) == 2
     assert locomo_tasks("test", 1) == locomo_tasks("test", 2)[:1], "prefix nesting"
     assert len(locomo_tasks("test", 99)) == 4  # cap at available
 
-    from datasets.longmemeval.env import get_task_list as lme_tasks
+    from benchmarks.longmemeval.env import get_task_list as lme_tasks
     assert len(lme_tasks("test", 5)) == 5
 
     # dynamicmem user_data/ is gitignored — only assert when data is present
-    from datasets.dynamicmem.env import get_task_list as dm_tasks
+    from benchmarks.dynamicmem.env import get_task_list as dm_tasks
     try:
         full = dm_tasks("test", 99)
     except Exception:
@@ -123,7 +123,7 @@ def test_test_split_honours_sample_cap():
 def test_locomo_cat5_excluded():
     """Category-5 adversarial QAs (no gold answer in locomo10.json) are
     excluded at load time — full pool and sampled prefixes alike."""
-    from datasets.locomo.env import load_user_data, get_task_list
+    from benchmarks.locomo.env import load_user_data, get_task_list
     for conv in get_task_list("search", 6) + get_task_list("test", 4):
         _, _, qa_all = load_user_data(conv, None)
         cats = {qa["metadata"]["category"] for qa in qa_all}
@@ -140,7 +140,7 @@ def test_locomo_cat5_excluded():
 # ---------------- LongMemEval: 300/200 split ----------------
 
 def test_longmemeval_split_300_200():
-    from datasets.longmemeval.env import _compute_split, get_task_list
+    from benchmarks.longmemeval.env import _compute_split, get_task_list
     search_qids, test_qids = _compute_split()
     assert len(search_qids) == 300, f"search={len(search_qids)}"
     assert len(test_qids) == 200, f"test={len(test_qids)}"
@@ -153,8 +153,8 @@ def test_longmemeval_split_300_200():
 
 def test_longmemeval_split_stratified():
     import json
-    from datasets.longmemeval.env import _compute_split
-    data = json.load(open(os.path.join(REPO, "datasets", "longmemeval", "longmemeval_s_cleaned.json")))
+    from benchmarks.longmemeval.env import _compute_split
+    data = json.load(open(os.path.join(REPO, "benchmarks", "longmemeval", "longmemeval_s_cleaned.json")))
     by_type_total = {}
     type_of = {}
     for d in data:
@@ -339,8 +339,8 @@ def test_single_stage_plan_missing_single_stage_raises():
 
 
 def test_get_task_list_none_means_whole_split():
-    from datasets.locomo.env import get_task_list as locomo_list
-    from datasets.longmemeval.env import get_task_list as lme_list
+    from benchmarks.locomo.env import get_task_list as locomo_list
+    from benchmarks.longmemeval.env import get_task_list as lme_list
     assert len(locomo_list("search", None)) == 6
     assert len(locomo_list("test", None)) == 4
     assert len(lme_list("search", None)) == 300
@@ -348,18 +348,18 @@ def test_get_task_list_none_means_whole_split():
     # capped behavior unchanged
     assert len(locomo_list("test", 2)) == 2
     assert len(lme_list("test", 50)) == 50
-    from datasets.dynamicmem.env import get_task_list as dm_list
-    if os.path.isdir(os.path.join(REPO, "datasets", "dynamicmem", "user_data")):
+    from benchmarks.dynamicmem.env import get_task_list as dm_list
+    if os.path.isdir(os.path.join(REPO, "benchmarks", "dynamicmem", "user_data")):
         assert len(dm_list("test", None)) == 4
         assert len(dm_list("search", None)) == 6
 
 
 def test_locomo_full_qa_is_all_cat14():
     import json as _json
-    from datasets.locomo.env import load_user_data, get_task_list
+    from benchmarks.locomo.env import load_user_data, get_task_list
     sid = get_task_list("test", 1)[0]
     _, _, qa = load_user_data(sid, eval_n_qa=None)
-    raw = _json.load(open(os.path.join(REPO, "datasets", "locomo", "locomo10.json")))
+    raw = _json.load(open(os.path.join(REPO, "benchmarks", "locomo", "locomo10.json")))
     sample = next(s for s in raw if s["sample_id"] == sid)
     expected = sum(1 for q in sample["qa"] if q.get("category") != 5)
     assert len(qa) == expected, (len(qa), expected)
@@ -369,7 +369,7 @@ def test_dm_full_sampling_and_nesting():
     if not os.path.isdir(DM_USER):
         print("  (dynamicmem user_data missing — skipped)")
         return
-    from datasets.dynamicmem.env import load_user_checkpoints, sample_items_staged
+    from benchmarks.dynamicmem.env import load_user_checkpoints, sample_items_staged
     _, cps = load_user_checkpoints(DM_USER)
     full = sample_items_staged(cps, n_checkpoints=None, n_task_a=None,
                                n_task_c=None, seed=DM_USER)
@@ -530,7 +530,7 @@ def test_stage3_null_sampling_equals_full_dynamicmem():
     if not os.path.isdir(DM_USER):
         print("  (dynamicmem user_data missing — skipped)")
         return
-    from datasets.dynamicmem.env import load_user_checkpoints, sample_items_staged
+    from benchmarks.dynamicmem.env import load_user_checkpoints, sample_items_staged
     _, cps = load_user_checkpoints(DM_USER)
     # full via None (what stage3-null produces on the wire)
     staged_full = sample_items_staged(

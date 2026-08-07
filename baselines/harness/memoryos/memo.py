@@ -152,7 +152,7 @@ class MemoryOSMemo(MemoClass):
         save_dir.mkdir(parents=True, exist_ok=True)
         # Constructed inside hf_datasets_active(): SentenceTransformer's
         # model-card path does `from datasets import ...` at CALL time too, and
-        # memevol's `datasets/` package would shadow the HF library.
+        # memevol's `benchmarks/` package would shadow the HF library.
         with hf_datasets_active(), open(os.devnull, "w") as devnull, \
                 contextlib.redirect_stdout(devnull):
             self._memo = Memoryos(

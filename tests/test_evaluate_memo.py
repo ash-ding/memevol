@@ -27,7 +27,7 @@ def test_gauntlet_passes_seed_into_every_stage_spec():
         recs = [_FakeRec(u, 1.0) for u in task_list]
         return recs, len(recs)
     import tempfile, shutil
-    from datasets.locomo.workflow import LoCoMoWorkflow
+    from benchmarks.locomo.workflow import LoCoMoWorkflow
     from common.evaluate import evaluate_memo
     from common.memo_class import MemoClass
     class _M(MemoClass):
@@ -62,7 +62,7 @@ def _run_evaluate_memo(reward, seen, **kwargs):
     promotion / artifact plumbing."""
     import tempfile, shutil
     from pathlib import Path
-    from datasets.locomo.workflow import LoCoMoWorkflow
+    from benchmarks.locomo.workflow import LoCoMoWorkflow
     from common.evaluate import evaluate_memo
     from common.memo_class import MemoClass
 

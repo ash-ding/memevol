@@ -24,7 +24,7 @@ evaluation protocol.
 |---|---|
 | [`forge/`](forge/) | **The main method.** Claude-Code-SDK proposer + Singularity-sandboxed evaluator + frontier record store; searches over harness code |
 | [`common/`](common/) | The shared evaluation platform: the [`MemoClass`](common/memo_class.py) contract, the [`Basic_Recorder`](common/recorder.py) data envelope, the [`BaseWorkflow`](common/workflow.py) scheduler, LLM/judge/embedding kernel, token tracking, memory cache, logging |
-| [`datasets/`](datasets/) | One adapter per benchmark: `env.py` (data loading + recorder + split), `workflow.py` (evaluation protocol), `prompts.py` (QA-agent prompt) |
+| [`benchmarks/`](benchmarks/) | One adapter per benchmark: `env.py` (data loading + recorder + split), `workflow.py` (evaluation protocol), `prompts.py` (QA-agent prompt) |
 | [`baselines/`](baselines/) | Comparison methods, split into `evolve/` (search-method baselines, compared against forge itself) and `harness/` (ready-made memory systems, compared against forge-evolved harnesses) — [README](baselines/README.md) |
 | [`seeds/`](seeds/) | Opt-in seed harness library. A seed is copied into a run as candidate #0 (e.g. `no_memory` — the calibration floor any real memory design must beat) |
 | [`configs/`](configs/) | [`search_example.yaml`](configs/search_example.yaml) (documented AND runnable search config) + [`test_example.yaml`](configs/test_example.yaml) (held-out test flow) |
@@ -115,7 +115,7 @@ Each propose call runs Claude Code in a fresh Singularity container with a
 /app                            (RO, selective; PYTHONPATH=/app)
 ├── forge/memo_class.py       the MemoClass base the new harness must inherit
 ├── common/{memo_class,memo_class,recorder,llm,logger}.py
-└── datasets/                   env/workflow/prompts per benchmark + raw data,
+└── benchmarks/                   env/workflow/prompts per benchmark + raw data,
                                 with the held-out TEST SPLIT PHYSICALLY ABSENT
                                 (search-mode overlay binds shadow it — filtered
                                 data files, gold answers stubbed out)
@@ -125,7 +125,7 @@ Not visible, by construction: `.env`, `.git`, other runs' workspaces,
 `baselines/`, the host outer-loop code (`forge/orchestrator.py` etc.), and
 the prompt-template package (prompts are rendered host-side and staged into
 the harness dir). The evaluator container is similarly selective: full
-`common/` + `datasets/` RO, `forge/launch.py` as entrypoint, the candidate
+`common/` + `benchmarks/` RO, `forge/launch.py` as entrypoint, the candidate
 harness RO at `/harness`, output RW at `/out` — same search-split-only data
 overlay during search.
 
@@ -178,13 +178,13 @@ against the same harness):
 
 | Dataset | Source | Protocol | Split |
 |---|---|---|---|
-| **[DynamicMem](datasets/dynamicmem/)** | App-activity logs (~1500/user over 15 months) | Official **TCE v2 checkpoint protocol**: ingestion interleaved with tasks at 5 quarterly checkpoints; two task families (state completion + personalized service); official holistic Core+Detail judge, scores 0–1 | 6 users search / 4 test |
-| **[LoCoMo](datasets/locomo/)** | Multi-session two-person conversations (~154 QA each after filtering) | Two-phase; binary CORRECT/WRONG judge (community-standard); QA **categories 1–4 only** (cat-5 adversarial excluded — the data carries no gold answers for them) | 6 conv search / 4 test |
-| **[LongMemEval](datasets/longmemeval/)** | 500 questions, each with its own haystack of chat sessions (`s` ~48, `m` ~476) | Two-phase, 1 QA per question; binary yes/no judge (paper) | 300 search / 200 test (stratified by question type) |
+| **[DynamicMem](benchmarks/dynamicmem/)** | App-activity logs (~1500/user over 15 months) | Official **TCE v2 checkpoint protocol**: ingestion interleaved with tasks at 5 quarterly checkpoints; two task families (state completion + personalized service); official holistic Core+Detail judge, scores 0–1 | 6 users search / 4 test |
+| **[LoCoMo](benchmarks/locomo/)** | Multi-session two-person conversations (~154 QA each after filtering) | Two-phase; binary CORRECT/WRONG judge (community-standard); QA **categories 1–4 only** (cat-5 adversarial excluded — the data carries no gold answers for them) | 6 conv search / 4 test |
+| **[LongMemEval](benchmarks/longmemeval/)** | 500 questions, each with its own haystack of chat sessions (`s` ~48, `m` ~476) | Two-phase, 1 QA per question; binary yes/no judge (paper) | 300 search / 200 test (stratified by question type) |
 
 Data files are **not** in the repo (DynamicMem `user_data/<user>/{app_log_large,task_packs}.json`,
 ~77 MB total; LongMemEval `m_cleaned.json` 2.6 GB). Acquire separately and
-place under `datasets/<bench>/`; DynamicMem honors a `DYNAMICMEM_DATA`
+place under `benchmarks/<bench>/`; DynamicMem honors a `DYNAMICMEM_DATA`
 env-var override.
 
 ---

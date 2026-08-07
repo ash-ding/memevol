@@ -15,7 +15,7 @@ The base class handles (all unchanged from the prior DynamicMem_Workflow):
 
 To add a new benchmark, subclass `BaseWorkflow` and override the hooks listed
 under "subclass hooks" below. `DynamicMemWorkflow` in
-`datasets/dynamicmem/workflow.py` is the reference implementation.
+`benchmarks/dynamicmem/workflow.py` is the reference implementation.
 """
 
 from __future__ import annotations

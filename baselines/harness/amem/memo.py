@@ -65,7 +65,7 @@ def _init_to_note_units(init: Dict) -> List[Tuple[str, str]]:
     if "app_logs" in init:
         return [(app_log_to_passage(e), e.get("timestamp", "")) for e in init["app_logs"]]
     if "conversation" in init:
-        from datasets.locomo.env import extract_sessions
+        from benchmarks.locomo.env import extract_sessions
         units: List[Tuple[str, str]] = []
         for _idx, date_time, turns in extract_sessions(init["conversation"]):
             for t in turns:

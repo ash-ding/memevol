@@ -121,7 +121,7 @@ def test_use_memory_to_answer_gets_query_scoped_recorder():
     not the phase-1 recorder — so recorder.init means the same thing everywhere."""
     import inspect
     from common import workflow as bw
-    from datasets.dynamicmem import workflow as dw
+    from benchmarks.dynamicmem import workflow as dw
 
     base_src = inspect.getsource(bw.BaseWorkflow.run_single_user)
     dm_src = inspect.getsource(dw.DynamicMemWorkflow._run_item)

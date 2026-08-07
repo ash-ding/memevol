@@ -7,11 +7,11 @@ byte-identical):
      ``sys.path`` so LightMem's absolute imports (``from lightmem.memory...``)
      resolve to our vendored copy under baselines/harness/lightmem/src/.
 
-  2. HuggingFace ``datasets`` vs memevol's ``datasets/`` — constructing
+  2. HuggingFace ``datasets`` vs memevol's ``benchmarks/`` — constructing
      LightMem's HuggingFace text embedder builds a ``SentenceTransformer``,
      whose ``model_card`` does ``from datasets import __version__`` at
      construction time. memevol ships a benchmark package ALSO named
-     ``datasets/`` that shadows the HF library on ``sys.path``. We make
+     ``benchmarks/`` that shadows the HF library on ``sys.path``. We make
      ``datasets`` resolve to HF for that construction.
 
      CRITICAL: HF ``datasets`` registers PROCESS-GLOBAL pyarrow extension types
@@ -91,7 +91,7 @@ def hf_datasets_active():
     re-imports → no pyarrow re-registration). memevol's ``datasets`` view is
     restored on exit.
 
-    Do NOT run memevol-``datasets`` imports (e.g. ``datasets.locomo.env``) inside
+    Do NOT run memevol-``datasets`` imports (e.g. ``benchmarks.locomo.env``) inside
     this block — they would resolve to HF. Callers MUST NOT ``await`` inside: the
     sys.modules swap is process-global and would corrupt a concurrently-scheduled
     coroutine's ``datasets`` view (safe today — every memo hook body is
@@ -125,7 +125,7 @@ def import_lightmemory():
     defensively (LightMem's import chain does not touch ``datasets`` until an
     embedder is constructed, but the swap is cheap and keeps the rule uniform).
     memevol's ``datasets`` view is restored on exit, so memo.py can still
-    ``from datasets.locomo.env import ...`` afterward."""
+    ``from benchmarks.locomo.env import ...`` afterward."""
     ensure_lightmem_importable()
     holder = {}
     with hf_datasets_active():

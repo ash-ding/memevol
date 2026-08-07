@@ -63,7 +63,7 @@ bind every method here:
 - **The eval surface is mandatorily shared.** A method's FINAL ARTIFACT is a
   `common.memo_class.MemoClass` subclass implementing the 3-hook
   contract, and it is scored ONLY through the shared registry/workflow path
-  (`baselines/registry.py` → `datasets/<bench>/workflow.py` + the shared
+  (`baselines/registry.py` → `benchmarks/<bench>/workflow.py` + the shared
   judge). No method ships its own scoring loop — otherwise its numbers stop
   being comparable.
 - **Split discipline.** Development, tuning, and any internal
@@ -73,7 +73,7 @@ bind every method here:
   (`split: test`, the default in every harness `config.example.yaml` — same
   data path as `forge.heldout`).
 - **Dependency direction is one-way.** Methods import `common/` (and
-  `datasets/` / `baselines/registry.py`); `common/` NEVER imports a method;
+  `benchmarks/` / `baselines/registry.py`); `common/` NEVER imports a method;
   methods NEVER import each other. Method-specific design vocabulary lives
   inside the method's own directory (e.g. alma's `Sub_memo_layer` in
   `evolve/alma/memo_layers.py`), never in `common/`.
@@ -98,7 +98,7 @@ vendored or listed in any `pyproject.toml`); see its own
 There is **no shared baselines dev/test venv** — the shared contract tests
 (`tests/test_baselines_multidataset.py`, `test_config.py`, `test_sampling_plan.py`,
 …) are baseline-free and run in the **repo-root uv project** (forge's project,
-which already imports `common/` + `datasets/`): `uv sync` at the repo root,
+which already imports `common/` + `benchmarks/`): `uv sync` at the repo root,
 then `uv run python tests/test_baselines_multidataset.py`.
 A baseline's OWN behavioral test (`tests/test_<name>_baseline.py`) runs in that
 baseline's own project (it needs that baseline's deps):
@@ -703,13 +703,13 @@ All baselines (and forge) build on the same dataset adapters and judge:
 
 - **[`baselines/registry.py`](registry.py)** — dataset name → (workflow,
   env module, recorder) resolution, shared by BOTH `evolve/` and `harness/`
-  (the shared `datasets/registry.py`, re-exported as `baselines/registry.py`).
-- **[`datasets/<bench>/env.py`](../datasets/)** — `load_user_data`,
+  (the shared `benchmarks/registry.py`, re-exported as `baselines/registry.py`).
+- **[`benchmarks/<bench>/env.py`](../benchmarks/)** — `load_user_data`,
   `get_task_list` (the single source of truth for the search/test split),
   per-benchmark Recorder.
 - **[`common/metric.py`](../common/metric.py)** — LLM-as-judge with
   configurable prompt template and score range (DynamicMem uses the
-  official TCE holistic judge in `datasets/dynamicmem/tce_prompts.py`).
+  official TCE holistic judge in `benchmarks/dynamicmem/tce_prompts.py`).
 - **[`common/llm.py`](../common/llm.py)** — `Agent` / `Embedding`
   wrappers with automatic token tracking; baselines use these so their
   cost numbers are comparable to forge's.

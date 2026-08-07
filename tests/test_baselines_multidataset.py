@@ -16,8 +16,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 def test_shared_registry_resolves_all_four():
     from baselines.registry import REGISTRY, DATASETS, resolve
-    from datasets.locomo.workflow import LoCoMoWorkflow
-    from datasets.locomo.env import LoCoMoRecorder
+    from benchmarks.locomo.workflow import LoCoMoWorkflow
+    from benchmarks.locomo.env import LoCoMoRecorder
     assert DATASETS == ["dynamicmem", "locomo", "longmemeval_m", "longmemeval_s"]
     wf, env, rec = resolve("locomo")
     assert wf is LoCoMoWorkflow and rec is LoCoMoRecorder and hasattr(env, "get_task_list")
@@ -102,8 +102,8 @@ def test_dynamicmem_default_answer_call_signature():
     the pre-refactor _answer_query default, now inlined in _run_item."""
     import asyncio
     import common.llm as llm_mod
-    from datasets.dynamicmem.workflow import DynamicMemWorkflow
-    from datasets.dynamicmem.env import DynamicMemRecorder
+    from benchmarks.dynamicmem.workflow import DynamicMemWorkflow
+    from benchmarks.dynamicmem.env import DynamicMemRecorder
     from common.memo_class import MemoClass
 
     calls = {}
@@ -177,9 +177,9 @@ def test_task_list_identical_to_main_method():
     single_stage is the whole split and a capped one is the same prefix the
     main method sees."""
     from common.evaluate import single_stage_wire_spec
-    from datasets.locomo import env as locomo_env
-    from datasets.longmemeval import env as lme_env
-    from datasets.dynamicmem import env as dm_env
+    from benchmarks.locomo import env as locomo_env
+    from benchmarks.longmemeval import env as lme_env
+    from benchmarks.dynamicmem import env as dm_env
     def task_list(env, ds, single_stage):
         n = single_stage_wire_spec(ds, single_stage)["n_samples"]
         return env.get_task_list("test", None if n is None else int(n))
@@ -247,7 +247,7 @@ def test_run_baseline_locomo_end_to_end():
     from common.memo_class import MemoClass
     from common.evaluate import single_stage_wire_spec
     from common.sampling import derive_sample_seed
-    from datasets.locomo.workflow import LoCoMoWorkflow
+    from benchmarks.locomo.workflow import LoCoMoWorkflow
 
     class _StubMemo(MemoClass):
         async def build_memory_from_data(self, r):
@@ -269,7 +269,7 @@ def test_run_baseline_locomo_end_to_end():
     single_stage = {"n_conversations": 1, "n_qa": 1}
     seed = derive_sample_seed(42, 0, "locomo")
     spec = {**single_stage_wire_spec("locomo", single_stage), "sample_seed": seed}
-    from datasets.locomo.env import get_task_list as _locomo_tasks
+    from benchmarks.locomo.env import get_task_list as _locomo_tasks
     expected = _locomo_tasks("test", int(spec["n_samples"]), seed=spec["sample_seed"])
     assert len(expected) == 1, expected
     the_user = expected[0]

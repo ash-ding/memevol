@@ -1,6 +1,6 @@
-"""Import sentence-transformers without tripping over memevol's `datasets/`.
+"""Import sentence-transformers without tripping over memevol's `benchmarks/`.
 
-ST 5.x collides with memevol's benchmark package `datasets/` (same top-level
+ST 5.x collides with memevol's benchmark package `benchmarks/` (same top-level
 name) at TWO points; both are handled here:
 
   * IMPORT time — `import sentence_transformers` eagerly imports HuggingFace
@@ -87,7 +87,7 @@ def hf_datasets_active():
     imports `datasets` LAZILY at call time (SentenceTransformer construction ->
     model_card.get_versions() -> `from datasets import __version__`). memevol's
     `datasets` view is restored on exit. Do NOT run memevol-`datasets` imports
-    (e.g. `datasets.locomo.env`) inside this block — they would resolve to HF.
+    (e.g. `benchmarks.locomo.env`) inside this block — they would resolve to HF.
     Callers MUST NOT `await` inside this block: the sys.modules swap is
     process-global and would corrupt a concurrently-scheduled coroutine's
     `datasets` view (safe today because every memo hook body is await-free)."""

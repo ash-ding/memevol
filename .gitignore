@@ -10,10 +10,10 @@ __pycache__/
 *.pyo
 
 # Data (too large for git or out-of-policy to ship in repo)
-datasets/dynamicmem/user_data/
-datasets/dynamicmem/user_qa/
-datasets/locomo/locomo10.json
-datasets/longmemeval/*.json
+benchmarks/dynamicmem/user_data/
+benchmarks/dynamicmem/user_qa/
+benchmarks/locomo/locomo10.json
+benchmarks/longmemeval/*.json
 
 # Environment secrets
 .env

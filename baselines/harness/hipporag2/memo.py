@@ -11,7 +11,7 @@ at /export/scratch_large/ding/code/HippoRAG/src/hipporag/HippoRAG.py):
     only the genuinely-new strings (see embedding_store.py:63-90); OpenIE is
     likewise only re-run for chunk ids not already indexed. So each
     `build_memory_from_data` call only needs to pass the NEW segment (already true for
-    DynamicMem's per-checkpoint slices — `datasets/dynamicmem/workflow.py`
+    DynamicMem's per-checkpoint slices — `benchmarks/dynamicmem/workflow.py`
     passes `app_logs[prev_end:len(visible)]`, a non-overlapping suffix) rather
     than re-indexing the full accumulated `self._passages`.
   - `HippoRAG.retrieve(queries=, num_to_retrieve=, gold_docs=None)` exists and
@@ -48,7 +48,7 @@ def _init_to_passages(init: Dict) -> List[str]:
     if "app_logs" in init:
         return [app_log_to_passage(e) for e in init["app_logs"]]
     if "conversation" in init:
-        from datasets.locomo.env import extract_sessions
+        from benchmarks.locomo.env import extract_sessions
         conv = init["conversation"]
         out = []
         # extract_sessions returns (session_idx, date_time, turns) tuples —
@@ -76,7 +76,7 @@ class HippoRAGMemo(MemoClass):
         # `self.recorder_class()` instances that are NEVER given `.user_id`
         # (only a separate bookkeeping recorder used for trace/step logging
         # gets `user_id = user_tag` — verified across common/workflow.py:490-508,
-        # datasets/dynamicmem/workflow.py:107-208, datasets/locomo/workflow.py:95).
+        # benchmarks/dynamicmem/workflow.py:107-208, benchmarks/locomo/workflow.py:95).
         # So `recorder.user_id` is always the dataclass default "" in practice —
         # keying save_dir on it would collapse every user's HippoRAG graph onto
         # the same path (silent cross-user contamination under concurrent

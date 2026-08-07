@@ -19,7 +19,7 @@ def test_st_shim_coexists_with_memevol_datasets():
     ensure_sentence_transformers()
     ensure_sentence_transformers()   # idempotent
     import sentence_transformers      # noqa: F401
-    from datasets.locomo.env import extract_sessions   # memevol's datasets
+    from benchmarks.locomo.env import extract_sessions   # memevol's datasets
     assert callable(extract_sessions)
 
 

@@ -23,7 +23,7 @@ default in eval_tce.py and cannot run on the published data for Task A
 implements the holistic track only.
 
 This module is pure (stdlib only): prompt builders + normalization + scoring.
-LLM calls live in datasets/dynamicmem/workflow.py.
+LLM calls live in benchmarks/dynamicmem/workflow.py.
 """
 from __future__ import annotations
 

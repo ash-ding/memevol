@@ -9,7 +9,7 @@ accordingly; each checkpoint's new app-log segment is handed to
 build_memory_from_data in one call — the memo owns ingestion granularity.
 
 Two task families per checkpoint (both scored 0.0-1.0 by the official
-holistic Core+Detail judge — see datasets/dynamicmem/tce_prompts.py):
+holistic Core+Detail judge — see benchmarks/dynamicmem/tce_prompts.py):
   - Task A  state_completion  fill a state template from memory
   - Task C  apply_service     personalized service (message / structured)
 
@@ -32,7 +32,7 @@ import httpx
 
 from common.sampling import combine_seed
 from common.workflow import BaseWorkflow, _QAProgressTracker, log
-from datasets.dynamicmem.env import (
+from benchmarks.dynamicmem.env import (
     Basic_Recorder,
     DynamicMemRecorder,
     TASK_FAMILY_STATE_COMPLETION,
@@ -41,7 +41,7 @@ from datasets.dynamicmem.env import (
     sample_items,
     sample_items_staged,
 )
-from datasets.dynamicmem import tce_prompts as tce
+from benchmarks.dynamicmem import tce_prompts as tce
 
 
 class DynamicMemWorkflow(BaseWorkflow):

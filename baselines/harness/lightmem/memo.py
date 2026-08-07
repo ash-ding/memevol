@@ -110,7 +110,7 @@ def _init_to_turns(init: Dict) -> List[List[Dict]]:
             turns.append(_turn_pair(app_log_to_passage(e), e.get("timestamp", ""), app, app))
         return turns
     if "conversation" in init:
-        from datasets.locomo.env import extract_sessions   # memevol datasets — NOT the HF library
+        from benchmarks.locomo.env import extract_sessions   # memevol datasets — NOT the HF library
         conv = init["conversation"]
         speaker_a = conv.get("speaker_a")
         speaker_b = conv.get("speaker_b")
