@@ -171,20 +171,24 @@ def test_single_stage_whole_split_matches_main_method():
 
 
 def test_task_list_identical_to_main_method():
-    """The baseline's split derivation MUST equal the main method's
-    (forge/launch.py:185-189 calls the SAME env.get_task_list). Sized here via
-    the shared single_stage_wire_spec (no seed → deterministic prefix)."""
-    from baselines.harness.eval_common import resolve_task_list
+    """The wire spec's n_samples field must map onto env.get_task_list exactly —
+    evaluate_memo (shared by forge's container AND every baseline) derives its
+    task list as get_task_list(split, spec["n_samples"], seed) — so an all-null
+    single_stage is the whole split and a capped one is the same prefix the
+    main method sees."""
     from common.evaluate import single_stage_wire_spec
     from datasets.locomo import env as locomo_env
     from datasets.longmemeval import env as lme_env
     from datasets.dynamicmem import env as dm_env
+    def task_list(env, ds, single_stage):
+        n = single_stage_wire_spec(ds, single_stage)["n_samples"]
+        return env.get_task_list("test", None if n is None else int(n))
     # whole test split (all-null single_stage) == get_task_list("test", None) == heldout split
-    assert resolve_task_list("locomo", "test", single_stage_wire_spec("locomo", {})) == locomo_env.get_task_list("test", None)
-    assert resolve_task_list("longmemeval_s", "test", single_stage_wire_spec("longmemeval_s", {})) == lme_env.get_task_list("test", None)
-    assert resolve_task_list("dynamicmem", "test", single_stage_wire_spec("dynamicmem", {})) == dm_env.get_task_list("test", None)
+    assert task_list(locomo_env, "locomo", {}) == locomo_env.get_task_list("test", None)
+    assert task_list(lme_env, "longmemeval_s", {}) == lme_env.get_task_list("test", None)
+    assert task_list(dm_env, "dynamicmem", {}) == dm_env.get_task_list("test", None)
     # capped units == get_task_list("test", N)
-    assert resolve_task_list("locomo", "test", single_stage_wire_spec("locomo", {"n_conversations": 2})) == locomo_env.get_task_list("test", 2)
+    assert task_list(locomo_env, "locomo", {"n_conversations": 2}) == locomo_env.get_task_list("test", 2)
 
 
 def test_make_memo_class_no_arg_instantiable():
@@ -204,7 +208,7 @@ def test_make_memo_class_no_arg_instantiable():
 def test_run_baseline_locomo_end_to_end():
     """Deterministic full drive of baselines.harness.eval_common.run_baseline on ONE
     real locomo test-split unit — not a scoped-down slice. This exercises:
-    registry.resolve -> resolve_task_list (real locomo10.json split) ->
+    registry.resolve -> the shared task-list derivation (real locomo10.json split) ->
     LoCoMoWorkflow construction -> run_all_users -> run_single_user (REAL
     Phase 1 ingestion against the actual conv-47 sessions, REAL
     build_qa_prompt/build_qa_metadata/log_qa_step dispatch) ->
@@ -227,7 +231,7 @@ def test_run_baseline_locomo_end_to_end():
     from pathlib import Path
 
     import common.llm as llm_mod
-    from baselines.harness.eval_common import resolve_task_list, run_baseline
+    from baselines.harness.eval_common import run_baseline
     from common.memo_class import MemoClass
     from common.evaluate import single_stage_wire_spec
     from common.sampling import derive_sample_seed
@@ -253,7 +257,8 @@ def test_run_baseline_locomo_end_to_end():
     single_stage = {"n_conversations": 1, "n_qa": 1}
     seed = derive_sample_seed(42, 0, "locomo")
     spec = {**single_stage_wire_spec("locomo", single_stage), "sample_seed": seed}
-    expected = resolve_task_list("locomo", "test", spec)
+    from datasets.locomo.env import get_task_list as _locomo_tasks
+    expected = _locomo_tasks("test", int(spec["n_samples"]), seed=spec["sample_seed"])
     assert len(expected) == 1, expected
     the_user = expected[0]
 

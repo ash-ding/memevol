@@ -278,12 +278,14 @@ def test_progressive_false_rejects_unknown_single_stage_field():
 # --------------------------------------------------------------------------
 
 def test_whole_split_seed_is_noop():
-    from baselines.harness.eval_common import resolve_task_list
+    # Directly against the primitive evaluate_memo calls (env.get_task_list →
+    # shuffle_prefix): a seed at whole-split n=None must not change the SET.
+    from datasets.locomo.env import get_task_list
     from common.sampling import derive_sample_seed
     seed = derive_sample_seed(42, 0, "locomo")
     assert seed  # non-empty seed derived
-    seeded = resolve_task_list("locomo", "test", {"n_samples": None, "sample_seed": seed})
-    unseeded = resolve_task_list("locomo", "test", {"n_samples": None})
+    seeded = get_task_list("test", None, seed=seed)
+    unseeded = get_task_list("test", None)
     # n=None → whole pool regardless of seed: same SET (order may differ under a
     # shuffle, but the aggregate score is order-independent, so results are
     # unchanged). This is why existing whole-split baseline numbers hold.

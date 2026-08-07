@@ -10,10 +10,9 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Type
+from typing import Any, Dict, Optional, Type
 
 from common.memo_class import MemoClass
-from baselines.registry import resolve
 
 
 def make_memo_class(base_cls: Type[MemoClass], **cfg) -> Type[MemoClass]:
@@ -37,24 +36,6 @@ def make_memo_class(base_cls: Type[MemoClass], **cfg) -> Type[MemoClass]:
     if mod is not None:
         setattr(mod, name, cls)
     return cls
-
-
-def resolve_task_list(dataset: str, split: str, stage_spec: Dict[str, Any]) -> List[str]:
-    """EXACTLY forge/launch.py:185-189 — same env.get_task_list, same n_samples
-    key. This makes the baseline split byte-identical to the main method.
-
-    `stage_spec["sample_seed"]` (progressive gauntlet only) reaches
-    env.get_task_list as `seed`, driving common.sampling.shuffle_prefix's
-    nested random subset selection when a stage caps n. Absent (single-stage
-    path / whole split) it is None → the historical deterministic prefix, so
-    default whole-split baseline results are unchanged."""
-    _wf, env_module, _rec = resolve(dataset)
-    n_samples = stage_spec.get("n_samples")
-    return env_module.get_task_list(
-        status=split,
-        eval_n_samples=None if n_samples is None else int(n_samples),
-        seed=stage_spec.get("sample_seed"),
-    )
 
 
 async def run_baseline(
