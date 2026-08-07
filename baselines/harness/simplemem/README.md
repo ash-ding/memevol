@@ -4,7 +4,7 @@
 lifelong memory — as a ready-made memory system on the 3-hook `MemoClass`
 contract. The paper PDF is in this directory ([simplemem.pdf](simplemem.pdf)).
 
-**Provenance**: the `vendor/simplemem/` subtree is vendored from
+**Provenance**: the `src/simplemem/` subtree is vendored from
 <https://github.com/aiming-lab/SimpleMem> @
 `db80b6a7c591e0ea730a058e9f5fc4eb06572299`. Only the **text** pipeline is
 vendored — `simplemem/text/` + `simplemem/core/` — which is byte-identical to
@@ -14,15 +14,15 @@ core+text files are unmodified:
 
     UP=$(mktemp -d) && git clone https://github.com/aiming-lab/SimpleMem "$UP" \
       && git -C "$UP" checkout db80b6a
-    diff -r "$UP/simplemem/core" vendor/simplemem/core && echo "core: identical"
-    diff -r "$UP/simplemem/text" vendor/simplemem/text && echo "text: identical"
+    diff -r "$UP/simplemem/core" src/simplemem/core && echo "core: identical"
+    diff -r "$UP/simplemem/text" src/simplemem/text && echo "text: identical"
 
 The one vendored file that is **not** byte-identical is
-`vendor/simplemem/__init__.py` — upstream's package initializer eagerly imports
+`src/simplemem/__init__.py` — upstream's package initializer eagerly imports
 the AutoMemory router (→ multimodal / evolver), so it is replaced with a minimal
 initializer that imports nothing (the baseline imports
 `simplemem.text.system.SimpleMemSystem` directly). All integration code lives in
-`memo.py` / `run.py` / `_st_shim.py`, never in `vendor/`.
+`memo.py` / `run.py` / `_st_shim.py`, never in `src/`.
 
 ## How it works
 
@@ -101,8 +101,8 @@ the new segment; `finalize` flushes its remainder).
 
 | Category | Items |
 |---|---|
-| Verbatim | whole `vendor/simplemem/{core,text}` (compression, hybrid retrieval, planning, reflection, answer prompts, LanceDB backend); `WINDOW_SIZE=40` / `OVERLAP_SIZE=2`; `SEMANTIC/KEYWORD/STRUCTURED_TOP_K=25/5/5`; internal LLM `gpt-4.1-mini`; faithful `Qwen/Qwen3-Embedding-0.6B` embedder |
-| Integration adaptations (not algorithm) | longmemeval (per message) / dynamicmem (per app-log entry, hipporag2's `app_log_to_passage` text) ingestion mapping — SimpleMem only defined LoCoMo; answering via the shared QA agent; `_st_shim.py` (sentence-transformers/lancedb vs memevol's `datasets/` shadow — same class of issue as amem, imported exactly once to avoid a pyarrow re-registration crash; + a process-wide embedder cache so the 0.6B weights load once, not per user); `vendor/simplemem/__init__.py` trimmed to keep multimodal/evolver off the import path; `use_streaming=false` (identical output, no console flood) |
+| Verbatim | whole `src/simplemem/{core,text}` (compression, hybrid retrieval, planning, reflection, answer prompts, LanceDB backend); `WINDOW_SIZE=40` / `OVERLAP_SIZE=2`; `SEMANTIC/KEYWORD/STRUCTURED_TOP_K=25/5/5`; internal LLM `gpt-4.1-mini`; faithful `Qwen/Qwen3-Embedding-0.6B` embedder |
+| Integration adaptations (not algorithm) | longmemeval (per message) / dynamicmem (per app-log entry, hipporag2's `app_log_to_passage` text) ingestion mapping — SimpleMem only defined LoCoMo; answering via the shared QA agent; `_st_shim.py` (sentence-transformers/lancedb vs memevol's `datasets/` shadow — same class of issue as amem, imported exactly once to avoid a pyarrow re-registration crash; + a process-wide embedder cache so the 0.6B weights load once, not per user); `src/simplemem/__init__.py` trimmed to keep multimodal/evolver off the import path; `use_streaming=false` (identical output, no console flood) |
 | Kept at SimpleMem defaults (faithful path) | `enable_parallel_processing`/`enable_parallel_retrieval=true` (SimpleMem's shipped defaults, and the path its LoCoMo eval uses) — NOTE the serial and parallel build paths are **not** equivalent: the serial path feeds each window the previous window's entries as dedup context, the parallel path processes windows independently, so the parallel output is the faithful one. It is also the only real build parallelism (the async build hook body is synchronous + blocking, so users don't overlap under `max_sample_concurrent` and there is no thread-count multiplication). Tune via `max_parallel_workers` (16) / `max_retrieval_workers` (8) |
 | Known consequences | SimpleMem compresses source turns into `MemoryEntry` units that carry NO `app_log_id`, so DynamicMem evidence-citation scoring is disadvantaged (inherent to compression-first memory); LoCoMo is SimpleMem's home benchmark and its tuned `WINDOW_SIZE` — other datasets use the same size unless overridden |
 

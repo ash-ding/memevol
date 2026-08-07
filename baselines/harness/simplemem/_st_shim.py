@@ -3,9 +3,9 @@
 Three concerns, all integration-only (SimpleMem's vendored code stays
 byte-identical):
 
-  1. VENDOR PATH — ``ensure_simplemem_importable()`` puts ``vendor/`` on
+  1. SRC PATH — ``ensure_simplemem_importable()`` puts ``src/`` on
      ``sys.path`` so SimpleMem's absolute imports (``from simplemem.core...``)
-     resolve to our vendored copy under baselines/harness/simplemem/vendor/.
+     resolve to our vendored copy under baselines/harness/simplemem/src/.
 
   2. HuggingFace ``datasets`` vs memevol's ``datasets/`` — SimpleMem's import
      chain pulls in ``lancedb`` (``core/database`` init does ``from datasets
@@ -36,7 +36,7 @@ import sys
 from pathlib import Path
 
 _HARNESS_DIR = Path(__file__).resolve().parent
-_VENDOR_DIR = _HARNESS_DIR / "vendor"
+_SRC_DIR = _HARNESS_DIR / "src"
 _PROJECT_ROOT = _HARNESS_DIR.parents[2]   # baselines/harness/simplemem -> repo root
 
 # HuggingFace `datasets*` module objects, captured ONCE by _capture_hf_datasets().
@@ -47,7 +47,7 @@ _hf_datasets_mods = None
 def ensure_simplemem_importable() -> None:
     """Idempotently put the vendored ``simplemem`` package on sys.path so its
     absolute internal imports resolve to our copy."""
-    p = str(_VENDOR_DIR)
+    p = str(_SRC_DIR)
     if p not in sys.path:
         sys.path.insert(0, p)
 

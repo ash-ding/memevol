@@ -44,7 +44,7 @@ from common.memo_class import MemoClass
 from baselines.harness.hipporag2.memo import app_log_to_passage
 from baselines.harness.zep import _st_shim
 
-_st_shim.ensure_vendor_on_path()          # `import graphiti_core` -> vendored copy
+_st_shim.ensure_src_on_path()          # `import graphiti_core` -> vendored copy
 _st_shim.ensure_sentence_transformers()   # before any graphiti cross_encoder import
 
 from graphiti_core import Graphiti  # noqa: E402

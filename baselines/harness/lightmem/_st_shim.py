@@ -3,9 +3,9 @@
 Three concerns, all integration-only (LightMem's vendored code stays
 byte-identical):
 
-  1. VENDOR PATH — ``ensure_lightmem_importable()`` puts ``vendor/`` on
+  1. SRC PATH — ``ensure_lightmem_importable()`` puts ``src/`` on
      ``sys.path`` so LightMem's absolute imports (``from lightmem.memory...``)
-     resolve to our vendored copy under baselines/harness/lightmem/vendor/.
+     resolve to our vendored copy under baselines/harness/lightmem/src/.
 
   2. HuggingFace ``datasets`` vs memevol's ``datasets/`` — constructing
      LightMem's HuggingFace text embedder builds a ``SentenceTransformer``,
@@ -35,7 +35,7 @@ import sys
 from pathlib import Path
 
 _HARNESS_DIR = Path(__file__).resolve().parent
-_VENDOR_DIR = _HARNESS_DIR / "vendor"
+_SRC_DIR = _HARNESS_DIR / "src"
 _PROJECT_ROOT = _HARNESS_DIR.parents[2]   # baselines/harness/lightmem -> repo root
 
 # HuggingFace `datasets*` module objects, captured ONCE by _capture_hf_datasets().
@@ -46,7 +46,7 @@ _hf_datasets_mods = None
 def ensure_lightmem_importable() -> None:
     """Idempotently put the vendored ``lightmem`` package on sys.path so its
     absolute internal imports resolve to our copy."""
-    p = str(_VENDOR_DIR)
+    p = str(_SRC_DIR)
     if p not in sys.path:
         sys.path.insert(0, p)
 

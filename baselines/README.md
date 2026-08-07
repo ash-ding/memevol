@@ -347,7 +347,7 @@ Artifacts: `baselines/harness/hipporag2/{outputs/, results/<dataset>/<split>/}`.
 
 `LightMemMemo` ([harness/lightmem/memo.py](harness/lightmem/memo.py)) wraps
 [LightMem](https://github.com/zjunlp/LightMem)'s vendored text pipeline
-(`vendor/lightmem/{configs,factory,memory}`, byte-identical @ `34410f4`):
+(`src/lightmem/{configs,factory,memory}`, byte-identical @ `34410f4`):
 
 - **BUILD**: maps the visible data to LightMem turns (a `[user, assistant]` pair
   per unit) and feeds them one turn at a time to `add_memory` — LLMlingua-2
@@ -380,7 +380,7 @@ boundary and provenance.
 
 `SimpleMemMemo` ([harness/simplemem/memo.py](harness/simplemem/memo.py)) wraps
 [SimpleMem](https://github.com/aiming-lab/SimpleMem)'s vendored text pipeline
-(`vendor/simplemem/{core,text}`, byte-identical @ `db80b6a`):
+(`src/simplemem/{core,text}`, byte-identical @ `db80b6a`):
 
 - **BUILD**: maps the visible data to SimpleMem `Dialogue`s and runs its
   compression pipeline — LLM window-compression (`WINDOW_SIZE=40`) into
@@ -409,7 +409,7 @@ faithfulness boundary and provenance.
 
 `ZepMemo` ([harness/zep/memo.py](harness/zep/memo.py)) vendors and drives
 [Graphiti](https://github.com/getzep/graphiti) (@ `4f62cfe`, byte-identical under
-`vendor/graphiti_core/`), the engine behind [Zep](harness/zep/zep.pdf)
+`src/graphiti_core/`), the engine behind [Zep](harness/zep/zep.pdf)
 (arXiv:2501.13956):
 
 - **BUILD**: each ingestion unit becomes one Graphiti *episode* via `add_episode`

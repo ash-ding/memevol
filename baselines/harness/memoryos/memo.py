@@ -48,11 +48,11 @@ from baselines.harness.memoryos._st_shim import ensure_sentence_transformers, hf
 
 ensure_sentence_transformers()      # utils.py does `from sentence_transformers import SentenceTransformer`
 
-_VENDOR = Path(__file__).resolve().parent / "vendor"
+_SRC = Path(__file__).resolve().parent / "src"
 # The vendored modules import each other ABSOLUTELY (`from long_term import ...`,
 # `import prompts`), so the package directory itself has to be importable — not
 # just its parent. Both paths go on sys.path, innermost first.
-for _p in (str(_VENDOR / "memoryos"), str(_VENDOR)):
+for _p in (str(_SRC / "memoryos"), str(_SRC)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

@@ -6,7 +6,7 @@ metadata/summary extraction → embedding index → offline update) — as a rea
 memory system on the 3-hook `MemoClass` contract. The paper PDF is in this
 directory ([lightmem.pdf](lightmem.pdf)).
 
-**Provenance**: the `vendor/lightmem/` subtree is vendored from
+**Provenance**: the `src/lightmem/` subtree is vendored from
 <https://github.com/zjunlp/LightMem> @
 `34410f41173f9107fbe8daf273092f398bfaf85b`. Only the **core text** package is
 vendored — `src/lightmem/{__init__,configs,factory,memory}`, **byte-identical** to
@@ -18,11 +18,11 @@ LightMem's text memory only. Verify the vendored files are unmodified:
     UP=$(mktemp -d) && git clone https://github.com/zjunlp/LightMem "$UP" \
       && git -C "$UP" checkout 34410f4
     for sub in __init__.py configs factory memory; do \
-      diff -r "$UP/src/lightmem/$sub" vendor/lightmem/$sub && echo "$sub: identical"; done
+      diff -r "$UP/src/lightmem/$sub" src/lightmem/$sub && echo "$sub: identical"; done
 
-Nothing under `vendor/` is edited (unlike the simplemem baseline, LightMem's
+Nothing under `src/` is edited (unlike the simplemem baseline, LightMem's
 top-level `__init__.py` is empty, so no trimming is needed). All integration code
-lives in `memo.py` / `run.py` / `_st_shim.py`, never in `vendor/`. The vendored
+lives in `memo.py` / `run.py` / `_st_shim.py`, never in `src/`. The vendored
 `memory/graph.py` is a broken one-line upstream stub (`class GraphMem:` with no
 body); it is imported only when `graph_mem=True`, which this baseline never sets,
 so it is kept byte-identical and never loaded.
@@ -109,7 +109,7 @@ Turns are ingested in order; the per-user Qdrant index is instance-scoped
 
 | Category | Items |
 |---|---|
-| Verbatim | whole `vendor/lightmem/{configs,factory,memory}` (pre-compression, topic segmentation, extraction, offline update, Qdrant backend, `retrieve`); `parse_locomo_timestamp`; per-turn `add_memory(force_segment/force_extract=is_last)` loop; LLMlingua-2 model + `compress_rate=0.6`; `extract_threshold=0.1`; internal `gpt-4o-mini`; `retrieve(limit=20)`; `offline_update_all_entries(0.9)` |
+| Verbatim | whole `src/lightmem/{configs,factory,memory}` (pre-compression, topic segmentation, extraction, offline update, Qdrant backend, `retrieve`); `parse_locomo_timestamp`; per-turn `add_memory(force_segment/force_extract=is_last)` loop; LLMlingua-2 model + `compress_rate=0.6`; `extract_threshold=0.1`; internal `gpt-4o-mini`; `retrieve(limit=20)`; `offline_update_all_entries(0.9)` |
 | Design choices (recorded) | **retrieval** = `LightMemory.retrieve()` (LightMem's own LongMemEval-driver path, uniform across datasets) — NOT the LoCoMo experiment's separate `VectorRetriever`/per-speaker glue; **offline update** = config knob, default on (the LoCoMo-paper full pipeline); **answering** via the shared QA agent |
 | Integration adaptations (not algorithm) | longmemeval (per message pair) / dynamicmem (per app-log entry, hipporag2's text) ingestion mapping — LightMem only defined LoCoMo/LongMemEval; default extraction prompt (as the LongMemEval driver uses — the LoCoMo-specific `experiments/` prompt is not vendored); `_st_shim.py` (sentence-transformers vs memevol's `datasets/` shadow — same class of issue as amem/simplemem, imported once; + a process-wide embedder cache so the weights load once, not per user); LightMem's per-call `print`/INFO logging silenced (stdout redirect + logger pinned to WARNING); Qdrant path scoped per-uuid instance |
 | Cross-user note | `memory/lightmem.py` has module globals `GLOBAL_TOPIC_IDX` / `GLOBAL_LAST_SUMMARY_TIME` that never reset across instances. `GLOBAL_TOPIC_IDX` monotonically grows (topic ids don't restart at 0 per user), but retrieval never filters on `topic_id`, so this is inert for scoring; `GLOBAL_LAST_SUMMARY_TIME` is only touched by `summarize()`, which this baseline never calls |

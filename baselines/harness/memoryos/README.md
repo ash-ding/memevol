@@ -42,7 +42,7 @@ passage content matches the other baselines).
 
 ## Faithfulness notes
 
-The implementation is VENDORED under `vendor/memoryos/` from the authors'
+The implementation is VENDORED under `src/memoryos/` from the authors'
 `memoryos-pro` wheel (0.1.0). Two reasons: its declared pins do not resolve on
 this repo's Python (`numpy==1.24.*` has no 3.12 wheel and builds against the
 removed `pkgutil.ImpImporter`; `faiss-gpu` needs CUDA), and vendoring keeps the
@@ -123,7 +123,7 @@ prompts, which would invalidate every historical LoCoMo number in this repo.
 Phase 1 is 20–43 min per conversation. `Memoryos.add_memory` is a blocking
 synchronous call inside an async hook, so it holds the event loop and the
 nominal `max_sample_concurrent: 3` does not actually overlap users — the build is
-serial. It is left that way on purpose: `vendor/memoryos/utils.py`'s
+serial. It is left that way on purpose: `src/memoryos/utils.py`'s
 `_embedding_cache` evicts by listing keys and deleting them one by one, which
 races under threads, so wrapping the call in `asyncio.to_thread` would trade a
 known cost for an unknown corruption.

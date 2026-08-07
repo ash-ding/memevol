@@ -5,13 +5,13 @@
 contract. Zep's memory engine is **Graphiti**; the baseline vendors and drives
 `graphiti_core` directly.
 
-**Provenance**: `vendor/graphiti_core/` is vendored VERBATIM (byte-identical) from
+**Provenance**: `src/graphiti_core/` is vendored VERBATIM (byte-identical) from
 <https://github.com/getzep/graphiti> @
 `4f62cfe7a2d519e55bfdf2dc4a2fd06649dc00b3`, excluding the top-level `server/` and
-`mcp_server/` service dirs (unused). No file under `vendor/graphiti_core/` is
+`mcp_server/` service dirs (unused). No file under `src/graphiti_core/` is
 edited — provenance lives here, not in per-file headers, to preserve byte-identity:
 
-    diff -r <(git -C <graphiti-clone> show 4f62cfe:graphiti_core) vendor/graphiti_core
+    diff -r <(git -C <graphiti-clone> show 4f62cfe:graphiti_core) src/graphiti_core
 
 ## How it works
 

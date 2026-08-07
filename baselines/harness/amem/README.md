@@ -3,13 +3,13 @@
 [A-Mem: Agentic Memory for LLM Agents](https://arxiv.org/pdf/2502.12110) as a
 ready-made memory system on the 3-hook `MemoClass` contract.
 
-**Provenance**: `memory_layer.py` is vendored VERBATIM from
+**Provenance**: `src/memory_layer.py` is vendored VERBATIM from
 <https://github.com/WujiangXu/A-mem> @
 `0c8039f28fdcc08189a23c07a3437d9d2482f9c2` — the paper-reproduction core
 (NOT `memory_layer_robust.py`, NOT the A-mem-sys package). Below its 8-line
 provenance header the file is byte-identical to upstream:
 
-    tail -n +9 memory_layer.py | diff - <(git -C /export/scratch_large/ding/code/A-mem show 0c8039f:memory_layer.py)
+    tail -n +9 src/memory_layer.py | diff - <(git -C /export/scratch_large/ding/code/A-mem show 0c8039f:memory_layer.py)
 
 ## How it works
 
@@ -70,7 +70,7 @@ every key.
 
 | Category | Items |
 |---|---|
-| Verbatim | whole `memory_layer.py`; locomo note unit `"Speaker {X}says : {text}"` + session date (missing-space quirk preserved); keywords-rewrite prompt + JSON schema; `retrieve_k=10`; `evo_threshold=100`; internal gpt-4o-mini |
+| Verbatim | whole `src/memory_layer.py`; locomo note unit `"Speaker {X}says : {text}"` + session date (missing-space quirk preserved); keywords-rewrite prompt + JSON schema; `retrieve_k=10`; `evo_threshold=100`; internal gpt-4o-mini |
 | Integration adaptations (not algorithm) | longmemeval (per message) / dynamicmem (per app-log entry, hipporag2's `app_log_to_passage` text) ingestion mapping — A-mem only defined LoCoMo; answering via the shared QA agent; `_st_shim.py` (memevol's `datasets/` shadows HF `datasets`, an ST 5.x import-time dep); per-note `print` flood redirected to devnull |
 | Upstream quirks preserved | `find_related_memories_raw` neighbor-cap loop behavior; `"says :"` spacing |
 

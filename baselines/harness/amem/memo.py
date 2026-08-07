@@ -35,7 +35,7 @@ from baselines.harness.hipporag2.memo import app_log_to_passage
 from baselines.harness.amem._st_shim import ensure_sentence_transformers, hf_datasets_active
 
 ensure_sentence_transformers()   # MUST precede the memory_layer import (it imports ST)
-from baselines.harness.amem.memory_layer import AgenticMemorySystem, LLMController  # noqa: E402
+from baselines.harness.amem.src.memory_layer import AgenticMemorySystem, LLMController  # noqa: E402
 
 # Copied VERBATIM from A-mem test_advanced.py::generate_query_llm (@ 0c8039f).
 # (.format on this template renders byte-identically to upstream's f-string.)

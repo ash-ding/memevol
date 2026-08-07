@@ -2,9 +2,9 @@
 
 Three integration concerns, all handled here (NO edits to vendored graphiti_core):
 
-  1. VENDOR PATH — `import graphiti_core` must resolve to the byte-identical
-     copy under `vendor/`, not any pip-installed graphiti-core.
-     `ensure_vendor_on_path()` prepends `vendor/` to sys.path[0].
+  1. SRC PATH — `import graphiti_core` must resolve to the byte-identical
+     copy under `src/`, not any pip-installed graphiti-core.
+     `ensure_src_on_path()` prepends `src/` to sys.path[0].
 
   2. `datasets` SHADOW — memevol's benchmark package `datasets/` collides with
      the HuggingFace `datasets` library that sentence-transformers imports (BGE-m3
@@ -32,7 +32,7 @@ import sys
 from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
-_VENDOR = _HERE / "vendor"
+_SRC = _HERE / "src"
 _PROJECT_ROOT = _HERE.parents[2]   # baselines/harness/zep -> repo root
 
 # HuggingFace `datasets*` module objects, captured the first time we import with
@@ -40,10 +40,10 @@ _PROJECT_ROOT = _HERE.parents[2]   # baselines/harness/zep -> repo root
 _hf_datasets_mods = None
 
 
-def ensure_vendor_on_path() -> None:
-    """Prepend vendor/ so `import graphiti_core` hits the vendored, byte-identical
+def ensure_src_on_path() -> None:
+    """Prepend src/ so `import graphiti_core` hits the vendored, byte-identical
     copy rather than any pip-installed graphiti-core. Idempotent."""
-    p = str(_VENDOR)
+    p = str(_SRC)
     if p not in sys.path:
         sys.path.insert(0, p)
 
