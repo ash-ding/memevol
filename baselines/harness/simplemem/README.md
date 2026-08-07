@@ -58,30 +58,32 @@ This creates `baselines/harness/simplemem/.venv/`. The repo-root
 
 ## Usage
 
-    cd baselines/harness/simplemem && uv run python run.py \
-        --config config.example.yaml
-    uv run python run.py \
-        --config my_simplemem.yaml --dataset dynamicmem --split search
+    cd baselines/harness/simplemem && uv run python run.py --config config.example.yaml
 
-Flags: `--config` (YAML path; CLI flags override it); `--simplemem_llm_model`
-(default `gpt-4.1-mini` — SimpleMem's own default; **4-series only**, since its
+`run.py` takes exactly one flag, `--config <yaml>` (required) — there is no
+other CLI surface. Every parameter lives in the config file:
+`config.example.yaml` documents each key inline — copy it, edit the values
+(e.g. `dataset: dynamicmem`, `split: search`), and point `--config` at your
+copy. The YAML must list EXACTLY the keys `run.py`'s `REQUIRED_KEYS`
+expects — a missing key OR an unknown key aborts the run before anything
+executes; a `null` value counts as listed.
+
+SimpleMem-specific keys worth calling out: `simplemem_llm_model` (default
+`gpt-4.1-mini` — SimpleMem's own default; **4-series only**, since its
 `LLMClient` sends `temperature=0.1..0.3`, which the gpt-5 family rejects);
-`--embedding_model` (default `Qwen/Qwen3-Embedding-0.6B`, the faithful local
-sentence-transformer; pass `all-MiniLM-L6-v2` for the light fallback);
-retrieval/window knobs (`--semantic_top_k` / `--keyword_top_k` /
-`--structured_top_k` / `--window_size` / `--overlap_size` / `--enable_planning`
-/ `--enable_reflection` / `--max_reflection_rounds`); `--llm_model` /
-`--judge_model` (default `gpt-5-mini` — shared QA agent + judge, baseline
-convention); `--split`.
+`embedding_model` (default `Qwen/Qwen3-Embedding-0.6B`, the faithful local
+sentence-transformer; set `all-MiniLM-L6-v2` for the light fallback). The
+rest (`base_url`, `window_size`, `overlap_size`, `semantic_top_k`,
+`keyword_top_k`, `structured_top_k`, `enable_planning`, `enable_reflection`,
+`max_reflection_rounds`, `enable_parallel_processing`,
+`max_parallel_workers`, `enable_parallel_retrieval`,
+`max_retrieval_workers`, `llm_model`, `judge_model`, `progressive`,
+`sampling_seed`, `memory_cache`) are documented inline in
+`config.example.yaml`.
 
-Shared progressive-sampling flags (same as cc/hipporag2/amem): `--progressive` /
-`--no-progressive` (default off — staged stage1→2→3 gauntlet with threshold
-elimination vs one single-stage pass); `--sampling-seed` (default `42`);
-`--no-memory-cache` (disable cross-stage Phase-1 memory reuse, on by default).
-
-**Sizing is config-file only** (no sizing CLI flags). `progressive: false`
-(default) REQUIRES a `single_stage` block; `progressive: true` sizes from a
-`stages` block. See `config.example.yaml`.
+**Sizing is config-file only** (there is no sizing CLI surface either).
+`progressive: false` (default) REQUIRES a `single_stage` block; `progressive:
+true` sizes from a `stages` block. See `config.example.yaml`.
 
 ## Ingestion mapping (`recorder.init` → `Dialogue`)
 
@@ -117,11 +119,11 @@ the new segment; `finalize` flushes its remainder).
   it benefits from a GPU and downloads once from HuggingFace. `_st_shim` loads
   it once per process and shares it across users.
 - Build/retrieve are synchronous + blocking, so users don't overlap under
-  `--max_sample_concurrent` (a blocking hook body stalls the event loop). The
+  `max_sample_concurrent` (a blocking hook body stalls the event loop). The
   real build speedup is SimpleMem's own window parallelism
-  (`enable_parallel_processing`, `--max_parallel_workers`, default 16), which
+  (`enable_parallel_processing`, `max_parallel_workers`, default 16), which
   runs the per-window compression LLM calls concurrently; retrieval parallelism
-  is `--max_retrieval_workers` (default 8). Keep the worker counts within your
+  is `max_retrieval_workers` (default 8). Keep the worker counts within your
   OpenAI rate limits.
 
 ## Validation status
@@ -132,19 +134,19 @@ OpenAI key are only available on the eval server). To smoke each ingestion branc
 cheaply on the search split (mirrors amem's per-branch check):
 
     # locomo (conversation branch) — 1 conv, 3 QAs
-    #   config: single_stage: {n_conversations: 1, n_qa: 3}
-    cd baselines/harness/simplemem && uv run python run.py \
-        --config smoke_locomo.yaml --dataset locomo --split search
+    #   smoke_locomo.yaml: dataset: locomo, split: search,
+    #   single_stage: {n_conversations: 1, n_qa: 3}
+    cd baselines/harness/simplemem && uv run python run.py --config smoke_locomo.yaml
 
     # dynamicmem (app_logs branch) — 1 user, checkpoint interleaving
-    #   config: single_stage: {n_users: 1, n_checkpoints: 1, n_task_a: 1, n_task_c: 1}
-    uv run python run.py \
-        --config smoke_dm.yaml --dataset dynamicmem --split search
+    #   smoke_dm.yaml: dataset: dynamicmem, split: search,
+    #   single_stage: {n_users: 1, n_checkpoints: 1, n_task_a: 1, n_task_c: 1}
+    uv run python run.py --config smoke_dm.yaml
 
     # longmemeval_s (sessions branch) — 1 question
-    #   config: single_stage: {n_questions: 1}
-    uv run python run.py \
-        --config smoke_lme.yaml --dataset longmemeval_s --split search
+    #   smoke_lme.yaml: dataset: longmemeval_s, split: search,
+    #   single_stage: {n_questions: 1}
+    uv run python run.py --config smoke_lme.yaml
 
 Read `results/<dataset>/search/traces/<user>.json` to confirm build → retrieve
 → QA runs, `invalid_users` is empty, and the retrieved `passages` are non-empty

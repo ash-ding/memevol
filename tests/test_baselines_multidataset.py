@@ -1,8 +1,8 @@
 """Shared-contract tests for the baseline harness layer (registry resolution,
 BaseWorkflow/DynamicMemWorkflow default-answer signature, sizing wire specs,
-task-list derivation, eval_common's run_baseline). This file
-is BASELINE-FREE — it must NOT import any concrete baseline's memo (cc,
-hipporag2, amem); those live in their own tests/test_<name>_baseline.py, run
+task-list derivation, eval_utility's run_baseline). This file
+is BASELINE-FREE — it must NOT import any concrete baseline's memo
+(hipporag2, amem, ...); those live in their own tests/test_<name>_baseline.py, run
 in that baseline's own venv. This file runs in the shared dev/test env:
 
     uv run python tests/test_baselines_multidataset.py
@@ -152,7 +152,7 @@ def test_dynamicmem_default_answer_call_signature():
     assert recorder.steps[0]["predicted"] == "ANSWER"
 
 
-# -------------------- eval_common (shared runner + data-alignment) --------------------
+# -------------------- eval_utility (shared runner + data-alignment) --------------------
 
 def test_single_stage_whole_split_matches_main_method():
     """An all-null (or omitted-field) `single_stage` MUST size to the main
@@ -218,7 +218,7 @@ def test_memo_constructor_config():
 # -------------------- integration: run_baseline end-to-end (locomo) --------------------
 
 def test_run_baseline_locomo_end_to_end():
-    """Deterministic full drive of baselines.harness.eval_common.run_baseline on ONE
+    """Deterministic full drive of baselines.harness.eval_utility.run_baseline on ONE
     real locomo test-split unit — not a scoped-down slice. This exercises:
     registry.resolve -> the shared task-list derivation (real locomo10.json split) ->
     LoCoMoWorkflow construction -> run_all_users -> run_single_user (REAL
@@ -243,7 +243,7 @@ def test_run_baseline_locomo_end_to_end():
     from pathlib import Path
 
     import common.llm as llm_mod
-    from baselines.harness.eval_common import run_baseline
+    from baselines.harness.eval_utility import run_baseline
     from common.memo_class import MemoClass
     from common.evaluate import single_stage_wire_spec
     from common.sampling import derive_sample_seed

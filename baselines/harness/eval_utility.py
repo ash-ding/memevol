@@ -1,4 +1,4 @@
-"""Shared entry for the harness baselines (cc, hipporag2, amem, lightmem,
+"""Shared entry for the harness baselines (hipporag2, amem, lightmem,
 simplemem, zep, mem0, memoryos): adapt a fixed MemoClass into the shared,
 execution-independent `common.evaluate.evaluate_memo` — the SAME function
 forge's container and alma's subprocess run — so a baseline's score is

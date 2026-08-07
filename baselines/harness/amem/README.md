@@ -38,32 +38,33 @@ dev/test only and cannot run amem.
 
 ## Usage
 
-    cd baselines/harness/amem && uv run python run.py \
-        --config config.example.yaml
-    uv run python run.py \
-        --config my_amem.yaml --dataset dynamicmem --split search
+    cd baselines/harness/amem && uv run python run.py --config config.example.yaml
 
-Flags: `--config` (YAML path; CLI flags override it); `--amem_llm_model`
-(default `gpt-4o-mini`, A-mem's own default — its `OpenAIController` hardcodes
-`temperature=0.7` + `max_tokens=1000`, which the gpt-5 family rejects, so keep
-a 4-series model); `--retrieve_k` (default 10, upstream default); `--llm_model`
-/ `--judge_model` (default `gpt-5-mini` — shared QA agent + judge, baseline
-convention); `--split`.
+`run.py` takes exactly one flag, `--config <yaml>` (required) — there is no
+other CLI surface. Every parameter lives in the config file:
+`config.example.yaml` documents each key inline — copy it, edit the values
+(e.g. `dataset: dynamicmem`, `split: search`), and point `--config` at your
+copy. The YAML must list EXACTLY the keys `run.py`'s `REQUIRED_KEYS`
+expects — a missing key OR an unknown key aborts the run before anything
+executes; a `null` value counts as listed.
 
-Shared progressive-sampling flags (same as cc/hipporag2): `--progressive` /
-`--no-progressive` (default off — run the staged stage1→2→3 gauntlet with
-threshold elimination instead of one single-stage pass); `--sampling-seed`
-(default `42`, base seed for the fixed step-0 sample; a no-op at whole-split);
-`--no-memory-cache` (disable cross-stage Phase-1 memory reuse, on by default).
+Worth calling out: `amem_llm_model` (default `gpt-4o-mini`, A-mem's own
+default — its `OpenAIController` hardcodes `temperature=0.7` +
+`max_tokens=1000`, which the gpt-5 family rejects, so keep a 4-series
+model); `retrieve_k` (default 10, upstream default); `llm_model` /
+`judge_model` (default `gpt-5-mini` — shared QA agent + judge, baseline
+convention). `progressive`, `sampling_seed`, and `memory_cache` behave as
+documented inline in `config.example.yaml`.
 
-**Sizing is config-file only** (there are no sizing CLI flags).
+**Sizing is config-file only** (there is no sizing CLI surface either).
 `progressive: false` (default) REQUIRES a `single_stage` block — ONE
 pass sized by its native fields (`n_conversations` / `n_qa` for locomo,
 `n_users` / `n_checkpoints` / `n_task_a` / `n_task_c` for dynamicmem,
 `n_questions` for longmemeval; a `null`/omitted field = the WHOLE split for
-that dimension). Omitting `single_stage` raises a clear `ValueError` (no silent
-whole-split). `progressive: true` sizes from a `stages` block (overrides the
-family `DEFAULT_STAGES`). See `config.example.yaml`.
+that dimension). Omitting `single_stage` aborts the run (no silent
+whole-split). `progressive: true` sizes from a `stages` block (overrides
+the family `DEFAULT_STAGES`). See `config.example.yaml` — it documents
+every key.
 
 ## Faithfulness boundary
 
@@ -76,7 +77,7 @@ family `DEFAULT_STAGES`). See `config.example.yaml`.
 ## Smoke verification (per code path)
 
 `_init_to_note_units` has three ingestion branches; each was verified
-end-to-end on a small slice of real data (`--split search`), confirming
+end-to-end on a small slice of real data (`split: search`), confirming
 build → retrieve → QA runs, `invalid_users` is empty, and retrieved memories
 are non-empty in the expected note format:
 
@@ -105,7 +106,7 @@ Build is **serial + blocking** (A-mem is synchronous), and
 `consolidate_memories` re-embeds the whole accumulated corpus every 100
 evolutions (≈ O(n²) local MiniLM work), so per-note wall-clock GROWS with
 corpus size (~3 s/note at ~500 notes, more beyond). Samples run at
-`--max_sample_concurrent` (default 3).
+`max_sample_concurrent` (default 3).
 
 ### Full held-out test-set estimate (per dataset)
 
@@ -127,7 +128,7 @@ $2.00 per 1M in/out (plug in real rates — the total is gpt-4o-mini-build-domin
   would depart from the faithful method.
 
 Time, not money, is the binding constraint. The build is API-bound, so raising
-`--max_sample_concurrent` (within OpenAI rate limits) is the main lever.
+`max_sample_concurrent` (within OpenAI rate limits) is the main lever.
 
 Tests: `cd baselines/harness/amem && uv run python tests/test_amem_baseline.py`
 (amem's own project — heavy imports; the repo-root `.venv/` is dev/test

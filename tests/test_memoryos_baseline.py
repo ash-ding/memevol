@@ -100,12 +100,12 @@ def test_run_config_keys_match_constructor():
     # stale key would blow up only at the first user.
     import inspect
     from baselines.harness.memoryos.memo import Memoryos
-    from baselines.harness.memoryos.run import DEFAULT_CONFIG
+    from baselines.harness.memoryos.run import REQUIRED_KEYS
     params = set(inspect.signature(Memoryos.__init__).parameters)
     for key in ("short_term_capacity", "mid_term_capacity", "mid_term_heat_threshold",
                 "mid_term_similarity_threshold", "retrieval_queue_capacity",
                 "long_term_knowledge_capacity"):
-        assert key in DEFAULT_CONFIG, f"missing from DEFAULT_CONFIG: {key}"
+        assert key in REQUIRED_KEYS, f"missing from REQUIRED_KEYS: {key}"
         assert key in params, f"not a Memoryos parameter: {key}"
     assert "embedding_model_name" not in params, "vendored build unexpectedly gained this knob"
 

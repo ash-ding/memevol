@@ -69,12 +69,12 @@ def test_dynamicmem_uses_shared_passage_text():
 
 
 def test_run_config_keys_match_memo_reads():
-    # Every knob the memo reads from self.config must exist in DEFAULT_CONFIG, or a
+    # Every knob the memo reads from self.config must exist in REQUIRED_KEYS, or a
     # run silently gets None (e.g. top_k=None -> TypeError deep inside search).
-    from baselines.harness.mem0.run import DEFAULT_CONFIG
+    from baselines.harness.mem0.run import REQUIRED_KEYS
     for key in ("mem0_llm_model", "embedding_model", "base_url",
                 "add_batch_size", "infer", "top_k", "threshold"):
-        assert key in DEFAULT_CONFIG, key
+        assert key in REQUIRED_KEYS, key
 
 
 def test_memo_implements_the_three_hook_contract():

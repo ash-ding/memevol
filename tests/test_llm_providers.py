@@ -16,7 +16,7 @@ Covers common/llm.py:
   - transport selection (_build_anthropic_client: api vs vertex, actionable
     errors on missing vertex env)
   - Embedding rejects claude-* models
-and common/judge.py:
+and common/metric.py:
   - Judge on a claude-* model routes through the kernel; never-raises holds.
 """
 import asyncio
@@ -405,7 +405,7 @@ def test_embedding_rejects_claude():
 def test_judge_claude_path():
     if not HAS_ANTHROPIC:
         return
-    from common.judge import Judge
+    from common.metric import Judge
     fake = FakeAnthropicClient([_a_response('{"score": 8, "reason": "good"}')])
     with _Patched(fake):
         judge = Judge(model="claude-opus-4-6")
@@ -420,7 +420,7 @@ def test_judge_claude_path():
 def test_judge_claude_never_raises_on_transport_death():
     if not HAS_ANTHROPIC:
         return
-    from common.judge import Judge
+    from common.metric import Judge
     err = _a_status_error(anthropic.InternalServerError, 500, "boom")
     fake = FakeAnthropicClient([err])
     with _Patched(fake):

@@ -69,29 +69,30 @@ This creates `baselines/harness/lightmem/.venv/`. The repo-root
 
 ## Usage
 
-    cd baselines/harness/lightmem && uv run python run.py \
-        --config config.example.yaml
-    uv run python run.py --config my_lightmem.yaml --dataset dynamicmem --split search
+    cd baselines/harness/lightmem && uv run python run.py --config config.example.yaml
 
-Flags: `--config` (YAML path; CLI flags override it). LightMem knobs:
-`--pre_compress` / `--topic_segment` (default on; `topic_segment` requires
-`pre_compress` — shared LLMlingua-2 model); `--llmlingua_model` (HF hub id or
-local path) / `--llmlingua_device` (`cuda`|`cpu`); `--compress_rate` (0.6);
-`--messages_use`; `--extract_threshold` (0.1); `--extraction_mode` (`flat`|`event`);
-`--lightmem_llm_model` (default `gpt-4o-mini`; **4-series only** — LightMem sends
-`temperature=0.1`, which the gpt-5 family rejects); `--manager_max_tokens`;
-`--embedding_model` (default `all-MiniLM-L6-v2`) / `--embedding_dims` (384) /
-`--embedding_device`; `--offline_update` (default on) / `--update_sim_threshold`
-(0.9); `--retrieve_limit` (20). Shared: `--llm_model` / `--judge_model` (default
-`gpt-5-mini` — shared QA agent + judge, baseline convention); `--split`.
+`run.py` takes exactly one flag, `--config <yaml>` (required) — there is no
+other CLI surface. Every parameter lives in the config file:
+`config.example.yaml` documents each key inline — copy it, edit the values
+(e.g. `dataset: dynamicmem`, `split: search`), and point `--config` at your
+copy. The YAML must list EXACTLY the keys `run.py`'s `REQUIRED_KEYS`
+expects — a missing key OR an unknown key aborts the run before anything
+executes; a `null` value counts as listed.
 
-Shared progressive-sampling flags (same as cc/hipporag2/amem/simplemem):
-`--progressive` / `--no-progressive` (default off — staged stage1→2→3 gauntlet vs
-one single-stage pass); `--sampling-seed` (default `42`); `--no-memory-cache`.
+LightMem-specific keys worth calling out: `pre_compress` / `topic_segment`
+(default on; `topic_segment` requires `pre_compress` — shared LLMlingua-2
+model); `lightmem_llm_model` (default `gpt-4o-mini`; **4-series only** —
+LightMem sends `temperature=0.1`, which the gpt-5 family rejects). The rest
+(`llmlingua_model`, `llmlingua_device`, `compress_rate`, `messages_use`,
+`extract_threshold`, `extraction_mode`, `manager_max_tokens`,
+`embedding_model`, `embedding_dims`, `embedding_device`, `offline_update`,
+`update_sim_threshold`, `retrieve_limit`, `llm_model`, `judge_model`,
+`progressive`, `sampling_seed`, `memory_cache`) are documented inline in
+`config.example.yaml`.
 
-**Sizing is config-file only** (no sizing CLI flags). `progressive: false`
-(default) REQUIRES a `single_stage` block; `progressive: true` sizes from a
-`stages` block. See `config.example.yaml`.
+**Sizing is config-file only** (there is no sizing CLI surface either).
+`progressive: false` (default) REQUIRES a `single_stage` block; `progressive:
+true` sizes from a `stages` block. See `config.example.yaml`.
 
 ## Ingestion mapping (`recorder.init` → LightMem turns)
 
@@ -129,7 +130,7 @@ Turns are ingested in order; the per-user Qdrant index is instance-scoped
   default `cuda`; set `cpu` to run without a GPU, slowly). The embedder is loaded
   once per process and shared across users (`_st_shim`).
 - Build/retrieve are synchronous + blocking, so users don't overlap under
-  `--max_sample_concurrent` (a blocking hook body stalls the event loop) — the
+  `max_sample_concurrent` (a blocking hook body stalls the event loop) — the
   same profile as amem/simplemem.
 
 ## Validation status
