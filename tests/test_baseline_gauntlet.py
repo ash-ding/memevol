@@ -86,7 +86,7 @@ def test_progressive_promotes_through_all_stages():
         )
         # promoted through every stage, in order
         assert seen == ["stage1", "stage2", "stage3"], seen
-        # per-dataset metrics dict (run_gauntlet shape)
+        # per-dataset metrics dict (shared metrics shape)
         assert result["locomo"]["eliminated"] is False, result
         assert result["locomo"]["stage"] == 3.0, result
         # stages.json written at the out_dir root
@@ -151,8 +151,8 @@ def test_progressive_false_single_stage_path():
             # progressive defaults to False
         )
         assert seen == ["single"], seen                 # single pass, stage label "single"
-        # Unified 2026-08: progressive=False now runs through run_gauntlet's one-item
-        # plan, so it returns run_gauntlet's per-dataset metrics dict (same shape as
+        # Unified 2026-08: progressive=False now runs through evaluate_memo's one-item
+        # plan, so it returns the shared metrics dict (same shape as
         # progressive), NOT the old flat score.json dict.
         assert "locomo" in score, score
         assert score["locomo"]["raw_score"] == 1.0
@@ -215,7 +215,7 @@ def test_progressive_false_sizes_from_single_stage():
     assert captured["stage_spec"]["sample_seed"] == derive_sample_seed(42, 0, "locomo")
     # n_samples caps the task list (2 conversations of the 4-conv locomo test split)
     assert len(captured["task_list"]) == 2, captured["task_list"]
-    # Unified: returns run_gauntlet's per-dataset metrics dict (not the flat score dict).
+    # Unified: returns the shared metrics dict (not the flat score dict).
     assert score["locomo"]["raw_score"] == 1.0, score
 
 

@@ -115,7 +115,7 @@ ALMA targets exactly **one benchmark per run**, selected with
 `--dataset {dynamicmem,locomo,longmemeval_s,longmemeval_m}` (default
 `dynamicmem`). The dataset name resolves through
 [`registry.py`](registry.py) to a workflow class, env module, and recorder
-class (mirrors `forge/launch.py::WORKFLOWS`, but ALMA is standalone and does
+class (the shared `datasets/registry.py`, but ALMA is standalone and does
 not import forge), and through [`dataset_info.py`](dataset_info.py) to the
 prompt fragments (`recorder.init` shape, evidence key, etc.) that the
 meta-agent's analysis/generation/reflection prompts render for that dataset.

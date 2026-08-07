@@ -398,7 +398,7 @@ def test_run_cli_migrated_flags():
 def test_per_step_seed_changes_task_subset():
     """random_sample=True → consecutive search steps derive different seeds,
     and those seeds select different task subsets from get_task_list — the
-    exact mechanism alma threads into run_gauntlet's sample_seed_for. Uses
+    exact mechanism alma threads into evaluate_memo's sample_seed. Uses
     LoCoMo (git-tracked locomo10.json; no network)."""
     from common.sampling import derive_sample_seed
     from datasets.locomo.env import get_task_list

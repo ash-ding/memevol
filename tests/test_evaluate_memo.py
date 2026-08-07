@@ -1,6 +1,6 @@
 """evaluate_memo (the pure, execution-independent evaluator) promotes/eliminates
 through the staged gauntlet; sample_seed rides in every stage spec.
-    uv run python tests/test_run_gauntlet.py
+    uv run python tests/test_evaluate_memo.py
 """
 import sys, asyncio, traceback
 from pathlib import Path

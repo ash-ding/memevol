@@ -319,7 +319,7 @@ def test_single_stage_plan_from_single_stage_block():
     """resolve_sampling_plan(progressive=False) sizes ONE ('single', spec, None)
     pass from the required `single_stage` block — replacing the old automatic
     full_wire_spec whole-split. (evaluate_memo consumes this plan; its behavior
-    is covered end-to-end in tests/test_run_gauntlet.py.)"""
+    is covered end-to-end in tests/test_evaluate_memo.py.)"""
     from common.evaluate import resolve_sampling_plan
     plan = resolve_sampling_plan(
         "locomo", {"single_stage": {"n_conversations": 2, "n_qa": 20}}, progressive=False)

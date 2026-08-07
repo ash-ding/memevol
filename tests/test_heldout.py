@@ -304,7 +304,7 @@ def test_reject_progressive_on_heldout_explicit_false_passes():
 # (evaluate_memo); the host launches it, publishes /out, and reads back
 # metrics.json. These tests fake run_evaluation to write what a container
 # would, and assert the host-side plan wiring + read-back. The in-container
-# promotion/sizing behavior itself is covered by tests/test_run_gauntlet.py.
+# promotion/sizing behavior itself is covered by tests/test_evaluate_memo.py.
 
 def _fake_run_evaluation_factory(calls, *, stage="single", stage_num=4.0,
                                  raw=0.42, write_metrics=True):

@@ -275,9 +275,9 @@ def test_run_baseline_locomo_end_to_end():
 
         assert (out_dir / "score.json").exists()
         assert (out_dir / "token_usage.json").exists()
-        # Unified: single pass runs through run_gauntlet's one-item plan, so traces
+        # Unified: single pass runs through evaluate_memo's one-item plan, so traces
         # land under out_dir/single/traces/ (like forge's progressive=false), and
-        # run_baseline returns run_gauntlet's per-dataset metrics dict.
+        # run_baseline returns the shared metrics dict.
         trace_files = sorted((out_dir / "single" / "traces").glob("*.json"))
         assert len(trace_files) == 1, trace_files
         trace = json.loads(trace_files[0].read_text())

@@ -1190,7 +1190,7 @@ async def sanity_check_harness(
     llm_cfg: Optional[Dict[str, Any]] = None,
     data_isolation_binds: Optional[List[str]] = None,
 ) -> Tuple[bool, str]:
-    """Run a sanity_check-sized evaluation on every dataset (wire: --stage sanity).
+    """Run a sanity_check-sized evaluation on every dataset (a smoke plan in ONE container per dataset).
 
     Returns (passed, error_trace). Artifacts go to `<harness>/<dataset>/sanity/`.
     """

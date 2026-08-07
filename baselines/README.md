@@ -115,7 +115,7 @@ literal same `common/` modules forge uses:
 
 - **`--progressive`** (alma default `true`, `harness/*/run.py` default
   `false` — matching each side's historical behavior): drives the candidate
-  through the shared stage1→2→3 gauntlet (`common.evaluate.run_gauntlet`)
+  through the shared stage1→2→3 gauntlet (`common.evaluate.evaluate_memo`)
   instead of a single one-shot pass. Sizes come from the family
   `DEFAULT_STAGES` (in `common/evaluate.py`) unless overridden by a
   `stages:` block in the `--config` YAML — for BOTH alma and harness, sizing
@@ -123,10 +123,11 @@ literal same `common/` modules forge uses:
   see "Configuration"). The single-pass path (`--no-progressive`) instead
   REQUIRES a `single_stage:` block in the config (a null/omitted field = the
   whole split for that dimension; an absent block raises a clear `ValueError`,
-  never a silent whole-split). `run_gauntlet`'s promotion/elimination logic,
-  `stages.json` shape, and cost accounting are IDENTICAL to forge's — only
-  the stage-execution callback differs (forge: `singularity exec`; baselines:
-  an in-process `run_all_users` runner).
+  never a silent whole-split). `evaluate_memo`'s promotion/elimination logic,
+  `stages.json` shape, and cost accounting are IDENTICAL to forge's — it is
+  the literal same function; only the ISOLATION wrapper differs (forge runs
+  evaluate_memo inside a Singularity container, alma inside a plain
+  subprocess, harness baselines call it directly in-process).
 - **`--random_sample`** (alma only — underscore,
   `argparse.BooleanOptionalAction` so the negation is
   `--no-random_sample`; harness baselines have no step loop, so this flag
@@ -279,7 +280,7 @@ compressed feedback (sampled trajectories + meta-prompt), whereas forge's
 proposer is an agentic CC SDK call with full filesystem access to all
 prior code, traces, and scores. alma runs the shared per-dataset workflows
 (including the official DynamicMem TCE v2 checkpoint protocol) AND the same
-`common.evaluate.run_gauntlet` driver forge uses, so its numbers ARE
+`common.evaluate.evaluate_memo` evaluator forge runs in-container, so its numbers ARE
 comparable with forge.
 
 ### harness/cc — Claude Code as direct QA agent
@@ -654,7 +655,7 @@ All baselines (and forge) build on the same dataset adapters and judge:
 
 - **[`baselines/registry.py`](registry.py)** — dataset name → (workflow,
   env module, recorder) resolution, shared by BOTH `evolve/` and `harness/`
-  (mirrors `forge/launch.py::WORKFLOWS`; baselines never import forge).
+  (the shared `datasets/registry.py`, re-exported as `baselines/registry.py`).
 - **[`datasets/<bench>/env.py`](../datasets/)** — `load_user_data`,
   `get_task_list` (the single source of truth for the search/test split),
   per-benchmark Recorder.
