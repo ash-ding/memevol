@@ -11,16 +11,14 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
-# -------------------- cc (native-answer MemoStructure) --------------------
+# -------------------- cc (native-answer MemoClass) --------------------
 
 def test_cc_use_memory_to_answer_runs_cc():
     import asyncio
     from baselines.harness.cc.memo import CCMemo
-    from baselines.harness.eval_common import make_memo_class
     async def _fake_ask(question, tmp_dir, model, max_turns, system_prompt=None):
         return ("CCANS:" + question, {}, [])
-    Cls = make_memo_class(CCMemo, model="sonnet", max_turns=5, _ask_cc=_fake_ask)
-    memo = Cls()
+    memo = CCMemo(config=dict(model="sonnet", max_turns=5, _ask_cc=_fake_ask))
     class _Rec:
         user_id = ""
         init = {"sessions": [{"session_id": "s", "date": "d",
@@ -34,11 +32,9 @@ def test_cc_use_memory_to_answer_runs_cc():
 def test_cc_memo_retrieve_empty_and_run_cc_answers():
     import asyncio
     from baselines.harness.cc.memo import CCMemo
-    from baselines.harness.eval_common import make_memo_class
     async def _fake_ask(question, tmp_dir, model, max_turns, system_prompt=None):
         return ("STUB:" + question, {}, [])
-    Cls = make_memo_class(CCMemo, model="sonnet", max_turns=5, _ask_cc=_fake_ask)
-    memo = Cls()
+    memo = CCMemo(config=dict(model="sonnet", max_turns=5, _ask_cc=_fake_ask))
     class _Rec:
         user_id = ""
         init = {"sessions": [{"session_id": "s", "date": "d",

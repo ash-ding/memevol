@@ -49,7 +49,7 @@ baselines/
   does. Their unit of comparison is the search loop itself (proposer quality,
   sample efficiency, final evolved-harness score vs forge's).
 - **`harness/`** — fixed, hand-written memory systems implementing the same
-  standardized 3-hook `MemoStructure` contract
+  standardized 3-hook `MemoClass` contract
   (`build_memory_from_data` / `retrieve_memory_for_query` /
   `use_memory_to_answer`) that forge-evolved harnesses implement. Their unit
   of comparison is the harness artifact: they run through the SAME
@@ -62,7 +62,7 @@ These rules keep scores comparable while keeping methods independent. They
 bind every method here:
 
 - **The eval surface is mandatorily shared.** A method's FINAL ARTIFACT is a
-  `common.harness_base.MemoStructure` subclass implementing the 3-hook
+  `common.memo_class.MemoClass` subclass implementing the 3-hook
   contract, and it is scored ONLY through the shared registry/workflow path
   (`baselines/registry.py` → `datasets/<bench>/workflow.py` + the shared
   judge). No method ships its own scoring loop — otherwise its numbers stop
@@ -115,7 +115,7 @@ literal same `common/` modules forge uses:
 
 - **`--progressive`** (alma default `true`, `harness/*/run.py` default
   `false` — matching each side's historical behavior): drives the candidate
-  through the shared stage1→2→3 gauntlet (`common.evaluate.run_gauntlet`)
+  through the shared stage1→2→3 gauntlet (`common.evaluate.evaluate_memo`)
   instead of a single one-shot pass. Sizes come from the family
   `DEFAULT_STAGES` (in `common/evaluate.py`) unless overridden by a
   `stages:` block in the `--config` YAML — for BOTH alma and harness, sizing
@@ -123,10 +123,11 @@ literal same `common/` modules forge uses:
   see "Configuration"). The single-pass path (`--no-progressive`) instead
   REQUIRES a `single_stage:` block in the config (a null/omitted field = the
   whole split for that dimension; an absent block raises a clear `ValueError`,
-  never a silent whole-split). `run_gauntlet`'s promotion/elimination logic,
-  `stages.json` shape, and cost accounting are IDENTICAL to forge's — only
-  the stage-execution callback differs (forge: `singularity exec`; baselines:
-  an in-process `run_all_users` runner).
+  never a silent whole-split). `evaluate_memo`'s promotion/elimination logic,
+  `stages.json` shape, and cost accounting are IDENTICAL to forge's — it is
+  the literal same function; only the ISOLATION wrapper differs (forge runs
+  evaluate_memo inside a Singularity container, alma inside a plain
+  subprocess, harness baselines call it directly in-process).
 - **`--random_sample`** (alma only — underscore,
   `argparse.BooleanOptionalAction` so the negation is
   `--no-random_sample`; harness baselines have no step loop, so this flag
@@ -279,7 +280,7 @@ compressed feedback (sampled trajectories + meta-prompt), whereas forge's
 proposer is an agentic CC SDK call with full filesystem access to all
 prior code, traces, and scores. alma runs the shared per-dataset workflows
 (including the official DynamicMem TCE v2 checkpoint protocol) AND the same
-`common.evaluate.run_gauntlet` driver forge uses, so its numbers ARE
+`common.evaluate.evaluate_memo` evaluator forge runs in-container, so its numbers ARE
 comparable with forge.
 
 ### harness/cc — Claude Code as direct QA agent
@@ -447,7 +448,7 @@ runner and is byte-identical to what forge-evolved harnesses get.
 ### Step 0 — understand what you're adapting to
 
 Your system is driven through three async hooks on a
-`common.harness_base.MemoStructure` subclass. The evaluation lifecycle per
+`common.memo_class.MemoClass` subclass. The evaluation lifecycle per
 user/sample:
 
 ```
@@ -487,16 +488,15 @@ Skeleton:
 # baselines/harness/<name>/memo.py
 import uuid
 from typing import Dict, Optional
-from common.harness_base import MemoStructure
+from common.memo_class import MemoClass
 
-class MyMemo(MemoStructure):
-    _cfg: Dict = {}                     # filled by eval_common.make_memo_class
+class MyMemo(MemoClass):
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, config=None):
+        super().__init__(config)        # each instance gets its own self.config copy
         self._instance_id = uuid.uuid4().hex[:12]   # per-user state scoping
         self._system = ...              # construct the wrapped memory system
-                                        #   using self._cfg (model names, top-k, ...)
+                                        #   using self.config (model names, top-k, ...)
 
     async def build_memory_from_data(self, recorder) -> None:
         init = recorder.init
@@ -538,7 +538,7 @@ adjust the flags your system needs. Core shape:
 
 ```python
 from baselines.registry import DATASETS
-from baselines.harness.eval_common import make_memo_class, run_baseline, print_result
+from baselines.harness.eval_common import run_baseline, print_result
 from baselines.harness.<name>.memo import MyMemo
 from common.config import resolve_config
 
@@ -550,20 +550,22 @@ p.add_argument("--split", default=None, choices=["test", "search"])
 p.add_argument("--progressive", action=argparse.BooleanOptionalAction, default=None)
 ...
 cfg = resolve_config(DEFAULT_CONFIG, a.config, cli)   # defaults < YAML < CLI
-memo_cls = make_memo_class(MyMemo, top_k=cfg["top_k"], ...)   # → sets _cfg
 result = asyncio.run(run_baseline(
     dataset=cfg["dataset"], split=cfg["split"],
     single_stage=cfg["single_stage"], stages=cfg["stages"],   # native YAML dicts
-    memo_class=memo_cls, qa_model=cfg["model"], judge_model=cfg["judge_model"],
+    memo_class=MyMemo, memo_config=dict(top_k=cfg["top_k"], ...),
+    qa_model=cfg["model"], judge_model=cfg["judge_model"],
     out_dir=Path(__file__).resolve().parent / "results" / cfg["dataset"] / cfg["split"],
     progressive=cfg["progressive"], sampling_seed=cfg["sampling_seed"],
 ))
 print_result(cfg["dataset"], cfg["progressive"], result, out_dir)
 ```
 
-`make_memo_class` exists because the workflow instantiates the memo class
-with **no arguments** — your CLI config travels as the `_cfg` class
-attribute. No `__init__.py` files needed (namespace packages).
+`memo_config` reaches your instances through the constructor: the framework
+creates a FRESH memo per user/conversation as `MyMemo(config=memo_config)`,
+and each instance keeps its own private copy at `self.config` (never share
+mutable state across users). No `__init__.py` files needed (namespace
+packages).
 
 ### Step 3 — dependencies
 
@@ -634,8 +636,8 @@ convention set above, concretely:
    search loop, prompts, checkpointing, its own base classes — lives in
    `baselines/evolve/<name>/`. Copy machinery from alma if useful; do not
    import it.
-2. **The final artifact is a 3-hook `MemoStructure`.** Whatever the search
-   produces must be loadable as a `common.harness_base.MemoStructure`
+2. **The final artifact is a 3-hook `MemoClass`.** Whatever the search
+   produces must be loadable as a `common.memo_class.MemoClass`
    subclass (directly, or via a thin adapter) so it can be scored through
    the shared workflow path. If the method's native artifact is not a
    Python class, the adapter is part of the baseline.
@@ -654,7 +656,7 @@ All baselines (and forge) build on the same dataset adapters and judge:
 
 - **[`baselines/registry.py`](registry.py)** — dataset name → (workflow,
   env module, recorder) resolution, shared by BOTH `evolve/` and `harness/`
-  (mirrors `forge/launch.py::WORKFLOWS`; baselines never import forge).
+  (the shared `datasets/registry.py`, re-exported as `baselines/registry.py`).
 - **[`datasets/<bench>/env.py`](../datasets/)** — `load_user_data`,
   `get_task_list` (the single source of truth for the search/test split),
   per-benchmark Recorder.

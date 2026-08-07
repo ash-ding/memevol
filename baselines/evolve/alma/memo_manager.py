@@ -42,7 +42,7 @@ class Memo_Manager:
                 self.no_memo_reward = self.memo_db['no_mem']['reward']
 
     def save_memo_structure(self, code_str: str, memo_SHA: str):
-        """Register a MemoStructure from code string: save to file and register in memo_db."""
+        """Register a MemoClass from code string: save to file and register in memo_db."""
         code_file = self.ARCHIVE_ROOT / f"memo_structure_{memo_SHA}.py"
         code_file.write_text(code_str, encoding="utf-8")
         if memo_SHA not in self.memo_db:

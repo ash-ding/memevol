@@ -205,8 +205,9 @@ def test_run_evaluation_carries_isolation_binds():
             try:
                 await E.run_evaluation(
                     harness_dir=Path(td), image_path=Path("/x.sif"), out_dir=out,
-                    dataset="locomo", split="search", stage="stage1",
-                    stage_spec={"n_samples": 1, "n_qa": 3},
+                    dataset="locomo", split="search",
+                    plan={"progressive": True, "smoke": False, "stages": None,
+                          "single_stage": None, "sample_seed": None},
                     data_isolation_binds=binds,
                 )
             finally:

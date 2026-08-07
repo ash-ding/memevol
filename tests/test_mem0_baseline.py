@@ -69,7 +69,7 @@ def test_dynamicmem_uses_shared_passage_text():
 
 
 def test_run_config_keys_match_memo_reads():
-    # Every knob the memo reads from _cfg must exist in DEFAULT_CONFIG, or a
+    # Every knob the memo reads from self.config must exist in DEFAULT_CONFIG, or a
     # run silently gets None (e.g. top_k=None -> TypeError deep inside search).
     from baselines.harness.mem0.run import DEFAULT_CONFIG
     for key in ("mem0_llm_model", "embedding_model", "base_url",
@@ -78,9 +78,9 @@ def test_run_config_keys_match_memo_reads():
 
 
 def test_memo_implements_the_three_hook_contract():
-    from common.harness_base import MemoStructure
+    from common.memo_class import MemoClass
     from baselines.harness.mem0.memo import Mem0Memo
-    assert issubclass(Mem0Memo, MemoStructure)
+    assert issubclass(Mem0Memo, MemoClass)
     for hook in ("build_memory_from_data", "retrieve_memory_for_query"):
         assert callable(getattr(Mem0Memo, hook, None)), hook
     # use_memory_to_answer must NOT be overridden: the shared QA agent answers.

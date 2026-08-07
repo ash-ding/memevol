@@ -299,34 +299,52 @@ def test_reject_progressive_on_heldout_explicit_false_passes():
         H._reject_progressive_on_heldout(cfg)  # must not raise
 
 
-# ---------------- evaluate_harness progressive=false integration ----------------
+# ---------------- evaluate_harness single-container integration ----------------
+# ONE container per (harness, dataset) runs the whole plan in-container
+# (evaluate_memo); the host launches it, publishes /out, and reads back
+# metrics.json. These tests fake run_evaluation to write what a container
+# would, and assert the host-side plan wiring + read-back. The in-container
+# promotion/sizing behavior itself is covered by tests/test_evaluate_memo.py.
 
-def _fake_run_evaluation_factory(calls):
+def _fake_run_evaluation_factory(calls, *, stage="single", stage_num=4.0,
+                                 raw=0.42, write_metrics=True):
     async def fake_run_evaluation(*, harness_dir, image_path, out_dir, dataset,
-                                  split, stage, stage_spec, **kw):
-        calls.append({"stage": stage, "spec": stage_spec, "split": split})
+                                  split, plan, memcache_dir=None, **kw):
+        calls.append({"plan": plan, "split": split, "memcache_dir": memcache_dir})
         out_dir.mkdir(parents=True, exist_ok=True)
+        smoke = bool(plan.get("smoke"))
         (out_dir / "score.json").write_text(json.dumps({
             "benchmark_eval_score": {
-                "benchmark_overall_eval_score": 0.42,
+                "benchmark_overall_eval_score": raw,
                 "benchmark_overall_eval_standard_deviation": 0.0,
-                "score_max": 1,
             },
-            "per_user": {"u1": {"reward": 0.42, "n_qa": 3, "failure_info": None}},
+            "per_user": {"u1": {"reward": raw, "n_qa": 3, "failure_info": None}},
             "invalid_users": [],
         }))
         (out_dir / "token_usage.json").write_text(json.dumps(
             {"gpt-5-mini": {"total_tokens": 777}}))
+        if not smoke:
+            (out_dir / "stages.json").write_text(json.dumps({
+                "reached": stage, "eliminated": False,
+                "stages": {stage: {"raw_score": raw, "score_max": 1,
+                                   "normalized": raw, "threshold": None,
+                                   "tokens": 777, "spec": {}}},
+            }))
+        if write_metrics:
+            (out_dir / "metrics.json").write_text(json.dumps({
+                "raw_score": raw, "score_max": 1, "per_user_stddev": None,
+                "tokens": 777,
+                "stage": 0.0 if smoke else stage_num,
+                "eliminated": False,
+            }))
         return out_dir
     return fake_run_evaluation
 
 
 def test_evaluate_harness_full_single_pass():
-    """progressive=false now resolves its plan via
-    resolve_sampling_plan: ONE pass named "single", sized by the REQUIRED
-    `single_stage` block (2026-07-26) — replacing the old automatic
-    full_wire_spec whole-split. Reached-stage telemetry still maps to
-    O.FULL_STAGE (the "single" plan name is the new full-ish tier)."""
+    """progressive=false → ONE container launch whose plan carries the REQUIRED
+    single_stage block (smoke off); metrics come back from metrics.json with
+    stage == FULL_STAGE; artifacts published at the dataset root."""
     calls = []
     with tempfile.TemporaryDirectory() as td, _test_workspace():
         src = _mk_src_harness(td)
@@ -344,29 +362,24 @@ def test_evaluate_harness_full_single_pass():
         finally:
             O.run_evaluation = orig
 
-        # ONE call, stage "single", uncapped spec (from single_stage), test split
-        assert len(calls) == 1, calls
-        assert calls[0]["stage"] == "single"
+        assert len(calls) == 1, calls   # ONE container for the whole plan
         assert calls[0]["split"] == "test"
-        assert calls[0]["spec"] == {"n_samples": None, "n_qa": None}
+        plan = calls[0]["plan"]
+        assert plan["progressive"] is False and plan["smoke"] is False
+        assert plan["single_stage"] == {"n_conversations": None, "n_qa": None}
 
         m = per_ds["locomo"]
         assert m["stage"] == O.FULL_STAGE
         assert m["eliminated"] is False
         assert abs(m["raw_score"] - 0.42) < 1e-9
-
-        stages = json.loads(
-            (paths.harnesses_dir / hid / "locomo" / "stages.json").read_text())
-        assert stages["reached"] == "single"
-        assert list(stages["stages"]) == ["single"]
-        assert stages["stages"]["single"]["threshold"] is None
-        # final artifacts copied to the dataset root
+        # container artifacts published at the dataset root
         assert (paths.harnesses_dir / hid / "locomo" / "score.json").exists()
+        assert (paths.harnesses_dir / hid / "locomo" / "stages.json").exists()
 
 
 def test_evaluate_harness_full_missing_single_stage_raises():
-    """progressive=false with no `single_stage` block configured must raise —
-    no silent automatic whole-split anymore (single_stage is required)."""
+    """progressive=false with no `single_stage` block must fail fast on the
+    HOST (pre-flight resolve_sampling_plan) — before any container launches."""
     with tempfile.TemporaryDirectory() as td, _test_workspace():
         src = _mk_src_harness(td)
         hid = H._stage_harness(src)
@@ -384,63 +397,49 @@ def test_evaluate_harness_full_missing_single_stage_raises():
         assert raised
 
 
-def test_evaluate_harness_full_wires_memcache_dir():
-    """CRITICAL regression (fix round 1, 2026-07-26 review): the HOST-side
-    memcache gate in evaluate_harness's `_run_stage_fn` closure must
-    recognize the "single" plan name resolve_sampling_plan emits for
-    progressive=false — otherwise `memory_cache=True` silently becomes a
-    no-op for every `forge.heldout` run (configs/test_example.yaml sets
-    `memory_cache: true`) and every progressive=false search config, since
-    `memcache_dir` is never passed to `run_evaluation` and `--memcache-dir`
-    is never forwarded to the container."""
-    calls = []
-
-    async def fake_run_evaluation(*, harness_dir, image_path, out_dir, dataset,
-                                  split, stage, stage_spec, memcache_dir=None, **kw):
-        calls.append({"stage": stage, "memcache_dir": memcache_dir})
-        out_dir.mkdir(parents=True, exist_ok=True)
-        (out_dir / "score.json").write_text(json.dumps({
-            "benchmark_eval_score": {
-                "benchmark_overall_eval_score": 0.5,
-                "benchmark_overall_eval_standard_deviation": 0.0,
-                "score_max": 1,
-            },
-            "per_user": {"u1": {"reward": 0.5, "n_qa": 1, "failure_info": None}},
-            "invalid_users": [],
-        }))
-        (out_dir / "token_usage.json").write_text(json.dumps({}))
-        return out_dir
-
+def test_evaluate_harness_wires_memcache_dir_eval_not_smoke():
+    """memory_cache=True must pass the persistent memcache dir to
+    run_evaluation for evals (gauntlet AND the progressive=false single pass)
+    and NEVER for smoke runs (harness code can change during sanity retries)."""
     with tempfile.TemporaryDirectory() as td, _test_workspace():
         src = _mk_src_harness(td)
         hid = H._stage_harness(src)
+        ds_cfg = {"locomo": {"single_stage": {"n_conversations": None, "n_qa": None}}}
+        O._resolve_dataset_stages("locomo", ds_cfg["locomo"])
+
+        calls = []
         orig = O.run_evaluation
-        O.run_evaluation = fake_run_evaluation
+        O.run_evaluation = _fake_run_evaluation_factory(calls)
         try:
             asyncio.run(O.evaluate_harness(
-                hid, Path("/fake.sif"),
-                datasets_config={"locomo": {"single_stage": {"n_conversations": None, "n_qa": None}}},
+                hid, Path("/fake.sif"), datasets_config=ds_cfg,
                 split="test", model="gpt-5-mini", judge_model="gpt-5-mini",
-                max_sample_concurrent=1,
+                max_sample_concurrent=1, memory_cache=True, progressive=False,
+            ))
+        finally:
+            O.run_evaluation = orig
+        assert calls[0]["memcache_dir"] is not None
+        expected_dir = paths.harnesses_dir / hid / "locomo" / "memory_cache"
+        assert calls[0]["memcache_dir"] == expected_dir and expected_dir.is_dir()
+
+        # smoke: never mounted
+        calls2 = []
+        O.run_evaluation = _fake_run_evaluation_factory(calls2)
+        try:
+            asyncio.run(O.evaluate_harness(
+                hid, Path("/fake.sif"), datasets_config=ds_cfg,
+                split="search", smoke=True, model="gpt-5-mini",
+                judge_model="gpt-5-mini", max_sample_concurrent=1,
                 memory_cache=True, progressive=False,
             ))
         finally:
             O.run_evaluation = orig
-
-        assert len(calls) == 1, calls
-        assert calls[0]["stage"] == "single"
-        assert calls[0]["memcache_dir"] is not None, (
-            "memory_cache=True must wire --memcache-dir for the 'single' "
-            "(progressive=false) stage too — the host-side gate must "
-            "include 'single', not just stage1/2/3/full"
-        )
-        expected_dir = paths.harnesses_dir / hid / "locomo" / "memory_cache"
-        assert calls[0]["memcache_dir"] == expected_dir
-        assert expected_dir.is_dir()
+        assert calls2[0]["memcache_dir"] is None
 
 
-def test_evaluate_harness_sample_unchanged():
-    """Regression lock: coverage omitted → the 3-stage gauntlet as before."""
+def test_evaluate_harness_gauntlet_plan():
+    """Default progressive=true → ONE container whose plan carries the resolved
+    stages block; metrics.json's stage (3.0) flows back to the frontier."""
     calls = []
     with tempfile.TemporaryDirectory() as td, _test_workspace():
         src = _mk_src_harness(td)
@@ -448,7 +447,8 @@ def test_evaluate_harness_sample_unchanged():
         ds_cfg = {"locomo": {}}
         O._resolve_dataset_stages("locomo", ds_cfg["locomo"])  # fill defaults
         orig = O.run_evaluation
-        O.run_evaluation = _fake_run_evaluation_factory(calls)
+        O.run_evaluation = _fake_run_evaluation_factory(
+            calls, stage="stage3", stage_num=3.0)
         try:
             per_ds = asyncio.run(O.evaluate_harness(
                 hid, Path("/fake.sif"),
@@ -459,14 +459,16 @@ def test_evaluate_harness_sample_unchanged():
             ))
         finally:
             O.run_evaluation = orig
-        # 0.42 clears the default locomo thresholds (0.30/0.35) → all 3 stages
-        assert [c["stage"] for c in calls] == ["stage1", "stage2", "stage3"]
+        assert len(calls) == 1, calls
+        plan = calls[0]["plan"]
+        assert plan["progressive"] is True and plan["smoke"] is False
+        assert plan["stages"]["stage1"]["n_conversations"] == 2  # resolved defaults ride along
         assert per_ds["locomo"]["stage"] == 3.0
 
 
 def test_evaluate_harness_smoke_single_sanity_pass():
-    """smoke=True → one sanity-sized run, artifacts at the dataset root,
-    stage recorded as 0.0 (the old mode=dev semantics)."""
+    """smoke=True → plan.smoke on the search split, artifacts at the dataset
+    root, stage recorded as 0.0."""
     calls = []
     with tempfile.TemporaryDirectory() as td, _test_workspace():
         src = _mk_src_harness(td)
@@ -486,45 +488,45 @@ def test_evaluate_harness_smoke_single_sanity_pass():
             ))
         finally:
             O.run_evaluation = orig
-        assert [c["stage"] for c in calls] == ["sanity"]
+        assert len(calls) == 1
+        assert calls[0]["plan"]["smoke"] is True
         assert calls[0]["split"] == "search"
         assert per_ds["locomo"]["stage"] == 0.0
-        # artifacts at dataset root (no per-stage subdir)
         assert (paths.harnesses_dir / hid / "locomo" / "score.json").exists()
 
 
-def test_evaluate_harness_stage3_null_full_final():
-    """progressive=true gauntlet where stage3 uses null sizes → stage1/2 gate
-    on concrete sizes, stage3 runs a full-coverage wire spec, reaches 3.0."""
+def test_evaluate_harness_missing_metrics_degrades():
+    """A container that produced no metrics.json (crashed before any stage)
+    degrades to a 0-score eliminated entry + a failure-marker score.json —
+    never indistinguishable from a genuine 0-score run."""
     calls = []
+
+    async def fake_run_evaluation(*, out_dir, **kw):
+        calls.append(kw.get("plan"))
+        out_dir.mkdir(parents=True, exist_ok=True)  # container wrote NOTHING
+        return out_dir
+
     with tempfile.TemporaryDirectory() as td, _test_workspace():
         src = _mk_src_harness(td)
         hid = H._stage_harness(src)
-        ds_cfg = {"locomo": {"stages": {
-            "stage1": {"n_conversations": 2, "n_qa": 20, "threshold": 0.3},
-            "stage2": {"n_conversations": 4, "n_qa": 40, "threshold": 0.35},
-            "stage3": {"n_conversations": None, "n_qa": None},
-        }}}
+        ds_cfg = {"locomo": {}}
         O._resolve_dataset_stages("locomo", ds_cfg["locomo"])
         orig = O.run_evaluation
-        O.run_evaluation = _fake_run_evaluation_factory(calls)
+        O.run_evaluation = fake_run_evaluation
         try:
             per_ds = asyncio.run(O.evaluate_harness(
-                hid, Path("/fake.sif"),
-                datasets_config=ds_cfg,
-                split="search", smoke=False,
-                model="gpt-5-mini", judge_model="gpt-5-mini",
-                max_sample_concurrent=1,
-                memory_cache=False, progressive=True,
+                hid, Path("/fake.sif"), datasets_config=ds_cfg,
+                split="test", model="gpt-5-mini", judge_model="gpt-5-mini",
+                max_sample_concurrent=1, memory_cache=False,
             ))
         finally:
             O.run_evaluation = orig
-        # 0.42 clears the 0.3/0.35 thresholds → all three stages run
-        assert [c["stage"] for c in calls] == ["stage1", "stage2", "stage3"]
-        # stage3's wire spec carries None (full coverage); earlier stages don't
-        assert calls[2]["spec"] == {"n_samples": None, "n_qa": None}
-        assert calls[0]["spec"] == {"n_samples": 2, "n_qa": 20}
-        assert per_ds["locomo"]["stage"] == 3.0  # reached stage3 (not 4.0 = progressive=false)
+        m = per_ds["locomo"]
+        assert m["raw_score"] == 0.0 and m["eliminated"] is True
+        # host wrote the failure-marker score.json at the dataset root
+        score = json.loads(
+            (paths.harnesses_dir / hid / "locomo" / "score.json").read_text())
+        assert score["invalid_users"], score
 
 
 # ---------------- runner ----------------

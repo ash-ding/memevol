@@ -10,7 +10,7 @@ needed by launch.py + harness imports are exposed:
       --bind <project_root>/datasets:/app/datasets:ro      # full datasets/ pkg (incl. raw data)
       --bind <project_root>/forge/__init__.py:/app/forge/__init__.py:ro
       --bind <project_root>/forge/launch.py:/app/forge/launch.py:ro
-      --bind <project_root>/forge/harness_base.py:/app/forge/harness_base.py:ro
+      --bind <project_root>/forge/memo_class.py:/app/forge/memo_class.py:ro
       --bind <harness_dir>:/harness:ro \\
       --bind <out_dir>:/out:rw \\
       --env OPENAI_API_KEY=... ANTHROPIC_API_KEY=... \\
@@ -59,15 +59,16 @@ from forge.paths import PROJECT_ROOT
 
 log = logging.getLogger("forge.evaluator")
 
-# Wall-clock caps per staged-evaluation tier. Small tiers fail fast; the
-# terminal tier keeps the historical 8h budget.
+# Wall-clock caps per evaluation plan kind. ONE container runs the WHOLE plan
+# now (all gauntlet stages in a single exec), so the gauntlet cap is the sum of
+# the old per-stage caps (2+4+8h). Tradeoff (deliberate, 2026-08): a harness
+# that hard-hangs in stage1 burns the whole gauntlet budget before the host
+# kills it — the per-stage host kill was traded for the simpler
+# single-container/pure-evaluate_memo architecture.
 SUBPROCESS_TIMEOUT = {
-    "sanity": 2 * 3600,
-    "stage1": 2 * 3600,
-    "stage2": 4 * 3600,
-    "stage3": 8 * 3600,
-    "full": 12 * 3600,     # legacy plan name — no caller emits it anymore
-    "single": 12 * 3600,   # progressive=false — whole-split single pass (via single_stage)
+    "smoke": 2 * 3600,      # sanity gate / smoke_test — one sanity_check-sized pass
+    "gauntlet": 14 * 3600,  # progressive stage1→2→3 (sum of the old 2/4/8h caps)
+    "single": 12 * 3600,    # progressive=false — single_stage single pass
 }
 
 GRACE_AFTER_SCORE = 60
@@ -81,8 +82,7 @@ async def run_evaluation(
     *,
     dataset: str = "dynamicmem",
     split: str = "search",   # search | test — benchmark split
-    stage: str = "stage3",
-    stage_spec: Dict[str, Any],
+    plan: Dict[str, Any],
     model: str = "gpt-5-mini",
     judge_model: str = "gpt-5-mini",
     max_sample_concurrent: int = 3,
@@ -103,20 +103,28 @@ async def run_evaluation(
     vertex requires google-auth in the image — eval-base images built before
     2026-07-08 lack it (see containers/base_requirements_cpu.txt).
 
+    `plan` is the whole-evaluation plan launch.py forwards to evaluate_memo:
+    {"progressive": bool, "smoke": bool, "stages": dict|None,
+     "single_stage": dict|None, "sample_seed": str|None}. ONE container runs
+    the entire plan (all gauntlet stages + promotion decisions in-container).
+
     Returns out_dir on success (or on score.json-observed completion); raises
-    RuntimeError if the subprocess hangs past the wall-clock cap.
+    RuntimeError if the subprocess hangs past the wall-clock cap. The root
+    score.json is written at the END of the plan (reached-stage copy), so its
+    appearance still unambiguously means "this run finished".
     """
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Remove stale score.json so its appearance unambiguously means "this run
     # finished". Without this, a leftover from a prior run would fire the
     # dual-signal wait immediately and cause a premature kill.
-    stale = out_dir / "score.json"
-    if stale.exists():
-        try:
-            stale.unlink()
-        except OSError as exc:
-            log.warning(f"evaluator: could not remove stale score.json: {exc}")
+    for fname in ("score.json", "metrics.json"):
+        stale = out_dir / fname
+        if stale.exists():
+            try:
+                stale.unlink()
+            except OSError as exc:
+                log.warning(f"evaluator: could not remove stale {fname}: {exc}")
 
     env_vals = dotenv_values(str(PROJECT_ROOT / ".env"))
     openai_key = env_vals.get("OPENAI_API_KEY", os.environ.get("OPENAI_API_KEY", ""))
@@ -138,15 +146,15 @@ async def run_evaluation(
         "--bind", f"{PROJECT_ROOT}/datasets:/app/datasets:ro",
         "--bind", f"{PROJECT_ROOT}/forge/__init__.py:/app/forge/__init__.py:ro",
         "--bind", f"{PROJECT_ROOT}/forge/launch.py:/app/forge/launch.py:ro",
-        # Harnesses inherit forge.harness_base.MemoStructure (subclass of the
+        # Harnesses inherit forge.memo_class.MemoClass (subclass of the
         # common ABC) — the module must be importable inside the container.
-        "--bind", f"{PROJECT_ROOT}/forge/harness_base.py:/app/forge/harness_base.py:ro",
+        "--bind", f"{PROJECT_ROOT}/forge/memo_class.py:/app/forge/memo_class.py:ro",
         "--bind", f"{harness_dir}:/harness:ro",
         "--bind", f"{out_dir}:/out:rw",
     ]
     if memcache_dir is not None:
-        # Cross-stage memory snapshots (RW; shared across this harness's
-        # stage execs for one dataset).
+        # Cross-stage memory snapshots (RW; persistent host dir so snapshots
+        # survive across evaluator invocations for this harness+dataset).
         cmd += ["--bind", f"{memcache_dir}:/memcache:rw"]
     # Search-mode data isolation: overlay binds that shadow the test split
     # inside /app/datasets (see forge/data_isolation.py). Passed only for
@@ -185,8 +193,7 @@ async def run_evaluation(
         "--out-dir", "/out",
         "--dataset", dataset,
         "--split", split,
-        "--stage", stage,
-        "--stage-spec", json.dumps(stage_spec),
+        "--plan-json", json.dumps(plan),
         "--model", model,
         "--judge-model", judge_model,
         "--max-sample-concurrent", str(max_sample_concurrent),
@@ -194,9 +201,10 @@ async def run_evaluation(
     if memcache_dir is not None:
         cmd += ["--memcache-dir", "/memcache"]
 
+    plan_kind = "smoke" if plan.get("smoke") else ("gauntlet" if plan.get("progressive", True) else "single")
     log.info(
-        f"evaluator: launching {harness_dir.name} [{dataset}/{stage}] with {image_path.name} "
-        f"(spec={json.dumps(stage_spec)}, gpu={'on' if gpu else 'off'})"
+        f"evaluator: launching {harness_dir.name} [{dataset}/{plan_kind}] with {image_path.name} "
+        f"(plan={json.dumps(plan)}, gpu={'on' if gpu else 'off'})"
     )
 
     process = await asyncio.create_subprocess_exec(
@@ -205,7 +213,7 @@ async def run_evaluation(
         stderr=asyncio.subprocess.PIPE,
     )
 
-    timeout_s = SUBPROCESS_TIMEOUT.get(stage, 8 * 3600)
+    timeout_s = SUBPROCESS_TIMEOUT.get(plan_kind, 14 * 3600)
     score_path = out_dir / "score.json"
 
     async def _poll_for_score() -> bool:

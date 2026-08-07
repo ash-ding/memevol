@@ -18,7 +18,7 @@ try:
 except ImportError:
     pass
 from baselines.registry import DATASETS
-from baselines.harness.eval_common import make_memo_class, run_baseline, print_result
+from baselines.harness.eval_common import run_baseline, print_result
 from baselines.harness.lightmem.memo import LightMemMemo
 from common.config import resolve_config
 
@@ -132,8 +132,7 @@ def main():
             raise ConfigCompletenessError(f"lightmem config: missing sizing leaf(s): {sorted(_miss)} "
                                           f"(strict-config mode; set strict_config: false to disable)")
 
-    memo_class = make_memo_class(
-        LightMemMemo,
+    memo_config = dict(
         pre_compress=cfg["pre_compress"], topic_segment=cfg["topic_segment"],
         llmlingua_model=cfg["llmlingua_model"], llmlingua_device=cfg["llmlingua_device"],
         compress_rate=cfg["compress_rate"], messages_use=cfg["messages_use"],
@@ -148,7 +147,7 @@ def main():
     result = asyncio.run(run_baseline(
         dataset=cfg["dataset"], split=cfg["split"],
         single_stage=cfg["single_stage"], stages=cfg["stages"],
-        memo_class=memo_class, qa_model=cfg["llm_model"], judge_model=cfg["judge_model"],
+        memo_class=LightMemMemo, memo_config=memo_config, qa_model=cfg["llm_model"], judge_model=cfg["judge_model"],
         out_dir=out_dir, max_sample_concurrent=cfg["max_sample_concurrent"],
         progressive=cfg["progressive"], sampling_seed=cfg["sampling_seed"],
         memory_cache=cfg["memory_cache"],

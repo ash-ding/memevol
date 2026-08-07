@@ -1,101 +1,19 @@
-"""Shared runner for the cc + hipporag2 baselines: run a MemoStructure through
-the main method's per-dataset workflow on a split, with the SAME data path the
-main method's container uses (forge/launch.py). This is the single place the
-'identical to the main method' guarantee lives.
+"""Shared entry for the harness baselines (cc, hipporag2, amem, lightmem,
+simplemem, zep, mem0, memoryos): adapt a fixed MemoClass into the shared,
+execution-independent `common.evaluate.evaluate_memo` — the SAME function
+forge's container and alma's subprocess run — so a baseline's score is
+identical-by-construction to the main method's data path, not merely
+comparable. Config reaches the per-user memo instances through the
+constructor (`memo_config` → `memo_class(config=...)`, see
+common/memo_class.py) — the old make_memo_class dynamic-subclass injection
+was removed 2026-08-06.
 """
 from __future__ import annotations
 
-import copy
-import inspect
-import json
-import shutil
-import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Type
+from typing import Any, Dict, Optional, Type
 
-from common.harness_base import MemoStructure
-from baselines.registry import resolve
-
-
-# Mirrors forge.orchestrator._FAMILY_FIELDS (baselines never import forge).
-_FAMILY_FIELDS = {
-    "dynamicmem": ("n_users", ("n_checkpoints", "n_task_a", "n_task_c")),
-    "locomo": ("n_conversations", ("n_qa",)),
-    "longmemeval": ("n_questions", ()),
-}
-
-
-def _family(dataset: str) -> str:
-    family = "longmemeval" if dataset.startswith("longmemeval") else dataset
-    if family not in _FAMILY_FIELDS:
-        raise ValueError(
-            f"unknown dataset {dataset!r}; supported datasets: {sorted(_FAMILY_FIELDS.keys())}"
-        )
-    return family
-
-
-def make_memo_class(base_cls: Type[MemoStructure], **cfg) -> Type[MemoStructure]:
-    """Workflow instantiates memo_class() with NO args (common/workflow.py:465),
-    so per-run config travels as a class attribute the instance reads via
-    self._cfg.
-
-    The generated class is made PICKLABLE: the cross-stage memory cache
-    (common/memory_cache.py) pickles the built memo, and a bare `type(...)`
-    subclass of an ABC gets `__module__ == "abc"` and is unresolvable by
-    pickle (attribute lookup fails) — so the pickle would silently fail and
-    every memcache save/load would degrade to a rebuild. Anchoring the class in
-    the base's module (so `getattr(module, qualname) is cls`) fixes that.
-    NOTE: called once per run (run.py's main), so the single stable name is
-    safe; a second call with the same base rebinds the module attribute."""
-    name = f"Configured{base_cls.__name__}"
-    cls = type(name, (base_cls,), {"_cfg": cfg})
-    cls.__module__ = base_cls.__module__
-    cls.__qualname__ = name
-    mod = sys.modules.get(base_cls.__module__)
-    if mod is not None:
-        setattr(mod, name, cls)
-    return cls
-
-
-def _memo_source_dir(memo_class: Type[MemoStructure]) -> Optional[Path]:
-    """Directory holding the memo module — fingerprinted (common.memory_cache.
-    harness_fingerprint) so a change to the memo's source (e.g. the vendored
-    amem code) invalidates the cross-stage cache. `memo_class` may be a
-    make_memo_class wrapper whose source file is THIS module; walk the MRO to
-    the first real MemoStructure subclass defined in its own file."""
-    this_file = Path(__file__).resolve()
-    for cls in memo_class.__mro__:
-        if cls is MemoStructure or not issubclass(cls, MemoStructure):
-            continue
-        try:
-            src = inspect.getsourcefile(cls)
-        except TypeError:
-            src = None
-        if not src:
-            continue
-        srcp = Path(src).resolve()
-        if srcp == this_file:
-            continue  # the make_memo_class wrapper lives in eval_common
-        return srcp.parent
-    return None
-
-
-def resolve_task_list(dataset: str, split: str, stage_spec: Dict[str, Any]) -> List[str]:
-    """EXACTLY forge/launch.py:185-189 — same env.get_task_list, same n_samples
-    key. This makes the baseline split byte-identical to the main method.
-
-    `stage_spec["sample_seed"]` (progressive gauntlet only) reaches
-    env.get_task_list as `seed`, driving common.sampling.shuffle_prefix's
-    nested random subset selection when a stage caps n. Absent (single-stage
-    path / whole split) it is None → the historical deterministic prefix, so
-    default whole-split baseline results are unchanged."""
-    _wf, env_module, _rec = resolve(dataset)
-    n_samples = stage_spec.get("n_samples")
-    return env_module.get_task_list(
-        status=split,
-        eval_n_samples=None if n_samples is None else int(n_samples),
-        seed=stage_spec.get("sample_seed"),
-    )
+from common.memo_class import MemoClass
 
 
 async def run_baseline(
@@ -103,7 +21,8 @@ async def run_baseline(
     dataset: str,
     split: str,
     single_stage: Optional[Dict[str, Any]] = None,
-    memo_class: Type[MemoStructure],
+    memo_class: Type[MemoClass],
+    memo_config: Optional[Dict[str, Any]] = None,
     qa_model: str,
     judge_model: str,
     out_dir: Path,
@@ -118,206 +37,42 @@ async def run_baseline(
     Sizing is config-driven (no sizing CLI flags — config file only):
 
     progressive=False (default): ONE single-stage pass sized by the REQUIRED
-    `single_stage` block. Runs through run_gauntlet(progressive=False) — a one-item
-    ('single', spec, None) plan (via resolve_sampling_plan → resolve_single_stage_spec:
-    a null/omitted field = the whole split; absent `single_stage` raises ValueError,
-    no silent whole-split). A per-run sample_seed is derived (fixed step 0, honoring
-    `sampling_seed`) and threaded into the spec so it reaches BOTH the task-list cap
-    and the per-user QA sampling; it is a no-op at whole-split n=None.
+    `single_stage` block (a null/omitted field = the whole split; absent block
+    raises ValueError — no silent whole-split). progressive=True: the staged
+    stage1→2→3 gauntlet with promotion thresholds (`stages` overrides the family
+    DEFAULT_STAGES). Both are one call into common.evaluate.evaluate_memo — the
+    shared, execution-independent evaluator (see its docstring for the artifact
+    layout: out_dir/<stage>/ + stages.json + reached-stage root copies). The
+    per-run sample_seed is the fixed step-0 derivation from `sampling_seed`
+    (no search steps here); a no-op at whole-split n=None.
 
-    progressive=True: run the SAME memory system through the shared staged
-    gauntlet (common.evaluate.run_gauntlet, progressive=true): stage1 →
-    stage2 → stage3 with promotion thresholds, per-stage artifacts under
-    out_dir/<stage>/, cross-stage Phase-1 memory reuse via out_dir/memory_cache/,
-    and a stages.json at the out_dir root. `stages` overrides the family
-    DEFAULT_STAGES; `sampling_seed` seeds the (fixed step=0) nested subset
-    selection; `memory_cache=False` disables the cache.
+    Returns {dataset: metrics} where metrics is evaluate_memo's dict
+    {raw_score, score_max, per_user_stddev, tokens, stage, eliminated}."""
+    # One call into the shared, execution-independent evaluate_memo (which runs
+    # the whole gauntlet — or the single pass — right here in-process). The
+    # per-run sample seed is the fixed step-0 derivation (no search steps here).
+    from common.evaluate import evaluate_memo
+    from common.sampling import derive_sample_seed
 
-    BOTH paths return run_gauntlet's per-dataset metrics dict
-    {dataset: {raw_score, score_max, stage, eliminated, tokens, ...}} and write the
-    same artifact layout (out_dir/<stage>/ + out_dir/stages.json + the reached-stage
-    score.json/token_usage.json copied to the out_dir root)."""
-    # Both progressive AND non-progressive go through the SAME run_gauntlet
-    # machinery (non-progressive → a one-item ('single', spec, None) plan built by
-    # run_gauntlet(progressive=False)). No separate hand-rolled single pass — the
-    # single-stage path is unified here, so its artifacts (out_dir/single/ +
-    # out_dir/stages.json + the final-stage score.json/token_usage.json copied to
-    # out_dir root) match the progressive path and forge's progressive=false.
-    return await _run_baseline_gauntlet(
-        dataset=dataset, split=split, memo_class=memo_class,
-        qa_model=qa_model, judge_model=judge_model, out_dir=out_dir,
-        max_sample_concurrent=max_sample_concurrent, sampling_seed=sampling_seed,
-        progressive=progressive, single_stage=single_stage, stages=stages,
+    metrics = await evaluate_memo(
+        memo_class=memo_class, memo_config=memo_config,
+        dataset=dataset, split=split,
+        progressive=progressive, out_dir=out_dir,
+        qa_model=qa_model, judge_model=judge_model,
+        stages=stages, single_stage=single_stage,
+        max_sample_concurrent=max_sample_concurrent,
+        sample_seed=derive_sample_seed(sampling_seed, 0, dataset),
         memory_cache=memory_cache,
     )
+    return {dataset: metrics}
 
 
 def print_result(dataset: str, progressive: bool, result: Dict[str, Any], out_dir: Path) -> None:
-    """One-line run summary. run_baseline ALWAYS returns run_gauntlet's per-dataset
-    metrics dict {dataset: {raw_score, stage, eliminated, ...}} now (progressive
-    gauntlet OR the single-stage one-item plan), so this reads it uniformly."""
+    """One-line run summary. run_baseline returns {dataset: metrics} for both
+    the progressive gauntlet and the single-stage pass — read it uniformly."""
     m = result.get(dataset, {})
     label = "gauntlet" if progressive else "single"
     print(
         f"[{dataset}] {label} stage={m.get('stage')} "
         f"raw_score={m.get('raw_score')} eliminated={m.get('eliminated')} → {out_dir}"
-    )
-
-
-def _total_tokens(summary: Dict[str, Any]) -> int:
-    """Sum total_tokens across all models in a TokenTracker.summary()."""
-    return sum(
-        int(m.get("total_tokens", 0))
-        for m in summary.values()
-        if isinstance(m, dict)
-    )
-
-
-async def _run_baseline_gauntlet(
-    *,
-    dataset: str,
-    split: str,
-    memo_class: Type[MemoStructure],
-    qa_model: str,
-    judge_model: str,
-    out_dir: Path,
-    max_sample_concurrent: int,
-    sampling_seed: int,
-    progressive: bool,
-    single_stage: Optional[Dict[str, Any]],
-    stages: Optional[Dict[str, Any]],
-    memory_cache: bool,
-) -> Dict[str, Dict[str, Any]]:
-    """Drive the fixed memory system through common.evaluate.run_gauntlet with an
-    IN-PROCESS stage runner (contrast forge, whose runner is a Singularity exec) —
-    for BOTH progressive (staged gauntlet) and non-progressive (a single
-    ('single', spec, None) pass). The promotion / elimination / cost-accounting /
-    stages.json logic lives entirely in run_gauntlet (identical to forge); only
-    stage EXECUTION + artifact layout + memcache mounting are this closure's
-    concern. progressive=False no longer has a separate hand-rolled path —
-    run_gauntlet(progressive=False) builds the one-item plan (raises if single_stage
-    absent)."""
-    from common.tokens import init_global_tracker
-    from common.sampling import derive_sample_seed
-    from common.evaluate import (
-        DEFAULT_STAGES, Executor, _benchmark_family, _resolve_dataset_stages, evaluate_memo,
-    )
-    from common.memory_cache import harness_fingerprint
-    from baselines.evolve.alma.launch import _build_score_json
-
-    family = _benchmark_family(dataset)
-    if progressive:
-        # deepcopy so DEFAULT_STAGES (module global) is never mutated in place by
-        # _resolve_dataset_stages (which fills defaults + validates the block).
-        params: Dict[str, Any] = {"stages": copy.deepcopy(stages or DEFAULT_STAGES[family])}
-        _resolve_dataset_stages(dataset, params)
-    else:
-        # single pass: run_gauntlet(progressive=False) → resolve_sampling_plan builds
-        # [('single', resolve_single_stage_spec(single_stage), None)] — the shared
-        # resolver presence-checks (absent → ValueError, never silent whole-split),
-        # validates (rejects unknown fields / a stray threshold), normalizes.
-        params = {"single_stage": single_stage}
-    datasets_config = {dataset: params}
-
-    out_dir.mkdir(parents=True, exist_ok=True)
-    tracker = init_global_tracker()
-    workflow_cls, _env, _rec = resolve(dataset)
-
-    # Cross-stage memcache: one dir SHARED across all stages (so stage2/stage3
-    # reuse stage1's Phase-1 memory). Fingerprint the memo module's directory so
-    # a change to the memo source invalidates the cache.
-    memcache_dir: Optional[Path] = None
-    fingerprint = ""
-    if memory_cache:
-        src_dir = _memo_source_dir(memo_class)
-        fingerprint = harness_fingerprint(src_dir) if src_dir is not None else ""
-        memcache_dir = out_dir / "memory_cache"
-        memcache_dir.mkdir(parents=True, exist_ok=True)
-
-    # Per-stage metrics captured by the runner, read back by read_metrics_fn.
-    # Tokens are per-stage DELTAS of the shared global tracker (each stage
-    # accumulates into the SAME in-process tracker), so run_gauntlet's
-    # cross-stage token summation matches forge's per-container accounting.
-    stage_metrics: Dict[str, Dict[str, Any]] = {}
-
-    async def _run_stage_fn(ds: str, stage_name: str,
-                            spec: Dict[str, Any]) -> Optional[Exception]:
-        stage_dir = out_dir / stage_name
-        stage_dir.mkdir(parents=True, exist_ok=True)
-        task_list = resolve_task_list(ds, split, spec)   # honors n_samples + sample_seed
-
-        workflow = workflow_cls(
-            memo_class=memo_class, model=qa_model, judge_model=judge_model,
-        )
-        workflow.status = split
-        workflow.output_run_dir = stage_dir
-        # Activate the shared cross-stage memory cache on this fresh workflow.
-        if memcache_dir is not None:
-            workflow.memory_cache_dir = memcache_dir
-            workflow.harness_fingerprint = fingerprint
-
-        tokens_before = _total_tokens(tracker.summary())
-        raw_score = 0.0
-        crashed: Optional[Exception] = None
-        try:
-            records, n = await workflow.run_all_users(
-                task_list, stage=stage_name, stage_spec=spec,
-                max_sample_concurrent=max_sample_concurrent,
-            )
-            workflow.save_full_traces(records[:n])
-            score = _build_score_json(records[:n])
-            raw_score = float(
-                score["benchmark_eval_score"]["benchmark_overall_eval_score"]
-            )
-            with (stage_dir / "score.json").open("w", encoding="utf-8") as f:
-                json.dump(score, f, indent=2, ensure_ascii=False)
-            with (stage_dir / "token_usage.json").open("w", encoding="utf-8") as f:
-                json.dump(tracker.summary(), f, indent=2, ensure_ascii=False)
-        except Exception as exc:  # a crashed stage eliminates + stops (run_gauntlet)
-            crashed = exc
-        tokens_after = _total_tokens(tracker.summary())
-
-        stage_metrics[stage_name] = {
-            "raw_score": raw_score,
-            # All current benchmarks judge on a 0-1 scale (judge_score_max=1);
-            # score.json omits score_max, so read it off the workflow directly.
-            "score_max": workflow.judge_score_max,
-            "tokens": tokens_after - tokens_before,   # this stage's delta only
-        }
-        return crashed
-
-    def _read_metrics_fn(ds: str, stage_name: str) -> Dict[str, Any]:
-        # Copy — run_gauntlet mutates m["tokens"] in place (cross-stage sum).
-        return dict(stage_metrics[stage_name])
-
-    def _stages_writer(ds: str, summary: Dict[str, Any]) -> None:
-        reached = summary["reached"]
-        # Final (highest-reached) stage artifacts to the out_dir root (mirrors
-        # forge's dataset-root copy + the single-stage path's layout).
-        for fname in ("score.json", "token_usage.json"):
-            src = out_dir / reached / fname
-            if src.exists():
-                shutil.copy2(src, out_dir / fname)
-        with (out_dir / "stages.json").open("w", encoding="utf-8") as f:
-            json.dump(
-                {"reached": reached, "eliminated": summary["eliminated"],
-                 "stages": summary["stages"]},
-                f, indent=2, ensure_ascii=False,
-            )
-
-    # Harness baselines have NO search steps → the per-run seed is fixed at
-    # step 0 (reproducible). A no-op at whole-split n=None (shuffle_prefix
-    # returns the whole pool); it only selects a subset when a stage caps n.
-    def _sample_seed_for(ds: str) -> Optional[str]:
-        return derive_sample_seed(sampling_seed, 0, ds)
-
-    return await evaluate_memo(
-        datasets_config=datasets_config,
-        progressive=progressive,
-        executor=Executor(
-            run_stage=_run_stage_fn,
-            read_metrics=_read_metrics_fn,
-            write_stages=_stages_writer,
-        ),
-        sample_seed_for=_sample_seed_for,
     )

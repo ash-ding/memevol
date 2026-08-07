@@ -1,6 +1,6 @@
 # mem0 — LLM-extracted fact memory
 
-[Mem0](https://github.com/mem0ai/mem0) as a `MemoStructure`, scored through the
+[Mem0](https://github.com/mem0ai/mem0) as a `MemoClass`, scored through the
 shared registry/workflow/judge path like every other baseline.
 
 ## What the method is

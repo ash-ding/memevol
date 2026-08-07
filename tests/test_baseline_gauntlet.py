@@ -21,7 +21,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from common.harness_base import MemoStructure
+from common.memo_class import MemoClass
 
 
 # --------------------------------------------------------------------------
@@ -38,7 +38,7 @@ class _FakeRec:
         self.failure_info = None
 
 
-class _StubMemo(MemoStructure):
+class _StubMemo(MemoClass):
     async def build_memory_from_data(self, r):
         return None
 
@@ -86,7 +86,7 @@ def test_progressive_promotes_through_all_stages():
         )
         # promoted through every stage, in order
         assert seen == ["stage1", "stage2", "stage3"], seen
-        # per-dataset metrics dict (run_gauntlet shape)
+        # per-dataset metrics dict (shared metrics shape)
         assert result["locomo"]["eliminated"] is False, result
         assert result["locomo"]["stage"] == 3.0, result
         # stages.json written at the out_dir root
@@ -151,8 +151,8 @@ def test_progressive_false_single_stage_path():
             # progressive defaults to False
         )
         assert seen == ["single"], seen                 # single pass, stage label "single"
-        # Unified 2026-08: progressive=False now runs through run_gauntlet's one-item
-        # plan, so it returns run_gauntlet's per-dataset metrics dict (same shape as
+        # Unified 2026-08: progressive=False now runs through evaluate_memo's one-item
+        # plan, so it returns the shared metrics dict (same shape as
         # progressive), NOT the old flat score.json dict.
         assert "locomo" in score, score
         assert score["locomo"]["raw_score"] == 1.0
@@ -215,7 +215,7 @@ def test_progressive_false_sizes_from_single_stage():
     assert captured["stage_spec"]["sample_seed"] == derive_sample_seed(42, 0, "locomo")
     # n_samples caps the task list (2 conversations of the 4-conv locomo test split)
     assert len(captured["task_list"]) == 2, captured["task_list"]
-    # Unified: returns run_gauntlet's per-dataset metrics dict (not the flat score dict).
+    # Unified: returns the shared metrics dict (not the flat score dict).
     assert score["locomo"]["raw_score"] == 1.0, score
 
 
@@ -278,12 +278,14 @@ def test_progressive_false_rejects_unknown_single_stage_field():
 # --------------------------------------------------------------------------
 
 def test_whole_split_seed_is_noop():
-    from baselines.harness.eval_common import resolve_task_list
+    # Directly against the primitive evaluate_memo calls (env.get_task_list →
+    # shuffle_prefix): a seed at whole-split n=None must not change the SET.
+    from datasets.locomo.env import get_task_list
     from common.sampling import derive_sample_seed
     seed = derive_sample_seed(42, 0, "locomo")
     assert seed  # non-empty seed derived
-    seeded = resolve_task_list("locomo", "test", {"n_samples": None, "sample_seed": seed})
-    unseeded = resolve_task_list("locomo", "test", {"n_samples": None})
+    seeded = get_task_list("test", None, seed=seed)
+    unseeded = get_task_list("test", None)
     # n=None → whole pool regardless of seed: same SET (order may differ under a
     # shuffle, but the aggregate score is order-independent, so results are
     # unchanged). This is why existing whole-split baseline numbers hold.
@@ -301,7 +303,7 @@ def test_whole_split_seed_is_noop():
 _BUILD_CALLS = []
 
 
-class _CountingMemo(MemoStructure):
+class _CountingMemo(MemoClass):
     """Picklable stub memo: no per-instance state (empty __dict__), so pickle
     of the built memo is trivial. Phase-1 bumps a module counter so we can
     detect that stage2/stage3 SKIP the build (cache hit)."""
@@ -316,7 +318,7 @@ class _CountingMemo(MemoStructure):
 def test_progressive_real_memcache_reuse():
     import common.llm as llm_mod
     from datasets.locomo.workflow import LoCoMoWorkflow
-    from baselines.harness.eval_common import run_baseline, make_memo_class
+    from baselines.harness.eval_common import run_baseline
 
     _BUILD_CALLS.clear()
 
@@ -326,8 +328,9 @@ def test_progressive_real_memcache_reuse():
     async def _fake_judge(self, query, predicted, reference, qa_metadata=None):
         return 1, "fake-judge: forced pass"
 
-    # make_memo_class wrapper must be picklable (the fix in eval_common):
-    memo_class = make_memo_class(_CountingMemo)
+    # plain memo classes pickle without any wrapper magic now (constructor
+    # config injection, 2026-08-06):
+    memo_class = _CountingMemo
 
     # thresholds 0.0 → promote through all 3 stages; n_conversations=1 with a
     # constant per-run seed → the SAME single user each stage → same cache key.

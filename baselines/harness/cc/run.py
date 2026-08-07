@@ -20,7 +20,7 @@ try:
 except ImportError:
     pass
 from baselines.registry import DATASETS
-from baselines.harness.eval_common import make_memo_class, run_baseline, print_result
+from baselines.harness.eval_common import run_baseline, print_result
 from baselines.harness.cc.memo import CCMemo, MODEL_ALIASES
 from common.config import resolve_config
 
@@ -79,7 +79,9 @@ def main():
                                           f"(strict-config mode; set strict_config: false to disable)")
 
     model = MODEL_ALIASES.get(cfg["model"], cfg["model"])
-    memo_class = make_memo_class(CCMemo, model=model, max_turns=cfg["max_turns"], judge_model=cfg["judge_model"])
+    memo_config = dict(
+        model=model, max_turns=cfg["max_turns"], judge_model=cfg["judge_model"],
+    )
     out_dir = Path(__file__).resolve().parent / "results" / cfg["dataset"] / cfg["split"]
     # qa_model=cfg["judge_model"]: the shared QA agent is bypassed by
     # CCMemo.use_memory_to_answer (cc's own answer is judged verbatim), so its
@@ -88,7 +90,7 @@ def main():
     result = asyncio.run(run_baseline(
         dataset=cfg["dataset"], split=cfg["split"],
         single_stage=cfg["single_stage"], stages=cfg["stages"],
-        memo_class=memo_class,
+        memo_class=CCMemo, memo_config=memo_config,
         qa_model=cfg["judge_model"], judge_model=cfg["judge_model"],
         out_dir=out_dir, max_sample_concurrent=cfg["max_sample_concurrent"],
         progressive=cfg["progressive"], sampling_seed=cfg["sampling_seed"],

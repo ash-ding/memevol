@@ -1,4 +1,4 @@
-"""A-mem (Agentic Memory, arXiv:2502.12110) as a retrieval MemoStructure.
+"""A-mem (Agentic Memory, arXiv:2502.12110) as a retrieval MemoClass.
 
 BUILD: every ingestion unit becomes one A-mem note via
 `AgenticMemorySystem.add_note(content, time=...)` — the method's own pipeline
@@ -30,7 +30,7 @@ import json
 import os
 from typing import Dict, List, Tuple
 
-from common.harness_base import MemoStructure
+from common.memo_class import MemoClass
 from baselines.harness.hipporag2.memo import app_log_to_passage
 from baselines.harness.amem._st_shim import ensure_sentence_transformers, hf_datasets_active
 
@@ -82,18 +82,17 @@ def _init_to_note_units(init: Dict) -> List[Tuple[str, str]]:
     raise KeyError(f"unrecognized recorder.init keys: {list(init)}")
 
 
-class AMemMemo(MemoStructure):
-    _cfg: Dict = {}   # overridden per-run by eval_common.make_memo_class
+class AMemMemo(MemoClass):
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, config=None):
+        super().__init__(config)
         self._system = None          # AgenticMemorySystem (lazy — built on first hook call)
         self._retriever_llm = None   # LLMController for the query→keywords rewrite
 
     def _ensure_system(self):
         if self._system is not None:
             return
-        model = self._cfg.get("amem_llm_model", "gpt-4o-mini")
+        model = self.config.get("amem_llm_model", "gpt-4o-mini")
         # Mirrors test_advanced.py::advancedMemAgent.__init__ (openai backend):
         # one AgenticMemorySystem + a separate retriever_llm, same model.
         # Constructing AgenticMemorySystem builds a SentenceTransformer, whose
@@ -135,7 +134,7 @@ class AMemMemo(MemoStructure):
     async def retrieve_memory_for_query(self, recorder) -> Dict:
         self._ensure_system()
         query = recorder.init.get("query", "")
-        k = int(self._cfg.get("retrieve_k", 10))
+        k = int(self.config.get("retrieve_k", 10))
         with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
             keywords = self._rewrite_query(query)   # LLM call; no ST construction
             # Uniform invariant: every self._system.* call runs under HF `datasets`

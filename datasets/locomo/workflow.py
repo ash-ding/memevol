@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple, Type
 
-from common.harness_base import MemoStructure
+from common.memo_class import MemoClass
 from common.logger import get_logger
 from common.recorder import Basic_Recorder
 from common.workflow import BaseWorkflow
@@ -73,7 +73,7 @@ class LoCoMoWorkflow(BaseWorkflow):
         await recorder.log_init(chunk)
 
     async def _phase1_update(
-        self, memo: MemoStructure, init_data: Dict
+        self, memo: MemoClass, init_data: Dict
     ) -> None:
         if not isinstance(init_data, dict):
             raise TypeError(

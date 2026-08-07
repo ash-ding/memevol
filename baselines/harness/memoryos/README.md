@@ -2,7 +2,7 @@
 
 [MemoryOS](https://github.com/BAI-LAB/MemoryOS) (arXiv
 [2506.06326](https://arxiv.org/abs/2506.06326), EMNLP 2025 Oral) as a
-`MemoStructure`, scored through the shared registry/workflow/judge path like
+`MemoClass`, scored through the shared registry/workflow/judge path like
 every other baseline.
 
 ## What the method is

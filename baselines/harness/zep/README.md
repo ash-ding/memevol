@@ -1,7 +1,7 @@
 # Zep baseline
 
 [Zep: A Temporal Knowledge Graph Architecture for Agent Memory](zep.pdf)
-(arXiv:2501.13956) as a ready-made memory system on the 3-hook `MemoStructure`
+(arXiv:2501.13956) as a ready-made memory system on the 3-hook `MemoClass`
 contract. Zep's memory engine is **Graphiti**; the baseline vendors and drives
 `graphiti_core` directly.
 

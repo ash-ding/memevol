@@ -1,4 +1,4 @@
-"""LightMem (https://github.com/zjunlp/LightMem) as a retrieval MemoStructure.
+"""LightMem (https://github.com/zjunlp/LightMem) as a retrieval MemoClass.
 
 BUILD: every ingestion unit becomes a LightMem turn (a ``[user, assistant]``
 message pair carrying a session-level ``time_stamp``); the vendored pipeline runs
@@ -38,7 +38,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List
 
-from common.harness_base import MemoStructure
+from common.memo_class import MemoClass
 from baselines.harness.hipporag2.memo import app_log_to_passage
 from baselines.harness.lightmem._st_shim import (
     ensure_sentence_transformers, install_embedding_cache, install_eager_attention,
@@ -149,16 +149,15 @@ def _init_to_turns(init: Dict) -> List[List[Dict]]:
     raise KeyError(f"unrecognized recorder.init keys: {list(init)}")
 
 
-class LightMemMemo(MemoStructure):
-    _cfg: Dict = {}   # overridden per-run by eval_common.make_memo_class
+class LightMemMemo(MemoClass):
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, config=None):
+        super().__init__(config)
         self._system = None                        # LightMemory (lazy — built on first hook call)
         self._instance_id = uuid.uuid4().hex[:12]  # per-user Qdrant scoping
 
     def _build_config(self) -> Dict:
-        cfg = self._cfg
+        cfg = self.config
         if cfg["topic_segment"] and not cfg["pre_compress"]:
             # LightMem shares one LLMlingua-2 model between the pre-compressor and
             # the topic segmenter (precomp_topic_shared); the segmenter reads
@@ -255,7 +254,7 @@ class LightMemMemo(MemoStructure):
                 self._system.add_memory(
                     messages=turn_msgs, force_segment=is_last, force_extract=is_last,
                 )
-            if self._cfg["offline_update"]:
+            if self.config["offline_update"]:
                 # Full LoCoMo-paper offline refinement over the whole current
                 # index (per-entry LLM dedup/merge/delete). For DynamicMem this
                 # runs at each checkpoint's build call (integration adaptation:
@@ -263,13 +262,13 @@ class LightMemMemo(MemoStructure):
                 # protocol), so each checkpoint's queries see a refined memory.
                 self._system.construct_update_queue_all_entries()
                 self._system.offline_update_all_entries(
-                    score_threshold=self._cfg["update_sim_threshold"],
+                    score_threshold=self.config["update_sim_threshold"],
                 )
 
     async def retrieve_memory_for_query(self, recorder) -> Dict:
         self._ensure_system()
         query = recorder.init.get("query", "")
-        k = int(self._cfg["retrieve_limit"])
+        k = int(self.config["retrieve_limit"])
         with _quiet_stdout():
             passages = self._system.retrieve(query, limit=k)   # embed + Qdrant search (read-only)
         if not passages:

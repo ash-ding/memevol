@@ -1,6 +1,6 @@
 # cc baseline — Claude Code as a direct QA agent
 
-`CCMemo` (`memo.py`) is a `MemoStructure` that skips memory-architecture
+`CCMemo` (`memo.py`) is a `MemoClass` that skips memory-architecture
 design entirely: Phase 1 stashes the currently-visible user data to a
 per-user temp directory; Phase 2 runs Claude Code with file tools
 (Read/Grep/Glob) against that directory and answers the question directly.
@@ -18,7 +18,7 @@ not a compat-shim script. The old single-dataset `eval_cc.py` was replaced
 by `run.py` (2026-07); numbers from that script are NOT comparable to
 `run.py`'s DynamicMem output (different protocol).
 
-Per the standardized `MemoStructure` contract, `build_memory_from_data` is called
+Per the standardized `MemoClass` contract, `build_memory_from_data` is called
 ONCE per build call with the whole newly-visible data already in
 `recorder.init` — the memo ingests the handed data however it chooses;
 `CCMemo` doesn't split it at all, it just stashes the whole payload to disk

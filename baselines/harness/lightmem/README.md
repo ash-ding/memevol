@@ -3,7 +3,7 @@
 [LightMem](https://github.com/zjunlp/LightMem) — a lightweight, compression-first
 lifelong memory (LLMlingua-2 pre-compression → attention topic segmentation → LLM
 metadata/summary extraction → embedding index → offline update) — as a ready-made
-memory system on the 3-hook `MemoStructure` contract. The paper PDF is in this
+memory system on the 3-hook `MemoClass` contract. The paper PDF is in this
 directory ([lightmem.pdf](lightmem.pdf)).
 
 **Provenance**: the `vendor/lightmem/` subtree is vendored from
@@ -102,7 +102,7 @@ one single-stage pass); `--sampling-seed` (default `42`); `--no-memory-cache`.
 | dynamicmem | `app_logs` | app-log entry | hipporag2's `app_log_to_passage` text / log `timestamp` |
 
 Turns are ingested in order; the per-user Qdrant index is instance-scoped
-(`uuid`), so a fresh `MemoStructure` per user means no cross-user state.
+(`uuid`), so a fresh `MemoClass` per user means no cross-user state.
 
 ## Faithfulness boundary
 

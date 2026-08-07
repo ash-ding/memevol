@@ -1,6 +1,6 @@
 """Shared-contract tests for the baseline harness layer (registry resolution,
 BaseWorkflow/DynamicMemWorkflow default-answer signature, sizing wire specs,
-task-list derivation, eval_common's make_memo_class + run_baseline). This file
+task-list derivation, eval_common's run_baseline). This file
 is BASELINE-FREE — it must NOT import any concrete baseline's memo (cc,
 hipporag2, amem); those live in their own tests/test_<name>_baseline.py, run
 in that baseline's own venv. This file runs in the shared dev/test env:
@@ -39,7 +39,7 @@ def test_base_workflow_default_answer_call_signature():
     import asyncio
     import common.llm as llm_mod
     from common.workflow import BaseWorkflow
-    from common.harness_base import MemoStructure
+    from common.memo_class import MemoClass
 
     calls = {}
 
@@ -49,7 +49,7 @@ def test_base_workflow_default_answer_call_signature():
         calls["messages"] = self.messages
         return "ANSWER"
 
-    class _Memo(MemoStructure):
+    class _Memo(MemoClass):
         async def retrieve_memory_for_query(self, r): return {}
         # use_memory_to_answer NOT overridden -> defaults to None (defers to agent)
 
@@ -104,7 +104,7 @@ def test_dynamicmem_default_answer_call_signature():
     import common.llm as llm_mod
     from datasets.dynamicmem.workflow import DynamicMemWorkflow
     from datasets.dynamicmem.env import DynamicMemRecorder
-    from common.harness_base import MemoStructure
+    from common.memo_class import MemoClass
 
     calls = {}
 
@@ -117,7 +117,7 @@ def test_dynamicmem_default_answer_call_signature():
     async def _fake_judge_item(self, item, raw_answer):
         return 1.0, "fake-judge", raw_answer, {}
 
-    class _Memo(MemoStructure):
+    class _Memo(MemoClass):
         async def retrieve_memory_for_query(self, r): return {}
         # use_memory_to_answer NOT overridden -> defaults to None (defers to agent)
 
@@ -171,32 +171,48 @@ def test_single_stage_whole_split_matches_main_method():
 
 
 def test_task_list_identical_to_main_method():
-    """The baseline's split derivation MUST equal the main method's
-    (forge/launch.py:185-189 calls the SAME env.get_task_list). Sized here via
-    the shared single_stage_wire_spec (no seed → deterministic prefix)."""
-    from baselines.harness.eval_common import resolve_task_list
+    """The wire spec's n_samples field must map onto env.get_task_list exactly —
+    evaluate_memo (shared by forge's container AND every baseline) derives its
+    task list as get_task_list(split, spec["n_samples"], seed) — so an all-null
+    single_stage is the whole split and a capped one is the same prefix the
+    main method sees."""
     from common.evaluate import single_stage_wire_spec
     from datasets.locomo import env as locomo_env
     from datasets.longmemeval import env as lme_env
     from datasets.dynamicmem import env as dm_env
+    def task_list(env, ds, single_stage):
+        n = single_stage_wire_spec(ds, single_stage)["n_samples"]
+        return env.get_task_list("test", None if n is None else int(n))
     # whole test split (all-null single_stage) == get_task_list("test", None) == heldout split
-    assert resolve_task_list("locomo", "test", single_stage_wire_spec("locomo", {})) == locomo_env.get_task_list("test", None)
-    assert resolve_task_list("longmemeval_s", "test", single_stage_wire_spec("longmemeval_s", {})) == lme_env.get_task_list("test", None)
-    assert resolve_task_list("dynamicmem", "test", single_stage_wire_spec("dynamicmem", {})) == dm_env.get_task_list("test", None)
+    assert task_list(locomo_env, "locomo", {}) == locomo_env.get_task_list("test", None)
+    assert task_list(lme_env, "longmemeval_s", {}) == lme_env.get_task_list("test", None)
+    assert task_list(dm_env, "dynamicmem", {}) == dm_env.get_task_list("test", None)
     # capped units == get_task_list("test", N)
-    assert resolve_task_list("locomo", "test", single_stage_wire_spec("locomo", {"n_conversations": 2})) == locomo_env.get_task_list("test", 2)
+    assert task_list(locomo_env, "locomo", {"n_conversations": 2}) == locomo_env.get_task_list("test", 2)
 
 
-def test_make_memo_class_no_arg_instantiable():
-    from baselines.harness.eval_common import make_memo_class
-    from common.harness_base import MemoStructure
-    class Base(MemoStructure):
-        async def build_memory_from_data(self, r): return None
-        async def retrieve_memory_for_query(self, r): return {"cfg": self._cfg}
-    Cls = make_memo_class(Base, model="x", k=3)
-    inst = Cls()  # workflow instantiates with NO args
-    assert inst._cfg == {"model": "x", "k": 3}
-    assert isinstance(inst, MemoStructure)
+def test_memo_constructor_config():
+    """Config reaches memo instances through the CONSTRUCTOR (2026-08-06,
+    replacing the make_memo_class dynamic-subclass injection): each instance
+    gets its own private copy at self.config, mutations never leak across
+    instances (the fresh-instance-per-user guarantee extends to config), and
+    plain instances pickle without any class-anchoring magic."""
+    import pickle
+    from common.memo_class import MemoClass
+
+    cfg = {"model": "x", "k": 3}
+    a = MemoClass(config=cfg)
+    b = MemoClass(config=cfg)
+    assert a.config == {"model": "x", "k": 3}
+    # per-instance copy: mutating one instance (or the caller dict) leaks nowhere
+    a.config["k"] = 99
+    cfg["model"] = "mutated"
+    assert b.config == {"model": "x", "k": 3}
+    # zero-arg still works (forge-evolved harnesses are never handed a config)
+    assert MemoClass().config == {}
+    # plain instances pickle round-trip, config included (memcache relies on it)
+    restored = pickle.loads(pickle.dumps(a))
+    assert restored.config["k"] == 99
 
 
 # -------------------- integration: run_baseline end-to-end (locomo) --------------------
@@ -204,7 +220,7 @@ def test_make_memo_class_no_arg_instantiable():
 def test_run_baseline_locomo_end_to_end():
     """Deterministic full drive of baselines.harness.eval_common.run_baseline on ONE
     real locomo test-split unit — not a scoped-down slice. This exercises:
-    registry.resolve -> resolve_task_list (real locomo10.json split) ->
+    registry.resolve -> the shared task-list derivation (real locomo10.json split) ->
     LoCoMoWorkflow construction -> run_all_users -> run_single_user (REAL
     Phase 1 ingestion against the actual conv-47 sessions, REAL
     build_qa_prompt/build_qa_metadata/log_qa_step dispatch) ->
@@ -216,7 +232,7 @@ def test_run_baseline_locomo_end_to_end():
       - common.llm.Agent.ask (the shared QA agent) -> a canned answer
       - LoCoMoWorkflow.judge (the judge)           -> a forced score=1
 
-    A stub MemoStructure supplies retrieve_memory_for_query's canned passages;
+    A stub MemoClass supplies retrieve_memory_for_query's canned passages;
     build_memory_from_data is a no-op (Phase 1 ingestion still runs for real, it
     just has nothing to persist).
     """
@@ -227,13 +243,13 @@ def test_run_baseline_locomo_end_to_end():
     from pathlib import Path
 
     import common.llm as llm_mod
-    from baselines.harness.eval_common import resolve_task_list, run_baseline
-    from common.harness_base import MemoStructure
+    from baselines.harness.eval_common import run_baseline
+    from common.memo_class import MemoClass
     from common.evaluate import single_stage_wire_spec
     from common.sampling import derive_sample_seed
     from datasets.locomo.workflow import LoCoMoWorkflow
 
-    class _StubMemo(MemoStructure):
+    class _StubMemo(MemoClass):
         async def build_memory_from_data(self, r):
             return None
 
@@ -253,7 +269,8 @@ def test_run_baseline_locomo_end_to_end():
     single_stage = {"n_conversations": 1, "n_qa": 1}
     seed = derive_sample_seed(42, 0, "locomo")
     spec = {**single_stage_wire_spec("locomo", single_stage), "sample_seed": seed}
-    expected = resolve_task_list("locomo", "test", spec)
+    from datasets.locomo.env import get_task_list as _locomo_tasks
+    expected = _locomo_tasks("test", int(spec["n_samples"]), seed=spec["sample_seed"])
     assert len(expected) == 1, expected
     the_user = expected[0]
 
@@ -275,9 +292,9 @@ def test_run_baseline_locomo_end_to_end():
 
         assert (out_dir / "score.json").exists()
         assert (out_dir / "token_usage.json").exists()
-        # Unified: single pass runs through run_gauntlet's one-item plan, so traces
+        # Unified: single pass runs through evaluate_memo's one-item plan, so traces
         # land under out_dir/single/traces/ (like forge's progressive=false), and
-        # run_baseline returns run_gauntlet's per-dataset metrics dict.
+        # run_baseline returns the shared metrics dict.
         trace_files = sorted((out_dir / "single" / "traces").glob("*.json"))
         assert len(trace_files) == 1, trace_files
         trace = json.loads(trace_files[0].read_text())

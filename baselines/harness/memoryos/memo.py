@@ -1,5 +1,5 @@
 """MemoryOS (arXiv 2506.06326, EMNLP 2025 Oral — github.com/BAI-LAB/MemoryOS)
-as a retrieval MemoStructure.
+as a retrieval MemoClass.
 
 BUILD: every ingestion unit becomes one MemoryOS *dialogue page* via
 ``Memoryos.add_memory(user_input, agent_response)``, and the vendored pipeline
@@ -42,7 +42,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from common.harness_base import MemoStructure
+from common.memo_class import MemoClass
 from baselines.harness.hipporag2.memo import app_log_to_passage
 from baselines.harness.memoryos._st_shim import ensure_sentence_transformers, hf_datasets_active
 
@@ -135,18 +135,17 @@ def _page_to_passage(page: Dict[str, Any]) -> str:
     return f"{head}{body}"
 
 
-class MemoryOSMemo(MemoStructure):
-    _cfg: Dict = {}   # overridden per-run by eval_common.make_memo_class
+class MemoryOSMemo(MemoClass):
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, config=None):
+        super().__init__(config)
         self._memo: Optional[Memoryos] = None
         self._instance_id = uuid.uuid4().hex[:12]   # per-user on-disk store
 
     def _ensure_system(self) -> None:
         if self._memo is not None:
             return
-        cfg = self._cfg
+        cfg = self.config
         save_dir = OUTPUTS_DIR / self._instance_id
         if save_dir.exists():
             shutil.rmtree(save_dir, ignore_errors=True)

@@ -14,9 +14,9 @@ if str(PROJECT_ROOT) not in sys.path:
 
 
 def test_three_hooks_optional_with_defaults():
-    from common.harness_base import MemoStructure
+    from common.memo_class import MemoClass
 
-    class Bare(MemoStructure):
+    class Bare(MemoClass):
         pass  # overrides nothing — must be instantiable now (hooks non-abstract)
 
     m = Bare()
@@ -44,11 +44,11 @@ def test_forge_loads_the_harness_class_not_the_base():
 def test_phase1_update_calls_build_memory_once():
     """The workflow hands the whole data in ONE build_memory_from_data call."""
     from common.workflow import BaseWorkflow
-    from common.harness_base import MemoStructure
+    from common.memo_class import MemoClass
 
     calls = []
 
-    class _Memo(MemoStructure):
+    class _Memo(MemoClass):
         async def build_memory_from_data(self, recorder):
             calls.append(list(recorder.init.get("items", [])))
 
@@ -76,13 +76,13 @@ def test_use_memory_to_answer_used_else_agent():
     """The answer step uses memo.use_memory_to_answer; falls back to the agent on None."""
     import asyncio
     from common.workflow import BaseWorkflow  # noqa: F401 (import proves module loads post-refactor)
-    from common.harness_base import MemoStructure
+    from common.memo_class import MemoClass
 
-    class _Answering(MemoStructure):
+    class _Answering(MemoClass):
         async def use_memory_to_answer(self, recorder, retrieved, prompt):
             return "MEMO:" + prompt
 
-    class _Deferring(MemoStructure):
+    class _Deferring(MemoClass):
         pass  # use_memory_to_answer default None → agent answers
 
     loop = asyncio.new_event_loop()
@@ -92,23 +92,23 @@ def test_use_memory_to_answer_used_else_agent():
     assert loop.run_until_complete(d.use_memory_to_answer(None, {}, "Q")) is None
 
 
-def test_harness_base_is_pure_contract():
+def test_memo_class_is_pure_contract():
     """common/ purification guard (2026-07-16): Sub_memo_layer must not flow
-    back into common.harness_base (it is alma-owned design vocabulary, at
+    back into common.memo_class (it is alma-owned design vocabulary, at
     baselines/evolve/alma/memo_layers.py), and Basic_Recorder is DEFINED in
     common/recorder.py while the legacy import path keeps working."""
-    import common.harness_base as hb
+    import common.memo_class as hb
     import common.recorder as rec
 
-    # Sub_memo_layer is gone from harness_base (not defined, not re-exported)
+    # Sub_memo_layer is gone from memo_class (not defined, not re-exported)
     assert not hasattr(hb, "Sub_memo_layer"), \
-        "Sub_memo_layer leaked back into common.harness_base"
+        "Sub_memo_layer leaked back into common.memo_class"
 
     # legacy path still importable, and it is the SAME object as common.recorder's
-    from common.harness_base import Basic_Recorder as legacy_recorder
+    from common.memo_class import Basic_Recorder as legacy_recorder
     assert rec.Basic_Recorder is legacy_recorder
     assert rec.Basic_Recorder is hb.Basic_Recorder
-    # ... and it is defined in common.recorder, only re-exported by harness_base
+    # ... and it is defined in common.recorder, only re-exported by memo_class
     assert rec.Basic_Recorder.__module__ == "common.recorder"
 
     # alma's memo_layers owns Sub_memo_layer now

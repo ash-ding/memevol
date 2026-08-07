@@ -16,7 +16,7 @@ atomic writes; see Amem/simplemem in the upstream repo):
   Anything else — missing files, corrupt pickle, meta drift, unpicklable
   state — degrades to a miss (rebuild); the cache must never break an eval.
 
-Optional harness hooks (see forge/harness_base.py): a memo may implement
+Optional harness hooks (see forge/memo_class.py): a memo may implement
 `save_memory(path) -> bool` / `load_memory(path) -> bool` to handle backends
 the default pickle can't (the hook owns the file format at `path.*`). The
 sidecar meta is still written/validated by this module.

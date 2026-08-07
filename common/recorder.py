@@ -2,7 +2,7 @@
 
 The benchmark side fills `init` with the data visible to the memory system
 for the current call (per-dataset shapes), the workflow appends QA `steps`
-and sets the final `reward`; memory-system hooks (`common/harness_base.py`)
+and sets the final `reward`; memory-system hooks (`common/memo_class.py`)
 treat the recorder as read-only input. Benchmark-specific recorders
 (e.g. `DynamicMemRecorder`, `LoCoMoRecorder`) inherit from this.
 """

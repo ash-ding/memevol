@@ -260,7 +260,7 @@ def build_analysis_prompt(memo_info, dataset="dynamicmem"):
     - Each layer (inheriting `Sub_memo_layer`) contains:
       - **Retrieve**: fetches relevant memory elements from the database.
       - **Update**: writes or modifies entries in the database.
-    - Final MemoStructure (inheriting `MemoStructure`) contains:
+    - Final MemoClass (inheriting `MemoClass`) contains:
         - **build_memory_from_data**: Phase 1 — called to build a user profile from app logs.
         - **retrieve_memory_for_query**: Phase 2 — called once per QA question to retrieve relevant memory.
 {info['analysis_protocol']}
@@ -350,16 +350,16 @@ def get_metadata_dict(instance) -> dict:
 
 def _read_contract_files() -> str:
     """The backbone code shown to the LLM: the shared eval contract
-    (common/harness_base.py, which pulls in the Basic_Recorder envelope from
+    (common/memo_class.py, which pulls in the Basic_Recorder envelope from
     common/recorder.py) followed by alma's own layered-memory vocabulary
     (baselines/evolve/alma/memo_layers.py) — fixed order, each part labeled
     with its source path.
 
     (alma deliberately stays on the common base; forge's evolution target is
-    the separate forge/harness_base.py, which alma must NOT pick up.)"""
+    the separate forge/memo_class.py, which alma must NOT pick up.)"""
     root = Path(__file__).resolve().parents[3]
     parts = []
-    for rel in ("common/harness_base.py", "baselines/evolve/alma/memo_layers.py"):
+    for rel in ("common/memo_class.py", "baselines/evolve/alma/memo_layers.py"):
         path = root / rel
         if not path.exists():
             raise FileNotFoundError(f"Cannot find {rel} at {path.resolve()}")
@@ -408,7 +408,7 @@ You are given the following two base classes:
 
 Inherit these base classes and import as follows:
 ```python
-from common.harness_base import MemoStructure
+from common.memo_class import MemoClass
 from baselines.evolve.alma.memo_layers import Sub_memo_layer
 {info['recorder_env_import']}
 from common.llm import Agent, Embedding

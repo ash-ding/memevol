@@ -1,7 +1,7 @@
 """Harness validator (host-side, optional / external use).
 
 A candidate is a directory under `workspace/harnesses/<id>/` containing:
-  - `harness.py` (REQUIRED) — defines a `MemoStructure` subclass
+  - `harness.py` (REQUIRED) — defines a `MemoClass` subclass
   - `requirements.txt` (OPTIONAL) — pip deps layered on eval-base
   - `meta.json` (OPTIONAL) — {"parent_ids": [...], "description": ...}
   - helper `.py` files (OPTIONAL) — importable from harness.py via sys.path
@@ -31,7 +31,7 @@ import sys
 from pathlib import Path
 from typing import Type
 
-from common.harness_base import MemoStructure
+from common.memo_class import MemoClass
 
 REQUIRED_FILE = "harness.py"
 
@@ -40,8 +40,8 @@ class HarnessError(Exception):
     """Raised when a candidate directory fails validation."""
 
 
-def load_harness_class(harness_dir: Path) -> Type[MemoStructure]:
-    """Import harness.py and return its MemoStructure subclass."""
+def load_harness_class(harness_dir: Path) -> Type[MemoClass]:
+    """Import harness.py and return its MemoClass subclass."""
     harness_py = harness_dir / REQUIRED_FILE
     if not harness_py.exists():
         raise HarnessError(f"Missing {REQUIRED_FILE} in {harness_dir}")
@@ -64,12 +64,12 @@ def load_harness_class(harness_dir: Path) -> Type[MemoStructure]:
     candidates = [
         obj for _, obj in inspect.getmembers(module, inspect.isclass)
         # select the class defined in this harness file; imported bases like
-        # forge.harness_base.MemoStructure are no longer abstract, so an
+        # forge.memo_class.MemoClass are no longer abstract, so an
         # isabstract filter would wrongly match them.
-        if issubclass(obj, MemoStructure) and obj.__module__ == module.__name__
+        if issubclass(obj, MemoClass) and obj.__module__ == module.__name__
     ]
     if not candidates:
-        raise HarnessError(f"No MemoStructure subclass found in {harness_py}")
+        raise HarnessError(f"No MemoClass subclass found in {harness_py}")
     return candidates[0]
 
 

@@ -74,7 +74,7 @@ baselines/evolve/alma/
 ├── config.example.yaml # documented, runnable example config (DEFAULT_CONFIG < YAML < CLI)
 ├── meta_agent.py       # MetaAgent: analyze → generate → examine → evaluate
 ├── memo_manager.py     # memo lifecycle, reward, softmax selection
-├── meta_agent_prompt.py  # meta-LLM prompts (shows common/harness_base.py as the contract)
+├── meta_agent_prompt.py  # meta-LLM prompts (shows common/memo_class.py as the contract)
 ├── launch.py           # subprocess entry (score.json + full traces, no sampling)
 ├── eval_runner.py      # subprocess manager (2h/8h wall-clock timeout)
 ├── sampling.py         # single-user bin sampling → analysis artifact (alma-only)
@@ -94,7 +94,7 @@ baselines/evolve/alma/
 └── test.sh             # held-out evaluation invocations
 ```
 
-Shared infrastructure (`harness_base.py`, `llm.py`, `tokens.py`,
+Shared infrastructure (`memo_class.py`, `llm.py`, `tokens.py`,
 `logger.py`, the `DynamicMemWorkflow`) was long ago extracted to
 [`common/`](../../../common/) and [`datasets/dynamicmem/`](../../../datasets/dynamicmem/)
 — alma imports it from there. Since the 2026-07 TCE upgrade, alma's
@@ -115,7 +115,7 @@ ALMA targets exactly **one benchmark per run**, selected with
 `--dataset {dynamicmem,locomo,longmemeval_s,longmemeval_m}` (default
 `dynamicmem`). The dataset name resolves through
 [`registry.py`](registry.py) to a workflow class, env module, and recorder
-class (mirrors `forge/launch.py::WORKFLOWS`, but ALMA is standalone and does
+class (the shared `datasets/registry.py`, but ALMA is standalone and does
 not import forge), and through [`dataset_info.py`](dataset_info.py) to the
 prompt fragments (`recorder.init` shape, evidence key, etc.) that the
 meta-agent's analysis/generation/reflection prompts render for that dataset.

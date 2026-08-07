@@ -1,4 +1,4 @@
-"""HippoRAG2 as a retrieval MemoStructure: Phase 1 indexes the ingested unit's
+"""HippoRAG2 as a retrieval MemoClass: Phase 1 indexes the ingested unit's
 passages into a per-user HippoRAG graph; Phase 2 retrieves top-k passages. The
 shared QA agent answers from those passages (fair 'HippoRAG-as-memory'
 comparison), and the per-dataset workflow judges/scores identically to the main
@@ -28,7 +28,7 @@ import uuid
 from pathlib import Path
 from typing import Dict, List
 
-from common.harness_base import MemoStructure
+from common.memo_class import MemoClass
 
 OUTPUTS_DIR = Path(__file__).resolve().parent / "outputs"
 
@@ -66,9 +66,9 @@ def _init_to_passages(init: Dict) -> List[str]:
     raise KeyError(f"unrecognized recorder.init keys: {list(init)}")
 
 
-class HippoRAGMemo(MemoStructure):
-    def __init__(self):
-        super().__init__()
+class HippoRAGMemo(MemoClass):
+    def __init__(self, config=None):
+        super().__init__(config)
         self._hippo = None
         self._passages: List[str] = []
         # NOTE: the recorders actually handed to build_memory_from_data/retrieve_memory_for_query
@@ -80,7 +80,7 @@ class HippoRAGMemo(MemoStructure):
         # So `recorder.user_id` is always the dataclass default "" in practice —
         # keying save_dir on it would collapse every user's HippoRAG graph onto
         # the same path (silent cross-user contamination under concurrent
-        # eval). Instead rely on the documented invariant "a fresh MemoStructure
+        # eval). Instead rely on the documented invariant "a fresh MemoClass
         # instance is created per user — no cross-user state" and key save_dir
         # on an instance-scoped id generated once here.
         self._instance_id = uuid.uuid4().hex[:12]
@@ -88,7 +88,7 @@ class HippoRAGMemo(MemoStructure):
     def _ensure_hippo(self):
         if self._hippo is not None:
             return
-        cfg = self._cfg
+        cfg = self.config
         factory = cfg.get("_hippo_factory")
         embedding = cfg["embedding"]
         save_dir = str(OUTPUTS_DIR / f"{self._instance_id}_{embedding.replace('/', '_')}")
@@ -118,7 +118,7 @@ class HippoRAGMemo(MemoStructure):
     async def retrieve_memory_for_query(self, recorder) -> Dict:
         self._ensure_hippo()   # defensive no-op if build_memory_from_data already ran
         query = recorder.init.get("query", "")
-        k = int(self._cfg.get("top_k", 5))
+        k = int(self.config.get("top_k", 5))
         # Prefer retrieve-only; fall back to rag_qa(...).docs if absent.
         if hasattr(self._hippo, "retrieve"):
             sols = self._hippo.retrieve(queries=[query], num_to_retrieve=k)

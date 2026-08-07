@@ -1,5 +1,5 @@
 """Zep (Graphiti temporal knowledge graph, arXiv:2501.13956) as a retrieval
-MemoStructure.
+MemoClass.
 
 BUILD: every ingestion unit becomes one Graphiti **episode** via
 `add_episode(episode_body, reference_time, source, ...)` — Graphiti's own pipeline
@@ -40,7 +40,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from common.harness_base import MemoStructure
+from common.memo_class import MemoClass
 from baselines.harness.hipporag2.memo import app_log_to_passage
 from baselines.harness.zep import _st_shim
 
@@ -176,11 +176,10 @@ def _format_context(edges: List[Any], nodes: List[Any]) -> str:
     return _CONTEXT_TEMPLATE.format(facts="\n".join(facts), entities="\n".join(entities))
 
 
-class ZepMemo(MemoStructure):
-    _cfg: Dict = {}   # overridden per-run by eval_common.make_memo_class
+class ZepMemo(MemoClass):
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, config=None):
+        super().__init__(config)
         # Per-user isolation: a fresh instance == one user (no cross-user state —
         # recorder.user_id is always "" at memo call sites). Scope the embedded
         # on-disk FalkorDB Lite store AND the Graphiti group_id on this uuid.
@@ -195,36 +194,36 @@ class ZepMemo(MemoStructure):
             return
         from redislite.async_falkordb_client import AsyncFalkorDB   # embedded, async
 
-        base = _db_root(self._cfg)   # native POSIX FS — see _db_root (NOT /mnt/c under WSL)
+        base = _db_root(self.config)   # native POSIX FS — see _db_root (NOT /mnt/c under WSL)
         base.mkdir(parents=True, exist_ok=True)
         self._db_path = str(base / f"{self._instance_id}.db")
         self._falkor_db = AsyncFalkorDB(dbfilename=self._db_path)
         driver = FalkorDriver(falkor_db=self._falkor_db)
 
-        device = self._cfg.get("device")
+        device = self.config.get("device")
         # Embedder: paper-faithful BGE-m3 (default) or OpenAI (fallback).
-        if self._cfg.get("embedder", "bge-m3") == "openai":
+        if self.config.get("embedder", "bge-m3") == "openai":
             from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
             embedder = OpenAIEmbedder(OpenAIEmbedderConfig(
-                embedding_model=self._cfg.get("embedder_model", "text-embedding-3-small")))
+                embedding_model=self.config.get("embedder_model", "text-embedding-3-small")))
         else:
-            embedder = BGEM3Embedder(self._cfg.get("embedder_model", "BAAI/bge-m3"), device=device)
+            embedder = BGEM3Embedder(self.config.get("embedder_model", "BAAI/bge-m3"), device=device)
 
-        graph_model = self._cfg.get("graph_llm_model", "gpt-4o-mini")
+        graph_model = self.config.get("graph_llm_model", "gpt-4o-mini")
         # Reranker: paper-faithful BGE cross-encoder (default) or OpenAI (fallback).
-        if self._cfg.get("reranker", "bge") == "openai":
+        if self.config.get("reranker", "bge") == "openai":
             from graphiti_core.cross_encoder.openai_reranker_client import OpenAIRerankerClient
             cross_encoder = OpenAIRerankerClient(config=LLMConfig(model=graph_model))
         else:
             cross_encoder = CachedBGEReranker(
-                self._cfg.get("reranker_model", "BAAI/bge-reranker-v2-m3"), device=device)
+                self.config.get("reranker_model", "BAAI/bge-reranker-v2-m3"), device=device)
 
         # Internal graph-construction LLM. Paper: gpt-4o-mini-2024-07-18 (4-series).
         # NOTE: Graphiti uses the openai SDK directly, so these calls do NOT flow
         # through common.tokens (same caveat as amem/hipporag2/simplemem/lightmem).
         llm_client = OpenAIClient(config=LLMConfig(
             model=graph_model,
-            small_model=self._cfg.get("graph_llm_small_model") or graph_model,
+            small_model=self.config.get("graph_llm_small_model") or graph_model,
         ))
 
         self._graphiti = Graphiti(
@@ -252,7 +251,7 @@ class ZepMemo(MemoStructure):
         query = recorder.init.get("query", "")
         if not query:
             return {}
-        k = int(self._cfg.get("retrieve_k", 20))   # paper: top-20 edges + nodes
+        k = int(self.config.get("retrieve_k", 20))   # paper: top-20 edges + nodes
         config = COMBINED_HYBRID_SEARCH_CROSS_ENCODER.model_copy(deep=True)
         config.limit = k
         results = await self._graphiti.search_(query, config=config, group_ids=[self._gid])
