@@ -5,7 +5,6 @@ Sizing is config-file only (no sizing CLI flags): `single_stage` (progressive:
 false) or `stages` (progressive: true) — see config.example.yaml.
 
     uv run --project baselines/harness/memoryos python baselines/harness/memoryos/run.py --config baselines/harness/memoryos/config.example.yaml
-    uv run --project baselines/harness/memoryos python baselines/harness/memoryos/run.py --config baselines/harness/memoryos/config.example.yaml --progressive
 """
 from __future__ import annotations
 import argparse, asyncio, sys

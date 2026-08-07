@@ -7,7 +7,6 @@ Sizing is config-file only (no sizing CLI flags): `single_stage` (progressive:
 false) or `stages` (progressive: true) — see config.example.yaml.
 
     cd baselines/harness/zep && uv run python run.py --config config.example.yaml
-    uv run python run.py --config config.example.yaml --progressive
 """
 from __future__ import annotations
 import argparse, asyncio, sys
