@@ -2,7 +2,7 @@
 
 Two schemes coexist (2026-08-06):
 
-- HARNESS baselines (cc/hipporag2/amem/...) are config-file-ONLY: run.py has
+- HARNESS baselines (hipporag2/amem/...) are config-file-ONLY: run.py has
   no DEFAULT_CONFIG and no CLI parameter flags — just `--config`, validated by
   `common.config.validate_exact_config` against run.py's REQUIRED_KEYS
   (missing keys AND unknown keys both abort; sizing checked to the leaf).
@@ -26,7 +26,6 @@ from common.config import (
     ConfigCompletenessError, load_config_file, validate_exact_config,
 )
 
-CC_EXAMPLE = PROJECT_ROOT / "baselines" / "harness" / "cc" / "config.example.yaml"
 HIPPORAG2_EXAMPLE = PROJECT_ROOT / "baselines" / "harness" / "hipporag2" / "config.example.yaml"
 AMEM_EXAMPLE = PROJECT_ROOT / "baselines" / "harness" / "amem" / "config.example.yaml"
 ALMA_EXAMPLE = PROJECT_ROOT / "baselines" / "evolve" / "alma" / "config.example.yaml"
@@ -57,39 +56,34 @@ def _harness_required(name):
     return mod.REQUIRED_KEYS
 
 
-def test_cc_example_passes_exactly():
-    req = _harness_required("cc")
-    validate_exact_config(load_config_file(CC_EXAMPLE), req, "cc")  # no raise
-
-
-def test_cc_missing_key_raises():
-    req = _harness_required("cc")
-    cfg = dict(load_config_file(CC_EXAMPLE))
-    del cfg["model"]
-    try:
-        validate_exact_config(cfg, req, "cc")
-    except ConfigCompletenessError as e:
-        assert "model" in str(e)
-    else:
-        raise AssertionError("expected ConfigCompletenessError")
-
-
-def test_cc_unknown_key_raises():
-    # Typo protection: an unknown key must abort, not silently ride along.
-    req = _harness_required("cc")
-    cfg = dict(load_config_file(CC_EXAMPLE))
-    cfg["modle"] = "typo"
-    try:
-        validate_exact_config(cfg, req, "cc")
-    except ConfigCompletenessError as e:
-        assert "modle" in str(e)
-    else:
-        raise AssertionError("expected ConfigCompletenessError")
-
-
 def test_hipporag2_example_passes_exactly():
     req = _harness_required("hipporag2")
     validate_exact_config(load_config_file(HIPPORAG2_EXAMPLE), req, "hipporag2")
+
+
+def test_missing_key_raises():
+    req = _harness_required("hipporag2")
+    cfg = dict(load_config_file(HIPPORAG2_EXAMPLE))
+    del cfg["llm_model"]
+    try:
+        validate_exact_config(cfg, req, "hipporag2")
+    except ConfigCompletenessError as e:
+        assert "llm_model" in str(e)
+    else:
+        raise AssertionError("expected ConfigCompletenessError")
+
+
+def test_unknown_key_raises():
+    # Typo protection: an unknown key must abort, not silently ride along.
+    req = _harness_required("hipporag2")
+    cfg = dict(load_config_file(HIPPORAG2_EXAMPLE))
+    cfg["llm_modle"] = "typo"
+    try:
+        validate_exact_config(cfg, req, "hipporag2")
+    except ConfigCompletenessError as e:
+        assert "llm_modle" in str(e)
+    else:
+        raise AssertionError("expected ConfigCompletenessError")
 
 
 def test_amem_example_passes_exactly():

@@ -32,7 +32,6 @@ baselines/
 │   └── memevolve/       #   (paper PDF; to be implemented under the conventions below)
 └── harness/             # READY-MADE MEMORY SYSTEMS — compared against forge's
     ├── eval_utility.py   #   EVOLVED HARNESSES. Shared runner: run_baseline()
-    ├── cc/              #   Claude Code as direct QA agent (native answer)
     ├── hipporag2/       #   HippoRAG2 graph-RAG pipeline as retrieval memory
     │                    #     (+ editable install of the external HippoRAG repo)
     ├── amem/            #   A-mem agentic-notes memory as retrieval memory
@@ -88,7 +87,7 @@ its directory and running `uv sync`, which creates
 `baselines/{evolve,harness}/<name>/.venv/`:
 
 ```bash
-cd baselines/harness/cc && uv sync
+cd baselines/harness/amem && uv sync
 ```
 
 hipporag2 needs one extra step — an editable install of the external
@@ -155,7 +154,7 @@ exactly by `common.config.validate_exact_config`:
 Surface per side:
 
 ```bash
-# harness (cc / hipporag2 / amem / ... run.py) — exactly one flag, --config;
+# harness (hipporag2 / amem / ... run.py) — exactly one flag, --config;
 # progressive / sampling_seed / stages / single_stage all live in the YAML
 cd baselines/harness/hipporag2 && uv run python run.py --config my_hr.yaml
 # my_hr.yaml: dataset: locomo, progressive: true, sampling_seed: 42, ...
@@ -178,7 +177,7 @@ committed (a link from a tracked file would be dead on a fresh clone).
 The two sides of `baselines/` resolve their config differently (2026-08-06):
 **alma** keeps the original layered scheme (it has a real CLI with runtime
 knobs like `--status`/`--steps`/`--memo_SHA`); every **harness baseline**
-(`cc`, `hipporag2`, `amem`, `lightmem`, `simplemem`, `zep`, `mem0`,
+(`hipporag2`, `amem`, `lightmem`, `simplemem`, `zep`, `mem0`,
 `memoryos`) is now **config-file ONLY** — `run.py` takes exactly one flag,
 `--config <yaml>` (required), and there is no built-in `DEFAULT_CONFIG` to
 fall back to.
@@ -245,7 +244,6 @@ method's own knobs, and the shared model/judge/concurrency keys):
   every required key inline; two (`mem0`, `memoryos`) also ship a
   `config.paper.yaml` reproducing the original paper's LoCoMo setup. Copy
   one to start a real run instead of hand-assembling a config from scratch:
-  [`harness/cc/config.example.yaml`](harness/cc/config.example.yaml),
   [`harness/hipporag2/config.example.yaml`](harness/hipporag2/config.example.yaml),
   [`harness/amem/config.example.yaml`](harness/amem/config.example.yaml),
   [`harness/lightmem/config.example.yaml`](harness/lightmem/config.example.yaml),
@@ -277,7 +275,6 @@ cd baselines/harness/hipporag2 && uv run python run.py --config my_hr.yaml
 | Baseline | Kind | Approach | Optimization | Best for |
 |---|---|---|---|---|
 | **[evolve/alma](evolve/alma/)** | search method | LLM-meta-agent search loop | Yes — propose / select / evolve over harness code | Established baseline; the framework's "v1" memory-architecture search |
-| **[harness/cc](harness/cc/)** | ready-made harness | Claude Code as direct QA agent (native answer, multi-dataset) | None (zero-shot) | What-if: just give CC the raw user data + tools and let it answer |
 | **[harness/hipporag2](harness/hipporag2/)** | ready-made harness | Graph-based RAG pipeline as retrieval memory (OpenIE → KG → PPR retrieval → passages; shared QA agent answers) | None (fixed pipeline) | Hand-designed memory architecture comparison point, multi-dataset |
 | **[harness/amem](harness/amem/)** | ready-made harness | A-mem agentic-notes memory (per-note LLM analysis + memory evolution → keyword-rewrite retrieval; shared QA agent answers) | None (fixed pipeline) | Agentic note-graph memory comparison point, multi-dataset |
 | **[harness/lightmem](harness/lightmem/)** | ready-made harness | LightMem compression + offline-update memory (LLMlingua-2 pre-compression → topic segmentation → LLM metadata/summary extraction → Qdrant index → per-entry LLM offline update; `LightMemory.retrieve` → passages; shared QA agent answers) | None (fixed pipeline) | Compression + offline-refinement memory comparison point, multi-dataset |
@@ -317,33 +314,6 @@ prior code, traces, and scores. alma runs the shared per-dataset workflows
 (including the official DynamicMem TCE v2 checkpoint protocol) AND the same
 `common.evaluate.evaluate_memo` evaluator forge runs in-container, so its numbers ARE
 comparable with forge.
-
-### harness/cc — Claude Code as direct QA agent
-
-Skips memory-architecture design entirely. `CCMemo`
-([harness/cc/memo.py](harness/cc/memo.py)):
-
-- **BUILD**: stashes the currently-visible data into a per-user temp
-  directory as a single JSON file.
-- **RETRIEVE**: returns `{}` — no separate retrieval step.
-- **ANSWER** (`use_memory_to_answer`): runs Claude Code with tool access
-  (Read, Grep, Glob) over the temp directory, on the workflow's exact
-  formatted prompt — cc's own answer is judged verbatim, bypassing the
-  shared QA agent. This is the one baseline that overrides the answer hook.
-
-```bash
-cd baselines/harness/cc && uv run python run.py --config config.example.yaml
-
-# edit dataset:/model:/single_stage: in your own copy, e.g. locomo + Sonnet:
-#   dataset: locomo
-#   model: claude-sonnet-4-20250514
-uv run python run.py --config my_cc.yaml
-```
-
-Useful as a reference point: how well does a strong agent do **with no
-learned memory structure at all**, just raw access + tools?
-
-Artifacts: `baselines/harness/cc/results/<dataset>/<split>/`.
 
 ### harness/hipporag2 — graph-based RAG pipeline as retrieval memory
 
@@ -560,13 +530,13 @@ Notes on the RETRIEVE return dict:
   any other dict shape is serialized as one JSON block. Surface the source
   logs *with their `app_log_id`* — evidence citation is scored.
 - Override `use_memory_to_answer` ONLY for systems whose value proposition
-  includes answering (like cc). Retrieval-style systems should let the
-  shared QA agent answer — that keeps the comparison about *memory*, not
-  about who has the better answerer.
+  includes answering (an agentic system that answers natively). Retrieval-style
+  systems should let the shared QA agent answer — that keeps the comparison
+  about *memory*, not about who has the better answerer.
 
 ### Step 2 — `run.py`: the CLI entry
 
-Copy [harness/cc/run.py](harness/cc/run.py) (~50 lines) and adjust
+Copy [harness/amem/run.py](harness/amem/run.py) (~50 lines) and adjust
 `REQUIRED_KEYS` + the `memo_config` mapping for your system's own knobs.
 Harness `run.py`s (2026-08-06) take exactly one flag, `--config`, and have
 NO `DEFAULT_CONFIG` — the YAML must list every required key exactly, checked

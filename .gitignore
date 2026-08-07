@@ -47,7 +47,6 @@ baselines/evolve/alma/memo_test/memo_test_*.py
 
 # Per-run eval outputs (score.json + traces + memory dumps)
 baselines/evolve/alma/results/
-baselines/harness/cc/results/
 baselines/harness/hipporag2/results/
 baselines/harness/amem/results/
 baselines/harness/lightmem/results/

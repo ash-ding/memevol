@@ -1,8 +1,8 @@
 """Shared-contract tests for the baseline harness layer (registry resolution,
 BaseWorkflow/DynamicMemWorkflow default-answer signature, sizing wire specs,
 task-list derivation, eval_utility's run_baseline). This file
-is BASELINE-FREE — it must NOT import any concrete baseline's memo (cc,
-hipporag2, amem); those live in their own tests/test_<name>_baseline.py, run
+is BASELINE-FREE — it must NOT import any concrete baseline's memo
+(hipporag2, amem, ...); those live in their own tests/test_<name>_baseline.py, run
 in that baseline's own venv. This file runs in the shared dev/test env:
 
     uv run python tests/test_baselines_multidataset.py
