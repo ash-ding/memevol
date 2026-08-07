@@ -57,68 +57,46 @@ This creates `baselines/harness/hipporag2/.venv/`. The repo-root
 ## Usage
 
 ```bash
-cd baselines/harness/hipporag2 && uv run python run.py \
-    --config config.example.yaml \
-    [--dataset {dynamicmem,locomo,longmemeval_s,longmemeval_m}] \
-    [--split test|search] \
-    [--progressive|--no-progressive] \
-    [--sampling-seed 42] \
-    [--embedding text-embedding-3-small|nvidia/NV-Embed-v2|...] \
-    [--llm_model gpt-5-mini] \
-    [--judge_model gpt-5-mini] \
-    [--embedding_batch_size N] [--embedding_dtype float16|auto] \
-    [--max_sample_concurrent 3] \
-    [--no-memory-cache]
+cd baselines/harness/hipporag2 && uv run python run.py --config config.example.yaml
 ```
 
-- `--config` — YAML config path (CLI flags override it). **Evaluation SIZES
-  live in the config file only** (`single_stage` / `stages` — see "Sizing"
-  below); there are no sizing CLI flags.
-- `--dataset` (defaults to `dynamicmem`) — one of the four registered
-  benchmarks (`baselines.registry.DATASETS`).
-- `--split` (default `test`) — `test` = held-out split, `search` = the
-  split the main method's search loop sees.
-- `--embedding` — any OpenAI embedding model name (API, no GPU needed) or a
+`run.py` takes exactly one flag, `--config <yaml>` (required) — there is no
+other CLI surface (dataset, split, progressive, embedding, etc. are no
+longer flags). Every parameter lives in the config file: `config.example.yaml` documents
+each key inline — copy it, edit the values, and point `--config` at your
+copy. The YAML must list EXACTLY the keys `run.py`'s `REQUIRED_KEYS`
+expects — a missing key OR an unknown key aborts the run before anything
+executes; a `null` value counts as listed. Sizing fields (`single_stage` /
+`stages`) are checked down to the leaf, and `null` there means "whole
+split" for that dimension (see "Sizing" below).
+
+A couple of keys are worth calling out beyond what the YAML comments say:
+
+- `embedding` — any OpenAI embedding model name (API, no GPU needed) or a
   local HF/NV embedding model (GPU, loaded in-process by HippoRAG).
-- `--llm_model` — used BOTH as HippoRAG's internal OpenIE/triple-extraction
+- `llm_model` — used BOTH as HippoRAG's internal OpenIE/triple-extraction
   LLM and as the shared QA agent's model.
-- `--judge_model` — the judge model (default `gpt-5-mini`).
-- `--embedding_batch_size` / `--embedding_dtype` — left `None`: for API
-  embeddings (the default `text-embedding-3-small`) → batch 16, dtype auto; for
-  local embeddings → batch 4, dtype float16 — computed automatically in
-  `_ensure_hippo`.
-- `--max_sample_concurrent` — per-eval user/sample concurrency (default 3).
-- `--progressive` / `--no-progressive` (default off, matching this baseline's
-  historical single-pass behavior) — run the staged stage1→2→3 gauntlet
-  (with threshold elimination) instead of one single-stage pass. Sizes come
-  from the config `stages` block (or family `DEFAULT_STAGES`).
-- `--sampling-seed` (default `42`) — base seed for the (fixed step-0) sample
-  this baseline evaluates. A no-op at whole-split (`null` sizes); it only
-  selects a subset when a size field caps.
-- `--no-memory-cache` — disable cross-stage Phase-1 memory reuse (on by
-  default).
+- `embedding_batch_size` / `embedding_dtype` — leave `null`: for API
+  embeddings (the default `text-embedding-3-small`) this resolves to
+  batch 16 / dtype auto; for local embeddings, batch 4 / dtype float16 —
+  computed automatically in `_ensure_hippo`.
 
-Examples:
+To switch embedders, datasets, etc., edit those keys in your config yaml —
+e.g.:
 
-```bash
-# OpenAI API embedding (no GPU needed), config-driven eval
-cd baselines/harness/hipporag2 && uv run python run.py \
-    --config config.example.yaml \
-    --embedding text-embedding-3-small
-
-# Local GPU embedding (NVIDIA)
-uv run python run.py \
-    --config my_hr.yaml --dataset longmemeval_s --embedding nvidia/NV-Embed-v2 \
-    --embedding_batch_size 2 --embedding_dtype float16
-
-# Quick check (size via a config with single_stage: {n_users: 2})
-uv run python run.py \
-    --config my_hr.yaml --dataset dynamicmem
+```yaml
+# my_hr.yaml — local GPU embedding, LongMemEval-s
+dataset: longmemeval_s
+embedding: nvidia/NV-Embed-v2
+embedding_batch_size: 2
+embedding_dtype: float16
 ```
+
+then `uv run python run.py --config my_hr.yaml`.
 
 ## Sizing (config file only)
 
-There are **no sizing CLI flags** — evaluation sizes are config-file keys
+There are **no CLI flags at all** — evaluation sizes are config-file keys
 resolved through the shared `common.evaluate` layer (the same one forge
 uses):
 

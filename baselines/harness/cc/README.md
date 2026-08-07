@@ -39,68 +39,45 @@ dev/test only and cannot run cc.
 ## Usage
 
 ```bash
-cd baselines/harness/cc && uv run python run.py \
-    --config config.example.yaml \
-    [--dataset {dynamicmem,locomo,longmemeval_s,longmemeval_m}] \
-    [--split test|search] \
-    [--progressive|--no-progressive] \
-    [--sampling-seed 42] \
-    [--model sonnet|opus|claude-sonnet-4-20250514|...] \
-    [--max_turns 30] \
-    [--judge_model gpt-5-mini] \
-    [--max_sample_concurrent 3] \
-    [--no-memory-cache]
+cd baselines/harness/cc && uv run python run.py --config config.example.yaml
 ```
 
-- `--config` — YAML config path (CLI flags override it). **Evaluation SIZES
-  live in the config file only** (`single_stage` / `stages` — see "Sizing"
-  below); there are no sizing CLI flags.
-- `--dataset` (required by convention; defaults to `dynamicmem`) — one of
-  the four registered benchmarks (`baselines.registry.DATASETS`).
-- `--split` (default `test`) — `test` = held-out split, `search` = the
-  split the main method's search loop sees. Cross-run leakage direction:
-  never run `search` and treat it as a comparable held-out number.
-- `--model` — the Claude Code model cc itself answers with (aliases
+`run.py` takes exactly one flag, `--config <yaml>` (required) — there is no
+other CLI surface (dataset, split, progressive, model, etc. are no longer
+flags). Every parameter lives in the config file: `config.example.yaml` documents
+each key inline — copy it, edit the values, and point `--config` at your
+copy. The YAML must list EXACTLY the keys `run.py`'s `REQUIRED_KEYS`
+expects — a missing key OR an unknown key (typo, stale setting) aborts the
+run before anything executes; a `null` value counts as listed. Sizing
+fields (`single_stage` / `stages`) are checked down to the leaf, and `null`
+there means "whole split" for that dimension (see "Sizing" below).
+
+A couple of keys are worth calling out beyond what the YAML comments say:
+
+- `model` — the Claude Code model cc itself answers with (aliases
   `sonnet` → `claude-sonnet-4-20250514`, `opus` → `claude-opus-4-20250514`;
   any explicit model id also works). Does NOT affect scoring model choice —
-  cc bypasses the shared QA agent (see "Why `--judge_model` doubles as
-  `qa_model`" below).
-- `--max_turns` — max Claude Code tool-use turns per QA question (default
-  30).
-- `--judge_model` — the judge model. Also passed as `qa_model` to
-  `run_baseline` for API-compatibility (`BaseWorkflow.__init__` requires
-  one), but it is never actually invoked to answer: `CCMemo.use_memory_to_answer`
-  answers before the shared QA agent would be reached.
-- `--max_sample_concurrent` — per-eval user/sample concurrency (default 3).
-- `--progressive` / `--no-progressive` (default off, matching this baseline's
-  historical single-pass behavior) — run the staged stage1→2→3 gauntlet
-  (with threshold elimination) instead of one single-stage pass. Sizes come
-  from the config `stages` block (or family `DEFAULT_STAGES`).
-- `--sampling-seed` (default `42`) — base seed for the (fixed step-0) sample
-  this baseline evaluates. A no-op at whole-split (`null` sizes); it only
-  selects a subset when a size field caps.
-- `--no-memory-cache` — disable cross-stage Phase-1 memory reuse (on by
-  default).
+  cc bypasses the shared QA agent (see the next bullet).
+- `judge_model` — also passed as `qa_model` to `run_baseline` for
+  API-compatibility (`BaseWorkflow.__init__` requires one), but it is never
+  actually invoked to answer: `CCMemo.use_memory_to_answer` answers before
+  the shared QA agent would be reached.
 
-Examples:
+To change dataset, model, split, sizing, etc., edit those keys in your
+config yaml — e.g.:
 
-```bash
-# Config-driven run (sizes from the config's single_stage / stages)
-uv run python run.py \
-    --config config.example.yaml
-
-# Opus, one dataset (size via a config with single_stage: {n_users: 2})
-uv run python run.py \
-    --config my_cc.yaml --dataset dynamicmem --model opus
-
-# LongMemEval-m, search split (comparable to what the proposer itself sees)
-uv run python run.py \
-    --config my_cc.yaml --dataset longmemeval_m --split search
+```yaml
+# my_cc.yaml — Opus, DynamicMem, 2 users
+dataset: dynamicmem
+model: opus
+single_stage: {n_users: 2, n_checkpoints: 5, n_task_a: 5, n_task_c: 5}
 ```
+
+then `uv run python run.py --config my_cc.yaml`.
 
 ## Sizing (config file only)
 
-There are **no sizing CLI flags** — evaluation sizes are config-file keys
+There are **no CLI flags at all** — evaluation sizes are config-file keys
 resolved through the shared `common.evaluate` layer (the same one forge
 uses):
 

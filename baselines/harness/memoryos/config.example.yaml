@@ -2,14 +2,15 @@
 # memoryos (MemoryOS three-tier heat-based memory) baseline — exhaustive config.
 # Launch: uv run --project baselines/harness/memoryos python baselines/harness/memoryos/run.py \
 #             --config baselines/harness/memoryos/config.example.yaml
-# CLI flags override any key here (precedence: DEFAULT_CONFIG < this file < CLI).
+# This file is the ONLY parameter surface for run.py — it takes exactly one
+# flag (--config). There are no CLI overrides and no built-in defaults.
 #
-# STRICT-CONFIG (default on): with --config, EVERY key below must be present
-# (a null value is allowed). Missing keys abort the run listing what's absent.
-# Set strict_config: false (or pass --no-strict-config) to opt out.
+# EXACT CONFIG (always on): the YAML must list EVERY key below — and ONLY
+# those keys (a null value counts as listed). A missing key OR an unknown
+# key aborts the run, naming the problem; sizing (single_stage/stages) is
+# checked to the leaf. Validated by common.config.validate_exact_config.
 # =============================================================================
 
-strict_config: true            # require this file to list every parameter (default true)
 
 dataset: locomo                # which benchmark: dynamicmem | locomo | longmemeval_s | longmemeval_m (MemoryOS reports on LoCoMo)
 split: test                    # test | search (search = the training split used during evolution)
@@ -42,9 +43,9 @@ llm_model: gpt-5-mini          # shared QA agent — answers using MemoryOS's re
 judge_model: gpt-5-mini        # LLM-as-judge model scoring predicted vs reference answers
 max_sample_concurrent: 3       # asyncio concurrency across users/samples (higher = faster, more API load)
 
-# --- Sizing (config-file only; no CLI flags). BOTH keys must be present; the
-#     inactive one is null. Under strict mode the active block's leaves must all
-#     be listed (a null leaf = whole split for that dimension). ---
+# --- Sizing (config-file only; there is no other parameter surface). BOTH keys
+#     must be present; the inactive one is null. Every leaf field in the active
+#     block must be listed (a null leaf = whole split for that dimension). ---
 # progressive: false → single_stage sizes the one pass (locomo native fields):
 single_stage:
   n_conversations: null        # locomo: null = all conversations in the split; e.g. 2 to cap

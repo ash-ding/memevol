@@ -19,64 +19,37 @@ try:
     from dotenv import load_dotenv; load_dotenv(PROJECT_ROOT / ".env")
 except ImportError:
     pass
-from baselines.registry import DATASETS
 from baselines.harness.eval_utility import run_baseline, print_result
 from baselines.harness.cc.memo import CCMemo, MODEL_ALIASES
-from common.config import resolve_config
+from common.config import load_config_file, validate_exact_config
 
-DEFAULT_CONFIG = {
-    # Sizing lives in the config file only (native YAML dicts), never on the CLI:
-    #   single_stage: {...}  (progressive: false) — REQUIRED for the single pass
-    #   stages: {...}        (progressive: true)  — overrides family DEFAULT_STAGES
-    "dataset": "dynamicmem", "split": "test",
-    "progressive": False, "sampling_seed": 42,
-    "single_stage": None, "stages": None, "memory_cache": True,
-    "model": "sonnet", "max_turns": 30, "judge_model": "gpt-5-mini",
-    "max_sample_concurrent": 3,
-    "strict_config": True,
-}
+# The config file must list EXACTLY these keys (a null value counts as
+# listed; sizing leaves are checked separately) — no CLI overrides, no
+# built-in defaults. Copy config.example.yaml and edit.
+REQUIRED_KEYS = frozenset({
+    "dataset",
+    "split",
+    "progressive",
+    "sampling_seed",
+    "single_stage",
+    "stages",
+    "memory_cache",
+    "model",
+    "max_turns",
+    "judge_model",
+    "max_sample_concurrent",
+})
 
 
 def main():
     p = argparse.ArgumentParser(description="cc (Claude Code) baseline — multi-dataset")
-    p.add_argument("--config", default=None, help="YAML config path (CLI flags override it)")
-    p.add_argument("--strict-config", dest="strict_config",
-                   action=argparse.BooleanOptionalAction, default=None,
-                   help="Require the config to list every parameter (default on when --config is given). "
-                        "--no-strict-config to disable.")
-    p.add_argument("--dataset", default=None, choices=DATASETS)
-    p.add_argument("--split", default=None, choices=["test", "search"])
-    p.add_argument("--progressive", action=argparse.BooleanOptionalAction, default=None)
-    p.add_argument("--sampling-seed", dest="sampling_seed", type=int, default=None)
-    p.add_argument("--memory-cache", dest="memory_cache", action=argparse.BooleanOptionalAction, default=None,
-                   help="Cross-stage Phase-1 memory reuse (default on). --no-memory-cache to disable.")
-    p.add_argument("--model", default=None,
-                   help="Model: claude-sonnet-4-20250514, claude-opus-4-20250514, sonnet, or opus")
-    p.add_argument("--max_turns", type=int, default=None, help="Max tool-use turns per QA question")
-    p.add_argument("--judge_model", default=None)
-    p.add_argument("--max_sample_concurrent", type=int, default=None)
+    p.add_argument("--config", required=True,
+                   help="YAML config file — the ONLY parameter surface "
+                        "(no CLI overrides). Copy config.example.yaml and edit.")
     a = p.parse_args()
 
-    cli = {
-        "dataset": a.dataset, "split": a.split,
-        "progressive": a.progressive, "sampling_seed": a.sampling_seed,
-        "memory_cache": a.memory_cache,
-        "model": a.model, "max_turns": a.max_turns, "judge_model": a.judge_model,
-        "max_sample_concurrent": a.max_sample_concurrent,
-        "strict_config": a.strict_config,
-    }
-    cfg = resolve_config(DEFAULT_CONFIG, a.config, cli)
-
-    from common.config import strict_on, load_config_file, provided_keys, require_present_keys, ConfigCompletenessError
-    from common.evaluate import missing_sizing_config
-    if strict_on(a.config, cfg):
-        _fc = load_config_file(a.config)
-        require_present_keys(provided_keys(_fc, cli),
-                             set(DEFAULT_CONFIG) - {"strict_config"}, context="cc config")
-        _miss = missing_sizing_config(cfg["dataset"], _fc, cfg["progressive"], path_prefix="")
-        if _miss:
-            raise ConfigCompletenessError(f"cc config: missing sizing leaf(s): {sorted(_miss)} "
-                                          f"(strict-config mode; set strict_config: false to disable)")
+    cfg = validate_exact_config(load_config_file(a.config) or {},
+                                REQUIRED_KEYS, context="cc config")
 
     model = MODEL_ALIASES.get(cfg["model"], cfg["model"])
     memo_config = dict(

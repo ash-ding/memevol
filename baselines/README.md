@@ -69,9 +69,10 @@ bind every method here:
   being comparable.
 - **Split discipline.** Development, tuning, and any internal
   search/self-improvement loop run on the **search split** only
-  (`--split search` / `--status search`). The **test split** is touched
-  exactly once per reported number (`--split test`, the default for
-  harness runners — same data path as `forge.heldout`).
+  (`split: search` in a harness baseline's config, `--status search` for
+  alma). The **test split** is touched exactly once per reported number
+  (`split: test`, the default in every harness `config.example.yaml` — same
+  data path as `forge.heldout`).
 - **Dependency direction is one-way.** Methods import `common/` (and
   `datasets/` / `baselines/registry.py`); `common/` NEVER imports a method;
   methods NEVER import each other. Method-specific design vocabulary lives
@@ -108,58 +109,59 @@ directories (gitignored).
 
 ## Shared progressive sampling, seeding & memory cache
 
-Every baseline (`evolve/alma` and every `harness/*`) now shares the same
-evaluation-sampling infrastructure as forge, via two global flags plus a
-cross-stage memory cache — not a re-implementation per baseline, but the
-literal same `common/` modules forge uses:
+Every baseline (`evolve/alma` and every `harness/*`) shares the same
+evaluation-sampling infrastructure as forge — the literal same `common/`
+modules forge uses — via two flags/keys plus a cross-stage memory cache.
+**alma** still exposes these as CLI flags layered over its config (see
+"Configuration"); **harness baselines** (2026-08-06) have NO CLI parameter
+surface at all — every one of these is a config-file key only, validated
+exactly by `common.config.validate_exact_config`:
 
-- **`--progressive`** (alma default `true`, `harness/*/run.py` default
-  `false` — matching each side's historical behavior): drives the candidate
-  through the shared stage1→2→3 gauntlet (`common.evaluate.evaluate_memo`)
-  instead of a single one-shot pass. Sizes come from the family
-  `DEFAULT_STAGES` (in `common/evaluate.py`) unless overridden by a
-  `stages:` block in the `--config` YAML — for BOTH alma and harness, sizing
-  is config-file only (no `--stages`/`--stage-spec` JSON CLI flag anywhere;
-  see "Configuration"). The single-pass path (`--no-progressive`) instead
-  REQUIRES a `single_stage:` block in the config (a null/omitted field = the
-  whole split for that dimension; an absent block raises a clear `ValueError`,
-  never a silent whole-split). `evaluate_memo`'s promotion/elimination logic,
+- **`progressive`** (alma default `true`, harness config default `false` —
+  matching each side's historical behavior): drives the candidate through
+  the shared stage1→2→3 gauntlet (`common.evaluate.evaluate_memo`) instead
+  of a single one-shot pass. Sizes come from the family `DEFAULT_STAGES`
+  (in `common/evaluate.py`) unless overridden by a `stages:` block in the
+  config — for BOTH alma and harness, sizing is config-file only (no
+  `--stages`/`--stage-spec` JSON CLI flag anywhere; see "Configuration").
+  The single-pass path (`progressive: false`) instead REQUIRES a
+  `single_stage:` block in the config (a null/omitted field = the whole
+  split for that dimension; an absent block raises a clear error, never a
+  silent whole-split). `evaluate_memo`'s promotion/elimination logic,
   `stages.json` shape, and cost accounting are IDENTICAL to forge's — it is
   the literal same function; only the ISOLATION wrapper differs (forge runs
   evaluate_memo inside a Singularity container, alma inside a plain
   subprocess, harness baselines call it directly in-process).
-- **`--random_sample`** (alma only — underscore,
+- **`random_sample`** (alma only, CLI `--random_sample` — underscore,
   `argparse.BooleanOptionalAction` so the negation is
-  `--no-random_sample`; harness baselines have no step loop, so this flag
-  isn't exposed there; default `false`): whether each search STEP
-  evaluates a different, reproducibly seeded task subset (via
-  `common.sampling.derive_sample_seed`) instead of the same fixed subset
-  every step.
-- **`--sampling_seed`** / **`--sampling-seed`** (default `42`): the base
-  seed. alma combines it with `(step_index, dataset)` when `random_sample`
-  is on; harness baselines (no steps) use it directly as a single fixed
-  seed for their one-shot sample.
-- **Memory cache** (default on): alma uses `--memory_cache` /
-  `--no-memory_cache` (underscore, `BooleanOptionalAction`); `harness/*`
-  runners expose only `--no-memory-cache` (hyphen, `store_false` — the
-  positive form needs no flag since the default is already on). When
-  `--progressive` is set, the SAME `common/memory_cache.py` mechanism
-  forge's evaluator uses is mounted in the baseline's in-process stage
-  runner too, so stage2/stage3 reuse stage1's built Phase-1 memory instead
-  of re-ingesting from scratch — a real win for expensive builders (e.g.
+  `--no-random_sample`; harness baselines have no step loop, so this
+  isn't exposed there at all — not as a flag, not as a config key; default
+  `false`): whether each search STEP evaluates a different, reproducibly
+  seeded task subset (via `common.sampling.derive_sample_seed`) instead of
+  the same fixed subset every step.
+- **`sampling_seed`** (default `42`; alma CLI `--sampling_seed`, harness
+  config key `sampling_seed:`): the base seed. alma combines it with
+  `(step_index, dataset)` when `random_sample` is on; harness baselines (no
+  steps) use it directly as a single fixed seed for their one-shot sample.
+- **Memory cache** (default on): alma uses CLI `--memory_cache` /
+  `--no-memory_cache` (underscore, `BooleanOptionalAction`); harness
+  baselines set the config key `memory_cache: true|false` (no flag). When
+  `progressive` is set, the SAME `common/memory_cache.py` mechanism forge's
+  evaluator uses is mounted in the baseline's in-process stage runner too,
+  so stage2/stage3 reuse stage1's built Phase-1 memory instead of
+  re-ingesting from scratch — a real win for expensive builders (e.g.
   A-mem's per-note LLM analysis + evolution).
 
-CLI surface per side:
+Surface per side:
 
 ```bash
-# harness (cc / hipporag2 / amem run.py) — no --random_sample (no step loop);
-# sizes (stages: for progressive, single_stage: for one-shot) live in the
-# --config YAML, never on the CLI
-cd baselines/harness/hipporag2 && uv run python run.py \
-    --config config.example.yaml \
-    --dataset locomo --progressive --sampling-seed 42
+# harness (cc / hipporag2 / amem / ... run.py) — exactly one flag, --config;
+# progressive / sampling_seed / stages / single_stage all live in the YAML
+cd baselines/harness/hipporag2 && uv run python run.py --config my_hr.yaml
+# my_hr.yaml: dataset: locomo, progressive: true, sampling_seed: 42, ...
 
-# alma (evolve/alma/run.py) — has a step loop, so random_sample applies
+# alma (evolve/alma/run.py) — has a step loop and a real CLI, so
+# random_sample applies and flags still layer over the config
 cd baselines/evolve/alma && uv run python run.py \
     --status search --progressive --random_sample --sampling_seed 42 --steps 10
 ```
@@ -173,68 +175,101 @@ committed (a link from a tracked file would be dead on a fresh clone).
 
 ## Configuration
 
-All baselines (`evolve/alma` and every `harness/{cc,hipporag2,amem,simplemem}`)
-accept a `--config <yaml>` flag, resolved through the same shared helper
-forge uses:
+The two sides of `baselines/` resolve their config differently (2026-08-06):
+**alma** keeps the original layered scheme (it has a real CLI with runtime
+knobs like `--status`/`--steps`/`--memo_SHA`); every **harness baseline**
+(`cc`, `hipporag2`, `amem`, `lightmem`, `simplemem`, `zep`, `mem0`,
+`memoryos`) is now **config-file ONLY** — `run.py` takes exactly one flag,
+`--config <yaml>` (required), and there is no built-in `DEFAULT_CONFIG` to
+fall back to.
+
+### alma (evolve baseline) — layered, unchanged
 
 - **[`common/config.py`](../common/config.py)** — `deep_merge(base, overlay)`
   (in-place recursive dict merge) + `resolve_config(defaults, config_path,
-  cli_overrides)`. Precedence, lowest → highest: each `run.py`'s own
+  cli_overrides)`. Precedence, lowest → highest: `run.py`'s own
   `DEFAULT_CONFIG` dict < the YAML at `--config` (deep-merged in, must be a
   mapping) < CLI flags (every flag defaults to `None`, a "not given"
   sentinel, so only flags actually passed on the command line override the
   YAML — an unset flag never clobbers a YAML value with `None`). forge
   reuses the same `deep_merge` (`forge/orchestrator.py` imports it as
-  `common.config.deep_merge`) instead of keeping its own copy, so there is
-  exactly one merge implementation shared by forge and every baseline.
-- **`config.example.yaml`** — each method directory ships one, alongside its
-  `run.py`, documenting every field with inline comments:
-  [`evolve/alma/config.example.yaml`](evolve/alma/config.example.yaml),
+  `common.config.deep_merge`), so there is exactly one merge implementation
+  shared by forge and alma.
+- **Strict config — no silent defaults** (2026-07-26, default ON): when
+  alma is launched with `--config`, the config file MUST list EVERY
+  parameter (every key in `DEFAULT_CONFIG`) — a `null` value counts as
+  listed. A missing key aborts the run with a `ConfigCompletenessError`
+  naming exactly which keys are absent, so a run can never silently pick up
+  a hidden default (`sampling_seed`, `judge_model`, `model`, `progressive`,
+  …) you didn't choose. [`evolve/alma/config.example.yaml`](evolve/alma/config.example.yaml)
+  is an exhaustive template that passes strict as-is — copy it and edit.
+  The active sizing block is checked to the LEAF (every native size field
+  must be listed; a null leaf = whole split for that dimension). Escape
+  hatch: `strict_config: false` in the YAML, or `--no-strict-config` on the
+  CLI, disables the check for that run. Strict triggers ONLY with
+  `--config` — pure-CLI runs are unaffected. (forge honors the same
+  `strict_config` knob for `--config` runs, validated against its own
+  nested required-schema; `forge.heldout` uses a smaller schema matching
+  its reduced config surface.)
+
+```bash
+# alma — config file, with a CLI override (CLI wins on conflicts)
+cd baselines/evolve/alma && uv run python run.py \
+    --config config.example.yaml --sampling_seed 7
+```
+
+### harness baselines — config-file only, no CLI overrides
+
+Every `harness/<name>/run.py` takes exactly one flag: `--config <yaml>`
+(required). There is no `DEFAULT_CONFIG`, so there is nothing to layer —
+the YAML you pass **is** the run's entire configuration, and it must list
+EXACTLY the keys that `run.py`'s `REQUIRED_KEYS` frozenset expects (dataset,
+split, progressive, sampling_seed, single_stage, stages, memory_cache, the
+method's own knobs, and the shared model/judge/concurrency keys):
+
+- **[`common/config.py::validate_exact_config`](../common/config.py)** —
+  `validate_exact_config(cfg, required, context)`: `cfg` must be a mapping
+  that lists every key in `required` and NO OTHER keys. A `null` value
+  counts as listed. A missing key OR an unknown key (typo, stale setting)
+  aborts the run with a `ConfigCompletenessError` naming every problem at
+  once, before anything executes. The active sizing block (`single_stage`
+  when `progressive: false`, `stages` when `progressive: true`) is checked
+  to the LEAF via `common.evaluate.missing_sizing_config` — a null leaf
+  means "whole split" for that dimension, but the leaf must still be
+  *listed*.
+- **There is no `strict_config` knob here** — completeness is
+  unconditional (there's no `DEFAULT_CONFIG` to opt back into), so the flag
+  was removed entirely from every harness `config.example.yaml` /
+  `config.paper.yaml`.
+- **`config.example.yaml`** — each harness directory ships one, documenting
+  every required key inline; two (`mem0`, `memoryos`) also ship a
+  `config.paper.yaml` reproducing the original paper's LoCoMo setup. Copy
+  one to start a real run instead of hand-assembling a config from scratch:
   [`harness/cc/config.example.yaml`](harness/cc/config.example.yaml),
   [`harness/hipporag2/config.example.yaml`](harness/hipporag2/config.example.yaml),
   [`harness/amem/config.example.yaml`](harness/amem/config.example.yaml),
-  [`harness/simplemem/config.example.yaml`](harness/simplemem/config.example.yaml).
-  Copy one to start a real run instead of hand-assembling a CLI invocation.
-- **alma's entrypoint is `run.py`** (renamed from its old script name) —
-  every baseline is now invoked the same way: `evolve/alma/run.py`,
-  `harness/cc/run.py`, `harness/hipporag2/run.py`, `harness/amem/run.py`,
-  `harness/simplemem/run.py`.
-- **Sampling sizes are config-file only** across ALL baselines (and
-  forge) — the old `--stages` / `--stage-spec` JSON-string CLI flags were
-  removed. Both `stages:` (progressive) and `single_stage:` (one-shot) are
-  native YAML mappings in the `--config` file: `stages: {stage1: {...}, ...}`
-  drives the gauntlet; `single_stage: {n_qa: null, ...}` sizes the single pass
-  (required when `progressive: false`; a null field = whole split for that
-  dimension). The unified resolver is
-  `common.evaluate.resolve_sampling_plan` (`progressive` → `stage_plan`;
-  `not progressive` → the `single_stage` wire spec, raising if the block is
-  absent) — shared verbatim by forge and every baseline.
-- **Strict config — no silent defaults** (2026-07-26, default ON): when a
-  baseline is launched with `--config`, the config file MUST list EVERY
-  parameter (every key in that `run.py`'s `DEFAULT_CONFIG`) — a `null` value
-  counts as listed. A missing key aborts the run with a
-  `ConfigCompletenessError` naming exactly which keys are absent, so an
-  experiment can never silently pick up a hidden default (`sampling_seed`,
-  `judge_model`, `model`, `progressive`, …) you didn't choose. The shipped
-  `config.example.yaml` files are exhaustive templates that pass strict as-is —
-  copy one and edit. The active sizing block is checked to the LEAF (every
-  native size field must be listed; a null leaf = whole split for that
-  dimension). Escape hatch: `strict_config: false` in the YAML, or
-  `--no-strict-config` on the CLI, disables the check for that run. Strict
-  triggers ONLY with `--config` — pure-CLI runs are unaffected. (forge honors
-  the same `strict_config` knob for `--config` runs, validated against its own
-  nested required-schema; `forge.heldout` uses a smaller schema matching its
-  reduced config surface.)
+  [`harness/lightmem/config.example.yaml`](harness/lightmem/config.example.yaml),
+  [`harness/simplemem/config.example.yaml`](harness/simplemem/config.example.yaml),
+  [`harness/zep/config.example.yaml`](harness/zep/config.example.yaml),
+  [`harness/mem0/config.example.yaml`](harness/mem0/config.example.yaml),
+  [`harness/memoryos/config.example.yaml`](harness/memoryos/config.example.yaml).
+- **Sampling sizes are config-file only** across ALL baselines (and forge)
+  — there is no `--stages` / `--stage-spec` JSON-string CLI flag anywhere,
+  and now no sizing CLI flag of any kind for harness baselines either. Both
+  `stages:` (progressive) and `single_stage:` (one-shot) are native YAML
+  mappings: `stages: {stage1: {...}, ...}` drives the gauntlet;
+  `single_stage: {n_qa: null, ...}` sizes the single pass (required when
+  `progressive: false`; a null field = whole split for that dimension). The
+  unified resolver is `common.evaluate.resolve_sampling_plan`
+  (`progressive` → `stage_plan`; `not progressive` → the `single_stage`
+  wire spec, raising if the block is absent) — shared verbatim by forge,
+  alma, and every harness baseline.
 
 ```bash
-# alma — config file only
-cd baselines/evolve/alma && uv run python run.py \
-    --config config.example.yaml
-
-# harness baseline — config file + a CLI override (CLI wins on conflicts)
-cd baselines/harness/hipporag2 && uv run python run.py \
-    --config config.example.yaml \
-    --sampling-seed 7
+# harness baseline — copy the example, edit it, point --config at your copy
+cp baselines/harness/hipporag2/config.example.yaml baselines/harness/hipporag2/my_hr.yaml
+$EDITOR baselines/harness/hipporag2/my_hr.yaml   # e.g. change dataset:, sampling_seed:
+cd baselines/harness/hipporag2 && uv run python run.py --config my_hr.yaml
 ```
 
 ## Existing baselines
@@ -297,13 +332,12 @@ Skips memory-architecture design entirely. `CCMemo`
   shared QA agent. This is the one baseline that overrides the answer hook.
 
 ```bash
-cd baselines/harness/cc && uv run python run.py \
-    --config config.example.yaml \
-    --dataset locomo --model claude-sonnet-4-20250514
+cd baselines/harness/cc && uv run python run.py --config config.example.yaml
 
-# sizes live in the --config YAML (e.g. single_stage: {n_users: 2} for 2 dynamicmem users)
-uv run python run.py \
-    --config my_cc.yaml --dataset dynamicmem
+# edit dataset:/model:/single_stage: in your own copy, e.g. locomo + Sonnet:
+#   dataset: locomo
+#   model: claude-sonnet-4-20250514
+uv run python run.py --config my_cc.yaml
 ```
 
 Useful as a reference point: how well does a strong agent do **with no
@@ -326,14 +360,15 @@ wraps [HippoRAG2](https://github.com/OSU-NLP-Group/HippoRAG)'s pipeline:
   an end-to-end HippoRAG pipeline comparison.
 
 ```bash
-# OpenAI API embedding (no GPU needed)
-cd baselines/harness/hipporag2 && uv run python run.py \
-    --dataset locomo --embedding text-embedding-3-small
+# OpenAI API embedding (no GPU needed) — config.example.yaml default
+cd baselines/harness/hipporag2 && uv run python run.py --config config.example.yaml
 
-# Local GPU embedding (NVIDIA)
-uv run python run.py \
-    --dataset longmemeval_s --embedding nvidia/NV-Embed-v2 \
-    --embedding_batch_size 2 --embedding_dtype float16
+# Local GPU embedding (NVIDIA) — edit these keys in your config copy:
+#   dataset: longmemeval_s
+#   embedding: nvidia/NV-Embed-v2
+#   embedding_batch_size: 2
+#   embedding_dtype: float16
+uv run python run.py --config my_hr.yaml
 ```
 
 Artifacts: `baselines/harness/hipporag2/{outputs/, results/<dataset>/<split>/}`.
@@ -358,13 +393,13 @@ Artifacts: `baselines/harness/hipporag2/{outputs/, results/<dataset>/<split>/}`.
 
 ```bash
 # faithful defaults (LLMlingua-2 pre-compress + topic-seg, MiniLM embedder; needs a GPU)
-cd baselines/harness/lightmem && uv run python run.py \
-    --config config.example.yaml --dataset locomo
+cd baselines/harness/lightmem && uv run python run.py --config config.example.yaml
 
-# CPU (slow) — move the local models off the GPU
-uv run python run.py \
-    --config my_lightmem.yaml --dataset dynamicmem \
-    --llmlingua_device cpu --embedding_device cpu
+# CPU (slow) — edit these keys in your config copy:
+#   dataset: dynamicmem
+#   llmlingua_device: cpu
+#   embedding_device: cpu
+uv run python run.py --config my_lightmem.yaml
 ```
 
 Artifacts: `baselines/harness/lightmem/{outputs/, results/<dataset>/<split>/}`.
@@ -388,13 +423,12 @@ boundary and provenance.
 
 ```bash
 # faithful Qwen3-0.6B embedder (benefits from GPU)
-cd baselines/harness/simplemem && uv run python run.py \
-    --config config.example.yaml --dataset locomo
+cd baselines/harness/simplemem && uv run python run.py --config config.example.yaml
 
-# light MiniLM fallback embedder (no GPU)
-uv run python run.py \
-    --config my_simplemem.yaml --dataset dynamicmem \
-    --embedding_model all-MiniLM-L6-v2
+# light MiniLM fallback embedder (no GPU) — edit these keys in your config copy:
+#   dataset: dynamicmem
+#   embedding_model: all-MiniLM-L6-v2
+uv run python run.py --config my_simplemem.yaml
 ```
 
 Artifacts: `baselines/harness/simplemem/{outputs/, results/<dataset>/<split>/}`.
@@ -423,9 +457,8 @@ not Graphiti's default Neo4j server. Embedder/reranker default to paper-faithful
 **BGE-m3** (config-toggleable to OpenAI). Requires **Python 3.12+**.
 
 ```bash
-cd baselines/harness/zep && uv run python run.py \
-    --config config.example.yaml --dataset locomo
-# CPU-only box: add device: cpu in the config (or --device cpu)
+cd baselines/harness/zep && uv run python run.py --config config.example.yaml
+# CPU-only box: set device: cpu in your config copy
 ```
 
 Artifacts: `baselines/harness/zep/{outputs/, results/<dataset>/<split>/}`. See
@@ -533,39 +566,68 @@ Notes on the RETRIEVE return dict:
 
 ### Step 2 — `run.py`: the CLI entry
 
-Copy [harness/hipporag2/run.py](harness/hipporag2/run.py) (~40 lines) and
-adjust the flags your system needs. Core shape:
+Copy [harness/cc/run.py](harness/cc/run.py) (~50 lines) and adjust
+`REQUIRED_KEYS` + the `memo_config` mapping for your system's own knobs.
+Harness `run.py`s (2026-08-06) take exactly one flag, `--config`, and have
+NO `DEFAULT_CONFIG` — the YAML must list every required key exactly, checked
+by `common.config.validate_exact_config`. Core shape:
 
 ```python
-from baselines.registry import DATASETS
+import argparse, asyncio
+from pathlib import Path
 from baselines.harness.eval_utility import run_baseline, print_result
 from baselines.harness.<name>.memo import MyMemo
-from common.config import resolve_config
+from common.config import load_config_file, validate_exact_config
 
-# Evaluation SIZES come from the --config YAML only (no sizing CLI flags):
-# single_stage (progressive: false) or stages (progressive: true).
-p.add_argument("--config", default=None)
-p.add_argument("--dataset", default=None, choices=sorted(DATASETS))
-p.add_argument("--split", default=None, choices=["test", "search"])
-p.add_argument("--progressive", action=argparse.BooleanOptionalAction, default=None)
-...
-cfg = resolve_config(DEFAULT_CONFIG, a.config, cli)   # defaults < YAML < CLI
-result = asyncio.run(run_baseline(
-    dataset=cfg["dataset"], split=cfg["split"],
-    single_stage=cfg["single_stage"], stages=cfg["stages"],   # native YAML dicts
-    memo_class=MyMemo, memo_config=dict(top_k=cfg["top_k"], ...),
-    qa_model=cfg["model"], judge_model=cfg["judge_model"],
-    out_dir=Path(__file__).resolve().parent / "results" / cfg["dataset"] / cfg["split"],
-    progressive=cfg["progressive"], sampling_seed=cfg["sampling_seed"],
-))
-print_result(cfg["dataset"], cfg["progressive"], result, out_dir)
+# The config file must list EXACTLY these keys (a null value counts as
+# listed; sizing leaves are checked separately) — no CLI overrides, no
+# built-in defaults. Copy config.example.yaml and edit.
+REQUIRED_KEYS = frozenset({
+    "dataset", "split", "progressive", "sampling_seed",
+    "single_stage", "stages", "memory_cache",
+    "top_k",                       # ... your system's own knobs ...
+    "llm_model", "judge_model", "max_sample_concurrent",
+})
+
+
+def main():
+    p = argparse.ArgumentParser(description="MyMemo baseline — multi-dataset")
+    p.add_argument("--config", required=True,
+                   help="YAML config file — the ONLY parameter surface "
+                        "(no CLI overrides). Copy config.example.yaml and edit.")
+    a = p.parse_args()
+
+    cfg = validate_exact_config(load_config_file(a.config) or {},
+                                REQUIRED_KEYS, context="mymemo config")
+
+    memo_config = dict(top_k=cfg["top_k"])
+    out_dir = Path(__file__).resolve().parent / "results" / cfg["dataset"] / cfg["split"]
+    result = asyncio.run(run_baseline(
+        dataset=cfg["dataset"], split=cfg["split"],
+        single_stage=cfg["single_stage"], stages=cfg["stages"],   # native YAML dicts
+        memo_class=MyMemo, memo_config=memo_config,
+        qa_model=cfg["llm_model"], judge_model=cfg["judge_model"],
+        out_dir=out_dir, max_sample_concurrent=cfg["max_sample_concurrent"],
+        progressive=cfg["progressive"], sampling_seed=cfg["sampling_seed"],
+        memory_cache=cfg["memory_cache"],
+    ))
+    print_result(cfg["dataset"], cfg["progressive"], result, out_dir)
+
+
+if __name__ == "__main__":
+    main()
 ```
 
 `memo_config` reaches your instances through the constructor: the framework
 creates a FRESH memo per user/conversation as `MyMemo(config=memo_config)`,
 and each instance keeps its own private copy at `self.config` (never share
 mutable state across users). No `__init__.py` files needed (namespace
-packages).
+packages). Also write a `config.example.yaml` alongside `run.py`,
+documenting every `REQUIRED_KEYS` entry inline (copy an existing baseline's
+for the shared boilerplate: `dataset`/`split`/`progressive`/
+`sampling_seed`/`single_stage`/`stages`/`memory_cache` are identical across
+every harness baseline; only your method's own knobs + header comment
+differ).
 
 ### Step 3 — dependencies
 
@@ -587,16 +649,29 @@ through `run_baseline`.
 
 ### Step 4 — validate on the SEARCH split (cheap, iterate freely)
 
-```bash
-# One conversation, a handful of QAs — does the adapter run end-to-end?
-# Size via a --config YAML with `single_stage: {n_conversations: 1, n_qa: 3}`.
-cd baselines/harness/<name> && uv run python run.py \
-    --config my_baseline.yaml --dataset locomo --split search
+Sizing and split are config keys, not flags — write a small smoke config
+per dataset and point `--config` at it:
 
-# DynamicMem protocol check — 1 user exercises the checkpoint interleaving
-# (config YAML: `single_stage: {n_users: 1}`)
-uv run python run.py \
-    --config my_baseline.yaml --dataset dynamicmem --split search
+```yaml
+# smoke_locomo.yaml — one conversation, a handful of QAs — does the
+# adapter run end-to-end?
+dataset: locomo
+split: search
+single_stage: {n_conversations: 1, n_qa: 3}
+# ... plus every other REQUIRED_KEYS entry (see config.example.yaml) ...
+```
+
+```yaml
+# smoke_dm.yaml — DynamicMem protocol check: 1 user exercises the
+# checkpoint interleaving
+dataset: dynamicmem
+split: search
+single_stage: {n_users: 1, n_checkpoints: 1, n_task_a: 1, n_task_c: 1}
+```
+
+```bash
+cd baselines/harness/<name> && uv run python run.py --config smoke_locomo.yaml
+uv run python run.py --config smoke_dm.yaml
 ```
 
 Iterate here as much as you like — this is the split the main method
@@ -607,11 +682,13 @@ surfacing the right memory.
 
 ### Step 5 — final numbers on the TEST split
 
+`config.example.yaml` defaults to `split: test` with an all-null
+`single_stage` (whole split; = `forge.heldout` `progressive=false`) — run
+it as-is per dataset (edit `dataset:` between runs, or keep one config per
+dataset):
+
 ```bash
-# Whole test split (the default --split; = forge.heldout progressive=false)
-cd baselines/harness/<name> && uv run python run.py --dataset locomo
-uv run python run.py --dataset dynamicmem
-uv run python run.py --dataset longmemeval_s
+cd baselines/harness/<name> && uv run python run.py --config config.example.yaml
 ```
 
 Outputs land in `baselines/harness/<name>/results/<dataset>/test/`:

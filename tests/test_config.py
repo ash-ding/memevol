@@ -60,23 +60,20 @@ def test_resolve_non_mapping_yaml_raises():
     assert raised
 
 
-def test_amem_default_config_roundtrips_to_argparse_defaults():
-    # Backward-compat anchor: no --config, no CLI → DEFAULT_CONFIG unchanged,
-    # and DEFAULT_CONFIG equals the historical argparse defaults.
+def test_amem_config_file_only_surface():
+    # Harness baselines are config-file-ONLY (2026-08-06): run.py exposes
+    # REQUIRED_KEYS (no DEFAULT_CONFIG, no CLI overrides) and its
+    # config.example.yaml passes the exact-key validation as-is.
     try:
         import importlib
         m = importlib.import_module("baselines.harness.amem.run")
     except ImportError:
         print("    SKIP (amem deps unavailable in this venv)"); return
-    from common.config import resolve_config
-    d = m.DEFAULT_CONFIG
-    assert d["dataset"] == "locomo" and d["split"] == "test"
-    assert d["sampling_seed"] == 42 and d["memory_cache"] is True
-    assert d["progressive"] is False and d["retrieve_k"] == 10
-    assert d["amem_llm_model"] == "gpt-4o-mini"
-    # all-None overrides → identical to defaults
-    none_over = {k: None for k in d}
-    assert resolve_config(d, None, none_over) == d
+    from common.config import load_config_file, validate_exact_config
+    assert not hasattr(m, "DEFAULT_CONFIG")
+    assert "dataset" in m.REQUIRED_KEYS and "single_stage" in m.REQUIRED_KEYS
+    cfg = load_config_file("baselines/harness/amem/config.example.yaml")
+    validate_exact_config(cfg, m.REQUIRED_KEYS, "amem")  # no raise
 
 
 def test_require_present_keys_missing_raises():

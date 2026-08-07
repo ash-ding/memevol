@@ -45,24 +45,32 @@ dev/test only and cannot run zep.
 
 ## Usage
 
-    cd baselines/harness/zep && uv run python run.py \
-        --config config.example.yaml
-    uv run python run.py --config my_zep.yaml --dataset dynamicmem --split search
+    cd baselines/harness/zep && uv run python run.py --config config.example.yaml
 
 **Requires Python 3.12+** (falkordblite constraint; pinned via zep's own
 `.python-version`).
-Key flags: `--config` (YAML; CLI overrides it); `--retrieve_k` (default 20, the
-paper's top-k); `--embedder` (`bge-m3` paper-faithful local | `openai`);
-`--reranker` (`bge` paper-faithful cross-encoder | `openai`); `--device`
-(`cuda`|`cpu`, sentence-transformers device for BGE models); `--graph_llm_model`
-(default `gpt-4o-mini`, the paper's graph-construction LLM — keep a 4-series model);
-`--llm_model` / `--judge_model` (default `gpt-5-mini` — shared QA agent + judge,
-baseline convention); `--split`.
 
-Shared progressive-sampling flags (same as cc/hipporag2/amem): `--progressive` /
-`--no-progressive` (default off); `--sampling-seed` (default 42); `--no-memory-cache`.
-**Sizing is config-file only** — `single_stage` (progressive: false, REQUIRED) or
-`stages` (progressive: true). See `config.example.yaml`.
+`run.py` takes exactly one flag, `--config <yaml>` (required) — there is no
+other CLI surface. Every parameter lives in the config file:
+`config.example.yaml` documents each key inline — copy it, edit the values
+(e.g. `dataset: dynamicmem`, `split: search`), and point `--config` at your
+copy. The YAML must list EXACTLY the keys `run.py`'s `REQUIRED_KEYS`
+expects — a missing key OR an unknown key aborts the run before anything
+executes; a `null` value counts as listed.
+
+Keys worth calling out: `retrieve_k` (default 20, the paper's top-k);
+`embedder` (`bge-m3` paper-faithful local | `openai`); `reranker` (`bge`
+paper-faithful cross-encoder | `openai`); `device` (`cuda`|`cpu`,
+sentence-transformers device for BGE models); `graph_llm_model` (default
+`gpt-4o-mini`, the paper's graph-construction LLM — keep a 4-series model).
+The rest (`embedder_model`, `reranker_model`, `db_root`,
+`graph_llm_small_model`, `llm_model`, `judge_model`, `progressive`,
+`sampling_seed`, `memory_cache`) are documented inline in
+`config.example.yaml`.
+
+**Sizing is config-file only** (there is no sizing CLI surface either) —
+`single_stage` (progressive: false, REQUIRED) or `stages` (progressive:
+true). See `config.example.yaml`.
 
 ## Faithfulness boundary
 
@@ -87,7 +95,7 @@ Shared progressive-sampling flags (same as cc/hipporag2/amem): `--progressive` /
   DrvFs (`/mnt/c`, ...) and other 9p/network mounts → `RedisLiteServerStartError:
   redis-server process failed to start`. The store therefore defaults to the
   system temp dir (`/tmp`, ext4 on WSL2), NOT the repo's `outputs/`. Override with
-  `db_root` / `--db_root` (must be a native POSIX FS). Only the redislite store is
+  the `db_root` config key (must be a native POSIX FS). Only the redislite store is
   affected; `results/` traces still write under the repo.
 - **falkordblite maturity**: the embedded backend is newer than the Neo4j path.
   Each concurrent user spins its own embedded FalkorDB Lite store; teardown of the
@@ -96,12 +104,13 @@ Shared progressive-sampling flags (same as cc/hipporag2/amem): `--progressive` /
 ## Smoke verification (per code path)
 
 `_init_to_episodes` has three ingestion branches (app_logs / conversation /
-sessions); smoke on `--split search`, 1 sample each, confirming build → retrieve →
-QA runs, `invalid_users` is empty, and retrieved context is non-empty:
+sessions); smoke with `split: search` in the config, 1 sample each, confirming
+build → retrieve → QA runs, `invalid_users` is empty, and retrieved context
+is non-empty:
 
     cd baselines/harness/zep && uv run python run.py --config smoke_locomo.yaml
     uv run python run.py --config smoke_longmemeval.yaml
     uv run python run.py --config smoke_dynamicmem.yaml
 
 Smoke scores are single-sample sanity signals, NOT benchmark numbers. Real numbers
-belong on the `--split test` runs (touch the test split once per reported number).
+belong on `split: test` runs (touch the test split once per reported number).

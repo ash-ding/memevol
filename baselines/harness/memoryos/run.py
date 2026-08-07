@@ -17,96 +17,44 @@ try:
     from dotenv import load_dotenv; load_dotenv(PROJECT_ROOT / ".env")
 except ImportError:
     pass
-from baselines.registry import DATASETS
 from baselines.harness.eval_utility import run_baseline, print_result
 from baselines.harness.memoryos.memo import MemoryOSMemo
-from common.config import resolve_config
+from common.config import load_config_file, validate_exact_config
 
-DEFAULT_CONFIG = {
-    # Sizing lives in the config file only (native YAML dicts), never on the CLI:
-    #   single_stage: {...}  (progressive: false) — REQUIRED for the single pass
-    #   stages: {...}        (progressive: true)  — overrides family DEFAULT_STAGES
-    "dataset": "locomo",           # MemoryOS reports on LoCoMo (+ GVD, not in this repo)
-    "split": "test",
-    "progressive": False,
-    "sampling_seed": 42,
-    "single_stage": None,          # native YAML dict; REQUIRED when progressive: false
-    "stages": None,                # native YAML dict; overrides DEFAULT_STAGES when progressive: true
-    "memory_cache": True,
-    # --- MemoryOS internal knobs (vendored defaults; paper values in comments) ---
-    "memoryos_llm_model": "gpt-4o-mini",   # MemoryOS's own LLM: page/segment summarisation,
-                                           # keyword extraction, persona + knowledge distillation.
-                                           # The paper's headline numbers are on gpt-4o-mini.
-    "base_url": None,              # OpenAI-compatible base URL for MemoryOS's internal LLM (None = OpenAI)
-    "short_term_capacity": 7,      # STM dialogue-page queue length (paper: 7; vendored default: 10)
-    "mid_term_capacity": 200,      # max MTM segments before LFU eviction. Paper: 200 (vendored: 2000,
-                                   # which never binds at ~176 segments/conversation)
-    "mid_term_heat_threshold": 5.0,        # tau — Heat above which a segment is distilled into LPM (paper: 5)
-    "mid_term_similarity_threshold": 0.6,  # theta in F_score > theta for page->segment merge (paper: 0.6)
-    "retrieval_queue_capacity": 10,        # retrieved MTM pages per query. Paper: 10 on LoCoMo (vendored: 7)
-    "long_term_knowledge_capacity": 100,   # FIFO capacity of User KB / Assistant Traits (paper: 100)
-    # --- shared eval (baseline convention) ---
-    "llm_model": "gpt-5-mini",     # shared QA agent (answers from MemoryOS's retrieved units)
-    "judge_model": "gpt-5-mini",   # LLM-as-judge
-    "max_sample_concurrent": 3,
-    "strict_config": True,
-}
+# The config file must list EXACTLY these keys (a null value counts as
+# listed; sizing leaves are checked separately) — no CLI overrides, no
+# built-in defaults. Copy config.example.yaml and edit.
+REQUIRED_KEYS = frozenset({
+    "dataset",
+    "split",
+    "progressive",
+    "sampling_seed",
+    "single_stage",
+    "stages",
+    "memory_cache",
+    "memoryos_llm_model",
+    "base_url",
+    "short_term_capacity",
+    "mid_term_capacity",
+    "mid_term_heat_threshold",
+    "mid_term_similarity_threshold",
+    "retrieval_queue_capacity",
+    "long_term_knowledge_capacity",
+    "llm_model",
+    "judge_model",
+    "max_sample_concurrent",
+})
 
 
 def main():
     p = argparse.ArgumentParser(description="MemoryOS baseline — multi-dataset")
-    p.add_argument("--config", default=None, help="YAML config path (CLI flags override it)")
-    p.add_argument("--strict-config", dest="strict_config",
-                   action=argparse.BooleanOptionalAction, default=None,
-                   help="Require the config to list every parameter (default on when --config is given). "
-                        "--no-strict-config to disable.")
-    p.add_argument("--dataset", default=None, choices=DATASETS)
-    p.add_argument("--split", default=None, choices=["test", "search"])
-    p.add_argument("--progressive", action=argparse.BooleanOptionalAction, default=None)
-    p.add_argument("--sampling-seed", dest="sampling_seed", type=int, default=None)
-    p.add_argument("--memory-cache", dest="memory_cache", action=argparse.BooleanOptionalAction, default=None,
-                   help="Cross-stage Phase-1 memory reuse (default on). --no-memory-cache to disable.")
-    p.add_argument("--memoryos_llm_model", default=None,
-                   help="MemoryOS's internal LLM (summarisation + persona/knowledge distillation).")
-    p.add_argument("--base_url", default=None, help="OpenAI-compatible base URL for MemoryOS's internal LLM")
-    p.add_argument("--short_term_capacity", type=int, default=None)
-    p.add_argument("--mid_term_capacity", type=int, default=None)
-    p.add_argument("--mid_term_heat_threshold", type=float, default=None)
-    p.add_argument("--mid_term_similarity_threshold", type=float, default=None)
-    p.add_argument("--retrieval_queue_capacity", type=int, default=None)
-    p.add_argument("--long_term_knowledge_capacity", type=int, default=None)
-    p.add_argument("--llm_model", default=None)    # shared QA agent
-    p.add_argument("--judge_model", default=None)
-    p.add_argument("--max_sample_concurrent", type=int, default=None)
+    p.add_argument("--config", required=True,
+                   help="YAML config file — the ONLY parameter surface "
+                        "(no CLI overrides). Copy config.example.yaml and edit.")
     a = p.parse_args()
 
-    cli = {
-        "dataset": a.dataset, "split": a.split,
-        "progressive": a.progressive, "sampling_seed": a.sampling_seed,
-        "memory_cache": a.memory_cache,
-        "memoryos_llm_model": a.memoryos_llm_model, "base_url": a.base_url,
-        "short_term_capacity": a.short_term_capacity,
-        "mid_term_capacity": a.mid_term_capacity,
-        "mid_term_heat_threshold": a.mid_term_heat_threshold,
-        "mid_term_similarity_threshold": a.mid_term_similarity_threshold,
-        "retrieval_queue_capacity": a.retrieval_queue_capacity,
-        "long_term_knowledge_capacity": a.long_term_knowledge_capacity,
-        "llm_model": a.llm_model, "judge_model": a.judge_model,
-        "max_sample_concurrent": a.max_sample_concurrent,
-        "strict_config": a.strict_config,
-    }
-    cfg = resolve_config(DEFAULT_CONFIG, a.config, cli)
-
-    from common.config import strict_on, load_config_file, provided_keys, require_present_keys, ConfigCompletenessError
-    from common.evaluate import missing_sizing_config
-    if strict_on(a.config, cfg):
-        _fc = load_config_file(a.config)
-        require_present_keys(provided_keys(_fc, cli),
-                             set(DEFAULT_CONFIG) - {"strict_config"}, context="memoryos config")
-        _miss = missing_sizing_config(cfg["dataset"], _fc, cfg["progressive"], path_prefix="")
-        if _miss:
-            raise ConfigCompletenessError(f"memoryos config: missing sizing leaf(s): {sorted(_miss)} "
-                                          f"(strict-config mode; set strict_config: false to disable)")
+    cfg = validate_exact_config(load_config_file(a.config) or {},
+                                REQUIRED_KEYS, context="memoryos config")
 
     memo_config = dict(
         memoryos_llm_model=cfg["memoryos_llm_model"], base_url=cfg["base_url"],

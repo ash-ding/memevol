@@ -142,3 +142,35 @@ def raise_completeness(context, missing):
     paths (public entry so callers needn't touch the private formatter)."""
     if missing:
         raise ConfigCompletenessError(_completeness_msg(context, missing))
+
+
+def validate_exact_config(cfg, required, context):
+    """Config-file-ONLY validation (harness baselines, 2026-08-06): the YAML must
+    list EVERY required key (a null value counts as listed) and NOTHING else —
+    there are no CLI parameter overrides and no built-in defaults anymore, so a
+    missing key has nothing to fall back to and an unknown key is a typo or a
+    stale setting. Also checks sizing to the leaf (stages/single_stage native
+    fields). Returns cfg unchanged on success; raises ConfigCompletenessError
+    naming every problem at once."""
+    if not isinstance(cfg, dict):
+        raise ConfigCompletenessError(f"{context}: the config file must be a YAML mapping")
+    required = set(required)
+    missing = sorted(required - set(cfg))
+    unknown = sorted(set(cfg) - required)
+    problems = []
+    if missing:
+        problems.append(f"missing required key(s): {missing}")
+    if unknown:
+        problems.append(f"unknown key(s): {unknown}")
+    if problems:
+        raise ConfigCompletenessError(
+            f"{context}: " + "; ".join(problems) +
+            ". Every parameter lives in the config file (a null value counts as "
+            "listed); there are no CLI overrides and no built-in defaults — copy "
+            "config.example.yaml and edit."
+        )
+    from common.evaluate import missing_sizing_config  # lazy: keep import surface light
+    miss = missing_sizing_config(cfg["dataset"], cfg, cfg["progressive"], path_prefix="")
+    if miss:
+        raise ConfigCompletenessError(f"{context}: missing sizing leaf(s): {sorted(miss)}")
+    return cfg
