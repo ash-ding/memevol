@@ -660,7 +660,7 @@ All baselines (and forge) build on the same dataset adapters and judge:
 - **[`datasets/<bench>/env.py`](../datasets/)** — `load_user_data`,
   `get_task_list` (the single source of truth for the search/test split),
   per-benchmark Recorder.
-- **[`common/judge.py`](../common/judge.py)** — LLM-as-judge with
+- **[`common/metric.py`](../common/metric.py)** — LLM-as-judge with
   configurable prompt template and score range (DynamicMem uses the
   official TCE holistic judge in `datasets/dynamicmem/tce_prompts.py`).
 - **[`common/llm.py`](../common/llm.py)** — `Agent` / `Embedding`

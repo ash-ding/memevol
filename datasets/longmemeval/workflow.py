@@ -125,7 +125,7 @@ class LongMemEvalWorkflow(BaseWorkflow):
     # ------------------------------------------------------------------
 
     def _make_judge_for(self, prompt_template: str):
-        from common.judge import Judge
+        from common.metric import Judge
         return Judge(
             model=self.judge_model,
             prompt_template=prompt_template,

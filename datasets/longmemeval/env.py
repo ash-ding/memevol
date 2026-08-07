@@ -18,7 +18,7 @@ changed from 50/450 on 2026-07-07):
                  single-session-assistant 33, single-session-preference 18)
   * test    — remaining 200 question_ids
 
-Judging is provided by `common.judge.Judge` (used by BaseWorkflow's default
+Judging is provided by `common.metric.Judge` (used by BaseWorkflow's default
 `judge()` method); this module no longer re-exports any judge symbol.
 """
 

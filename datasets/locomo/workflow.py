@@ -147,7 +147,7 @@ class LoCoMoWorkflow(BaseWorkflow):
     # ------------------------------------------------------------------
 
     def _make_judge(self):
-        from common.judge import Judge
+        from common.metric import Judge
         return Judge(
             model=self.judge_model,
             prompt_template=LOCOMO_JUDGE_PROMPT,

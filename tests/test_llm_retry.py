@@ -1,4 +1,4 @@
-"""Tests for the unified LLM retry kernel in common/llm.py + common/judge.py.
+"""Tests for the unified LLM retry kernel in common/llm.py + common/metric.py.
 
 Zero-dependency runner (no pytest in the venvs):
 
@@ -327,7 +327,7 @@ def test_embedding_retries_timeout():
 # ---------------- Judge ----------------
 
 def test_judge_retries_rate_limit():
-    from common.judge import Judge
+    from common.metric import Judge
     fake = FakeAsyncClient([
         _rate_limit_error(),
         _fake_response('{"reason": "good", "score": 8}'),
@@ -340,7 +340,7 @@ def test_judge_retries_rate_limit():
 
 
 def test_judge_retries_bad_json_once():
-    from common.judge import Judge
+    from common.metric import Judge
     fake = FakeAsyncClient([
         _fake_response("not json at all"),
         _fake_response('{"reason": "good", "score": 7}'),
@@ -353,7 +353,7 @@ def test_judge_retries_bad_json_once():
 
 
 def test_judge_bad_json_twice_returns_min():
-    from common.judge import Judge
+    from common.metric import Judge
     fake = FakeAsyncClient([_fake_response("still not json")])
     with _Patched(fake):
         judge = Judge(model="gpt-4.1")
@@ -363,7 +363,7 @@ def test_judge_bad_json_twice_returns_min():
 
 
 def test_judge_never_raises_on_exhaustion():
-    from common.judge import Judge
+    from common.metric import Judge
     fake = FakeAsyncClient([_timeout_error()])
     with _Patched(fake):
         judge = Judge(model="gpt-4.1", max_retries=2)
@@ -376,7 +376,7 @@ def test_judge_strips_effort_suffix():
     """Audit M8: 'gpt-5-mini/low' sent verbatim would 404 every judge call
     and silently zero the whole benchmark. The suffix must be parsed like
     Agent does, with the explicit effort reaching the payload."""
-    from common.judge import Judge
+    from common.metric import Judge
     fake = FakeAsyncClient([_fake_response('{"reason": "ok", "score": 9}')])
     with _Patched(fake):
         judge = Judge(model="gpt-5-mini/high")
@@ -387,7 +387,7 @@ def test_judge_strips_effort_suffix():
 
 
 def test_judge_default_low_effort_without_suffix():
-    from common.judge import Judge
+    from common.metric import Judge
     fake = FakeAsyncClient([_fake_response('{"reason": "ok", "score": 5}')])
     with _Patched(fake):
         judge = Judge(model="gpt-5-mini")
@@ -399,7 +399,7 @@ def test_judge_default_low_effort_without_suffix():
 def test_judge_coerces_string_float_score():
     """A '8.5' score string must coerce (int(float(...))) instead of falling
     into the broad except and skipping the parse retry."""
-    from common.judge import Judge
+    from common.metric import Judge
     fake = FakeAsyncClient([_fake_response('{"reason": "ok", "score": "8.5"}')])
     with _Patched(fake):
         judge = Judge(model="gpt-4.1")
@@ -409,7 +409,7 @@ def test_judge_coerces_string_float_score():
 
 
 def test_judge_non_dict_json_retries_then_min():
-    from common.judge import Judge
+    from common.metric import Judge
     fake = FakeAsyncClient([_fake_response('["valid json", "but not a dict"]')])
     with _Patched(fake):
         judge = Judge(model="gpt-4.1")
@@ -419,7 +419,7 @@ def test_judge_non_dict_json_retries_then_min():
 
 
 def test_judge_bad_template_degrades_not_raises():
-    from common.judge import Judge
+    from common.metric import Judge
     fake = FakeAsyncClient([_fake_response('{"reason": "ok", "score": 1}')])
     with _Patched(fake):
         judge = Judge(model="gpt-4.1",

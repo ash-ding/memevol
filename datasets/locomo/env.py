@@ -11,7 +11,7 @@ without changes:
 Only `sample["conversation"]` and `sample["qa"]` are used — `event_summary`,
 `observation`, and `session_summary` are intentionally ignored.
 
-Judging is provided by `common.judge.Judge` (used by BaseWorkflow's default
+Judging is provided by `common.metric.Judge` (used by BaseWorkflow's default
 `judge()` method); this module no longer re-exports any judge symbol.
 """
 

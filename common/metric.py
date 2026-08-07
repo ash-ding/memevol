@@ -1,16 +1,25 @@
-"""LLM-as-judge: single-shot scoring with prompt template + retry.
+"""Evaluation metrics — every way this repo turns a prediction into a number.
 
-Parallel to `common.llm.Agent`:
-- `Agent` is multi-turn conversational (system + user + assistant history),
-  used inside the QA loop.
-- `Judge` is single-shot — given (query, predicted, reference), returns
-  (score, reason). Scoring scale and prompt template are configurable
-  per benchmark.
+(Renamed from common/judge.py, 2026-08-06: LLM-as-judge is ONE metric method,
+not the whole story.)
 
-Requests share `common.llm`'s per-event-loop client, global concurrency
-gate, and unified retry kernel (429/5xx/timeout/empty-response are all
-retried with jittered backoff — see common.llm._call_with_retries).
+Currently implemented:
+- `Judge` — LLM-as-judge: single-shot scoring with a per-benchmark prompt
+  template + score range. Used by LoCoMo (binary, one prompt) and LongMemEval
+  (binary, four per-question_type prompts); DynamicMem's official TCE holistic
+  scoring lives in datasets/dynamicmem/tce_prompts.py instead (structured
+  per-field verdicts — it shares only the common.llm transport).
 
+Planned (stubs below, tracked in the "lexical metrics" GitHub issue):
+- `token_f1` / `bleu1` — the lexical metrics the LoCoMo paper actually
+  reports. A working offline implementation already exists in
+  baselines/harness/score_paper_metrics.py (used for the mem0/memoryos
+  paper-reproduction checks); consolidating it here would let LoCoMo emit
+  paper-comparable numbers inline instead of via a separate offline pass.
+
+`Judge` requests share `common.llm`'s per-event-loop client, global
+concurrency gate, and unified retry kernel (429/5xx/timeout/empty-response
+are all retried with jittered backoff — see common.llm._call_with_retries).
 Token usage is reported to `common.tokens.GLOBAL_TOKEN_TRACKER` if it has
 been initialized (e.g. by `init_global_tracker()` in the host launch
 script). Same lazy-import pattern as `Agent.ask`, no separate "injection"
@@ -138,3 +147,35 @@ Output ONLY a JSON object:
             return self.score_min, f"Judge error: {exc}"
 
         return self.score_min, "Judge exhausted retries"
+
+
+# ---------------------------------------------------------------------------
+# Lexical metrics — NOT YET INTEGRATED (stubs).
+#
+# The LoCoMo paper's headline metrics are token-F1 / BLEU-1, not an LLM judge;
+# this repo currently only computes them OFFLINE via
+# baselines/harness/score_paper_metrics.py. These stubs reserve the canonical
+# home; see the "Integrate lexical metrics (token-F1 / BLEU-1) into
+# common/metric.py" GitHub issue for the consolidation plan.
+# ---------------------------------------------------------------------------
+
+def token_f1(prediction: str, reference: str) -> float:
+    """Token-level F1 between prediction and reference (LoCoMo paper metric).
+
+    NOT IMPLEMENTED YET — use baselines/harness/score_paper_metrics.py for
+    offline scoring until the consolidation issue lands."""
+    raise NotImplementedError(
+        "token_f1 is a stub — see the lexical-metrics integration issue; "
+        "an offline implementation lives in baselines/harness/score_paper_metrics.py"
+    )
+
+
+def bleu1(prediction: str, reference: str) -> float:
+    """BLEU-1 between prediction and reference (LoCoMo paper metric).
+
+    NOT IMPLEMENTED YET — use baselines/harness/score_paper_metrics.py for
+    offline scoring until the consolidation issue lands."""
+    raise NotImplementedError(
+        "bleu1 is a stub — see the lexical-metrics integration issue; "
+        "an offline implementation lives in baselines/harness/score_paper_metrics.py"
+    )

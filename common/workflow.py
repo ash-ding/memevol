@@ -219,7 +219,7 @@ class BaseWorkflow(ABC):
         # against reusing memory built by different harness code.
         self.memory_cache_dir: Optional[Path] = None
         self.harness_fingerprint: str = ""
-        # Lazy-constructed Judge (per common.judge.Judge). Subclasses can
+        # Lazy-constructed Judge (per common.metric.Judge). Subclasses can
         # override `_make_judge` to customize prompt / score range.
         self._judge_instance = None
 
@@ -318,9 +318,9 @@ class BaseWorkflow(ABC):
         """Construct the judge for this workflow. Override to customize
         prompt template / score range / model — e.g. for benchmark-specific
         judges (LoCoMo binary, LongMemEval per-question-type, ...)."""
-        from common.judge import Judge
+        from common.metric import Judge
         # timeout / max_retries deliberately NOT overridden here — the Judge
-        # defaults in common/judge.py are the single source of truth.
+        # defaults in common/metric.py are the single source of truth.
         return Judge(model=self.judge_model)
 
     async def judge(
@@ -429,7 +429,7 @@ class BaseWorkflow(ABC):
                 if reason.startswith("[Phase2_"):
                     continue
                 judged += 1
-                # "Judge error:" = common.judge.Judge transport exhaustion;
+                # "Judge error:" = common.metric.Judge transport exhaustion;
                 # "JUDGE_ERROR:" = DynamicMem TCE judge-call failure marker.
                 if reason.startswith("Judge error:") or "JUDGE_ERROR:" in reason:
                     failed += 1
