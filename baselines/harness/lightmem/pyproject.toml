@@ -29,7 +29,7 @@ dependencies = [
     "transformers",                   # embedder + llmlingua-2
     "torch",
     "pydantic",                       # vendor configs
-    "datasets",                       # HF datasets (ST import-time shim)
+    "datasets",                       # HF datasets — sentence-transformers imports it eagerly
 ]
 
 [tool.uv]

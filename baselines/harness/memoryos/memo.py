@@ -44,9 +44,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from common.memo_class import MemoClass
 from baselines.harness.hipporag2.memo import app_log_to_passage
-from baselines.harness.memoryos._st_shim import ensure_sentence_transformers, hf_datasets_active
-
-ensure_sentence_transformers()      # utils.py does `from sentence_transformers import SentenceTransformer`
+# NOTE: the vendored utils.py imports sentence-transformers, which eagerly
+# imports HuggingFace `datasets`. That used to collide with memevol's own
+# top-level `datasets/` package and needed a sys.modules shim; the package was
+# renamed to `benchmarks/` (2026-08-07), so plain imports are correct now.
 
 _SRC = Path(__file__).resolve().parent / "src"
 # The vendored modules import each other ABSOLUTELY (`from long_term import ...`,
@@ -150,10 +151,7 @@ class MemoryOSMemo(MemoClass):
         if save_dir.exists():
             shutil.rmtree(save_dir, ignore_errors=True)
         save_dir.mkdir(parents=True, exist_ok=True)
-        # Constructed inside hf_datasets_active(): SentenceTransformer's
-        # model-card path does `from datasets import ...` at CALL time too, and
-        # memevol's `benchmarks/` package would shadow the HF library.
-        with hf_datasets_active(), open(os.devnull, "w") as devnull, \
+        with open(os.devnull, "w") as devnull, \
                 contextlib.redirect_stdout(devnull):
             self._memo = Memoryos(
                 user_id=f"u_{self._instance_id}",
@@ -179,7 +177,7 @@ class MemoryOSMemo(MemoClass):
         pages = _pairs_from_init(recorder.init)
         # add_memory drives the whole update chain (STM append -> FIFO ->
         # MTM segmentation -> heat -> LPM distillation), including its LLM calls.
-        with hf_datasets_active(), open(os.devnull, "w") as devnull, \
+        with open(os.devnull, "w") as devnull, \
                 contextlib.redirect_stdout(devnull):
             for user_input, agent_response, when in pages:
                 self._memo.add_memory(user_input=user_input,
@@ -189,7 +187,7 @@ class MemoryOSMemo(MemoClass):
     async def retrieve_memory_for_query(self, recorder) -> Dict:
         self._ensure_system()
         query = str(recorder.init.get("query", ""))
-        with hf_datasets_active(), open(os.devnull, "w") as devnull, \
+        with open(os.devnull, "w") as devnull, \
                 contextlib.redirect_stdout(devnull):
             res = self._memo.retriever.retrieve_context(user_query=query,
                                                         user_id=self._memo.user_id)

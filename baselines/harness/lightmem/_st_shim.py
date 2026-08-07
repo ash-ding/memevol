@@ -1,27 +1,13 @@
 """Import-environment shims for the vendored LightMem text pipeline.
 
-Three concerns, all integration-only (LightMem's vendored code stays
+Two concerns, all integration-only (LightMem's vendored code stays
 byte-identical):
 
   1. SRC PATH — ``ensure_lightmem_importable()`` puts ``src/`` on
      ``sys.path`` so LightMem's absolute imports (``from lightmem.memory...``)
      resolve to our vendored copy under baselines/harness/lightmem/src/.
 
-  2. HuggingFace ``datasets`` vs memevol's ``benchmarks/`` — constructing
-     LightMem's HuggingFace text embedder builds a ``SentenceTransformer``,
-     whose ``model_card`` does ``from datasets import __version__`` at
-     construction time. memevol ships a benchmark package ALSO named
-     ``benchmarks/`` that shadows the HF library on ``sys.path``. We make
-     ``datasets`` resolve to HF for that construction.
-
-     CRITICAL: HF ``datasets`` registers PROCESS-GLOBAL pyarrow extension types
-     at import (``pa.register_extension_type(...)``). Importing it twice raises
-     ``ArrowKeyError: ... already defined``. So HF ``datasets`` is imported
-     EXACTLY ONCE (``_capture_hf_datasets``); every "activation" thereafter
-     merely swaps the CACHED module objects in/out of ``sys.modules`` — it never
-     re-imports. (Same class of workaround as the amem / simplemem baselines.)
-
-  3. SHARED EMBEDDER — LightMem constructs a fresh ``SentenceTransformer``
+  2. SHARED EMBEDDER — LightMem constructs a fresh ``SentenceTransformer``
      inside EVERY ``LightMemory`` (i.e. per user/sample) via its
      ``TextEmbedderHuggingface``. ``install_embedding_cache()`` memoizes the
      underlying ``SentenceTransformer(model_path, **kwargs)`` by model path so
@@ -38,9 +24,6 @@ _HARNESS_DIR = Path(__file__).resolve().parent
 _SRC_DIR = _HARNESS_DIR / "src"
 _PROJECT_ROOT = _HARNESS_DIR.parents[2]   # baselines/harness/lightmem -> repo root
 
-# HuggingFace `datasets*` module objects, captured ONCE by _capture_hf_datasets().
-# None until that first (and only) import. Reused for every hf_datasets_active().
-_hf_datasets_mods = None
 
 
 def ensure_lightmem_importable() -> None:
@@ -51,86 +34,26 @@ def ensure_lightmem_importable() -> None:
         sys.path.insert(0, p)
 
 
-def _memevol_datasets_in_sys_modules():
-    return [m for m in list(sys.modules) if m == "datasets" or m.startswith("datasets.")]
-
-
-def _capture_hf_datasets() -> None:
-    """Import the HuggingFace ``datasets`` library EXACTLY ONCE and cache its
-    module objects in ``_hf_datasets_mods``. Idempotent — a no-op once captured.
-
-    The import runs with the project root off ``sys.path`` and memevol's
-    ``datasets*`` modules popped, so ``import datasets`` resolves to the installed
-    HF library. Because datasets registers process-global pyarrow extension types
-    at import, this MUST be the only place datasets is ever imported; callers
-    activate it via cached-object swaps (``hf_datasets_active``), never re-import.
-    memevol's ``datasets`` view is restored before returning (the HF module
-    objects survive removal from ``sys.modules`` via the cached reference)."""
-    global _hf_datasets_mods
-    if _hf_datasets_mods is not None:
-        return
-    saved_path = sys.path[:]
-    sys.path[:] = [p for p in sys.path if Path(p or ".").resolve() != _PROJECT_ROOT]
-    saved_mods = {name: sys.modules.pop(name) for name in _memevol_datasets_in_sys_modules()}
-    try:
-        import datasets  # noqa: F401  — the HuggingFace library; the ONE import
-        _hf_datasets_mods = {name: sys.modules[name] for name in _memevol_datasets_in_sys_modules()}
-    finally:
-        sys.path[:] = saved_path
-        for name in _memevol_datasets_in_sys_modules():
-            del sys.modules[name]
-        sys.modules.update(saved_mods)
-
-
-@contextlib.contextmanager
-def hf_datasets_active():
-    """Temporarily make ``import datasets`` resolve to the (already-imported,
-    cached) HuggingFace library instead of memevol's benchmark package. Used for
-    any code that does ``from datasets import ...`` — sentence-transformers at
-    ``SentenceTransformer`` construction. Swaps CACHED module objects only (never
-    re-imports → no pyarrow re-registration). memevol's ``datasets`` view is
-    restored on exit.
-
-    Do NOT run memevol-``datasets`` imports (e.g. ``benchmarks.locomo.env``) inside
-    this block — they would resolve to HF. Callers MUST NOT ``await`` inside: the
-    sys.modules swap is process-global and would corrupt a concurrently-scheduled
-    coroutine's ``datasets`` view (safe today — every memo hook body is
-    await-free around these swaps)."""
-    _capture_hf_datasets()
-    saved = {name: sys.modules[name] for name in _memevol_datasets_in_sys_modules()}
-    for name in list(saved):
-        del sys.modules[name]
-    sys.modules.update(_hf_datasets_mods)
-    try:
-        yield
-    finally:
-        for name in _memevol_datasets_in_sys_modules():
-            del sys.modules[name]
-        sys.modules.update(saved)
-
-
 def ensure_sentence_transformers() -> None:
-    """Idempotently import sentence-transformers with HF ``datasets`` active (its
-    ``model_card`` may do ``from datasets import ...`` at import in some
-    versions)."""
-    if "sentence_transformers" in sys.modules:
-        return
-    with hf_datasets_active():
+    """Idempotently import sentence-transformers. (Historically this had to
+    dodge memevol's top-level `datasets/` package, which shadowed the HF
+    `datasets` library that ST imports; the package was renamed to
+    `benchmarks/` in 2026-08, so a plain import is correct now.)"""
+    if "sentence_transformers" not in sys.modules:
         import sentence_transformers  # noqa: F401
 
 
 def import_lightmemory():
     """Import the vendored LightMem pipeline with HF ``datasets`` active, and
-    return the ``LightMemory`` class. Imported under ``hf_datasets_active`` purely
+    return the ``LightMemory`` class. Imported here purely
     defensively (LightMem's import chain does not touch ``datasets`` until an
     embedder is constructed, but the swap is cheap and keeps the rule uniform).
     memevol's ``datasets`` view is restored on exit, so memo.py can still
     ``from benchmarks.locomo.env import ...`` afterward."""
     ensure_lightmem_importable()
     holder = {}
-    with hf_datasets_active():
-        from lightmem.memory.lightmem import LightMemory
-        holder["LightMemory"] = LightMemory
+    from lightmem.memory.lightmem import LightMemory
+    holder["LightMemory"] = LightMemory
     return holder["LightMemory"]
 
 
@@ -159,8 +82,7 @@ def install_eager_attention() -> None:
     global _eager_attention_installed
     if _eager_attention_installed:
         return
-    with hf_datasets_active():
-        import transformers
+    import transformers
     cls = transformers.AutoModelForTokenClassification
     _real = cls.from_pretrained   # bound classmethod (cls already baked in)
 
@@ -201,8 +123,7 @@ def install_embedding_cache() -> None:
         cached = _st_model_cache.get(key)
         if cached is not None:
             return cached
-        with hf_datasets_active():   # construction triggers the lazy `datasets` import
-            model = _real_ctor(*args, **kwargs)
+        model = _real_ctor(*args, **kwargs)
         if key is not None:
             _st_model_cache[key] = model
         return model

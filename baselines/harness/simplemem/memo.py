@@ -38,7 +38,7 @@ from baselines.harness.simplemem._st_shim import (
     ensure_sentence_transformers, install_embedding_cache, import_simplemem_system,
 )
 
-ensure_sentence_transformers()     # import ST past memevol's datasets/ shadow (embedding.py needs it)
+ensure_sentence_transformers()     # embedding.py imports ST eagerly
 install_embedding_cache()          # share the ~0.6B Qwen3 embedder across per-user systems
 # Import the vendored simplemem chain (which pulls in lancedb) with HF `datasets`
 # active, so lancedb's import-time `from datasets import Dataset` resolves to the
@@ -133,7 +133,6 @@ class SimpleMemMemo(MemoClass):
         OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
         with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
             # EmbeddingModel is constructed here → patched SentenceTransformer
-            # (shared cache + hf_datasets_active) handles the datasets shadow.
             self._system = SimpleMemSystem(
                 api_key=os.environ.get("OPENAI_API_KEY"),
                 model=cfg.get("simplemem_llm_model"),
@@ -167,7 +166,6 @@ class SimpleMemMemo(MemoClass):
     async def build_memory_from_data(self, recorder) -> None:
         self._ensure_system()
         # _init_to_dialogues touches memevol's `datasets` (locomo branch) — compute
-        # BEFORE the stdout redirect and OUTSIDE any hf_datasets_active window.
         dialogues, self._next_id = _init_to_dialogues(recorder.init, self._next_id)
         # add_dialogues + finalize is ADDITIVE across checkpoints; SimpleMem's LLM
         # compression + LanceDB indexing run here (synchronous, no await → the
