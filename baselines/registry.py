@@ -1,42 +1,4 @@
-"""Dataset registry for baselines (alma, cc, hipporag2) — maps a dataset name
-to its workflow, env module, and recorder class. Mirrors forge/launch.py::WORKFLOWS
-(which baselines must NOT import — they are standalone), extended with the
-recorder class because the proposer prompt introspects it via get_metadata_dict.
-
-Each baseline targets exactly ONE dataset per run (selected with --dataset).
-Add a new benchmark by adding one line here + one block in dataset_info.py.
-"""
-from __future__ import annotations
-
-from types import ModuleType
-from typing import Dict, List, Tuple
-
-from datasets.dynamicmem import env as dm_env
-from datasets.dynamicmem.env import DynamicMemRecorder
-from datasets.dynamicmem.workflow import DynamicMemWorkflow
-from datasets.locomo import env as locomo_env
-from datasets.locomo.env import LoCoMoRecorder
-from datasets.locomo.workflow import LoCoMoWorkflow
-from datasets.longmemeval import env as lme_env
-from datasets.longmemeval.env import LongMemEvalRecorder
-from datasets.longmemeval.workflow import LongMemEvalSWorkflow, LongMemEvalMWorkflow
-
-# dataset → (workflow_cls, env_module, recorder_cls).
-# env_module must expose get_task_list(status, eval_n_samples).
-REGISTRY: Dict[str, Tuple[type, ModuleType, type]] = {
-    "dynamicmem":    (DynamicMemWorkflow,   dm_env,     DynamicMemRecorder),
-    "locomo":        (LoCoMoWorkflow,       locomo_env, LoCoMoRecorder),
-    "longmemeval_s": (LongMemEvalSWorkflow, lme_env,    LongMemEvalRecorder),
-    "longmemeval_m": (LongMemEvalMWorkflow, lme_env,    LongMemEvalRecorder),
-}
-
-DATASETS: List[str] = sorted(REGISTRY)
-
-
-def resolve(dataset: str) -> Tuple[type, ModuleType, type]:
-    """Return (workflow_cls, env_module, recorder_cls) for `dataset`."""
-    if dataset not in REGISTRY:
-        raise ValueError(
-            f"unknown dataset {dataset!r}; supported datasets: {DATASETS}."
-        )
-    return REGISTRY[dataset]
+"""Back-compat re-export — the dataset registry moved to datasets/registry.py
+(2026-08: it is pure dataset-layer wiring, needed by common.evaluate too).
+Every existing `from baselines.registry import ...` keeps working."""
+from datasets.registry import REGISTRY, DATASETS, resolve  # noqa: F401
