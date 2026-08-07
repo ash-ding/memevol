@@ -1,11 +1,11 @@
 """forge's harness contract — the base class every EVOLVED harness inherits.
 
-This is forge's own evolution surface, split from `common.harness_base` so
+This is forge's own evolution surface, split from `common.memo_class` so
 the forge contract can gain documentation / optional hooks without touching
 the frozen baseline contract that alma's meta-agent reads
 (`baselines/evolve/alma/meta_agent_prompt.py::_read_contract_files`).
 
-`MemoStructure` here SUBCLASSES `common.harness_base.MemoStructure`, so
+`MemoClass` here SUBCLASSES `common.memo_class.MemoClass`, so
 everything downstream that type-checks against the common ABC
 (`forge/launch.py::_load_harness_class`, `forge/contract.py`,
 `common/workflow.py`) accepts forge harnesses unchanged — including
@@ -39,10 +39,10 @@ state is possible.
 from __future__ import annotations
 
 from common.recorder import Basic_Recorder  # noqa: F401  (re-export)
-from common.harness_base import MemoStructure as _CommonMemoStructure
+from common.memo_class import MemoClass as _CommonMemoClass
 
 
-class MemoStructure(_CommonMemoStructure):
+class MemoClass(_CommonMemoClass):
     """Evolution-target base class for forge harnesses.
 
     Inherit from this and implement build (`build_memory_from_data`) and retrieve
@@ -77,3 +77,8 @@ class MemoStructure(_CommonMemoStructure):
 
     def load_memory(self, path) -> bool:
         return False
+
+
+# Backward-compat alias — the immutable prompt templates and historical
+# harnesses inherit `forge.harness_base.MemoStructure`; same class.
+MemoStructure = MemoClass

@@ -39,7 +39,7 @@ def test_base_workflow_default_answer_call_signature():
     import asyncio
     import common.llm as llm_mod
     from common.workflow import BaseWorkflow
-    from common.harness_base import MemoStructure
+    from common.memo_class import MemoClass
 
     calls = {}
 
@@ -49,7 +49,7 @@ def test_base_workflow_default_answer_call_signature():
         calls["messages"] = self.messages
         return "ANSWER"
 
-    class _Memo(MemoStructure):
+    class _Memo(MemoClass):
         async def retrieve_memory_for_query(self, r): return {}
         # use_memory_to_answer NOT overridden -> defaults to None (defers to agent)
 
@@ -104,7 +104,7 @@ def test_dynamicmem_default_answer_call_signature():
     import common.llm as llm_mod
     from datasets.dynamicmem.workflow import DynamicMemWorkflow
     from datasets.dynamicmem.env import DynamicMemRecorder
-    from common.harness_base import MemoStructure
+    from common.memo_class import MemoClass
 
     calls = {}
 
@@ -117,7 +117,7 @@ def test_dynamicmem_default_answer_call_signature():
     async def _fake_judge_item(self, item, raw_answer):
         return 1.0, "fake-judge", raw_answer, {}
 
-    class _Memo(MemoStructure):
+    class _Memo(MemoClass):
         async def retrieve_memory_for_query(self, r): return {}
         # use_memory_to_answer NOT overridden -> defaults to None (defers to agent)
 
@@ -189,14 +189,14 @@ def test_task_list_identical_to_main_method():
 
 def test_make_memo_class_no_arg_instantiable():
     from baselines.harness.eval_common import make_memo_class
-    from common.harness_base import MemoStructure
-    class Base(MemoStructure):
+    from common.memo_class import MemoClass
+    class Base(MemoClass):
         async def build_memory_from_data(self, r): return None
         async def retrieve_memory_for_query(self, r): return {"cfg": self._cfg}
     Cls = make_memo_class(Base, model="x", k=3)
     inst = Cls()  # workflow instantiates with NO args
     assert inst._cfg == {"model": "x", "k": 3}
-    assert isinstance(inst, MemoStructure)
+    assert isinstance(inst, MemoClass)
 
 
 # -------------------- integration: run_baseline end-to-end (locomo) --------------------
@@ -216,7 +216,7 @@ def test_run_baseline_locomo_end_to_end():
       - common.llm.Agent.ask (the shared QA agent) -> a canned answer
       - LoCoMoWorkflow.judge (the judge)           -> a forced score=1
 
-    A stub MemoStructure supplies retrieve_memory_for_query's canned passages;
+    A stub MemoClass supplies retrieve_memory_for_query's canned passages;
     build_memory_from_data is a no-op (Phase 1 ingestion still runs for real, it
     just has nothing to persist).
     """
@@ -228,12 +228,12 @@ def test_run_baseline_locomo_end_to_end():
 
     import common.llm as llm_mod
     from baselines.harness.eval_common import resolve_task_list, run_baseline
-    from common.harness_base import MemoStructure
+    from common.memo_class import MemoClass
     from common.evaluate import single_stage_wire_spec
     from common.sampling import derive_sample_seed
     from datasets.locomo.workflow import LoCoMoWorkflow
 
-    class _StubMemo(MemoStructure):
+    class _StubMemo(MemoClass):
         async def build_memory_from_data(self, r):
             return None
 

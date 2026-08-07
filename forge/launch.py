@@ -7,7 +7,7 @@ Invoked by forge/evaluator.py inside Singularity — ONE container per
         --dataset locomo --split search --plan-json '{"progressive": true, ...}'
 
 Steps:
-  1. Dynamically load the MemoStructure subclass from /harness/harness.py.
+  1. Dynamically load the MemoClass subclass from /harness/harness.py.
   2. One call into the shared, execution-independent
      common.evaluate.evaluate_memo — the staged stage1→2→3 gauntlet
      (progressive), the single_stage single pass, or the sanity-size smoke
@@ -42,12 +42,12 @@ _project_root = Path(__file__).resolve().parent.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
-from common.harness_base import MemoStructure
+from common.memo_class import MemoClass
 from datasets.registry import DATASETS
 
 
-def _load_harness_class(harness_dir: Path) -> Type[MemoStructure]:
-    """Import harness.py and return the MemoStructure subclass.
+def _load_harness_class(harness_dir: Path) -> Type[MemoClass]:
+    """Import harness.py and return the MemoClass subclass.
 
     On import failure, raise ImportError with an actionable message. The
     error string is propagated up to score.json::invalid_users[0].error and
@@ -82,13 +82,13 @@ def _load_harness_class(harness_dir: Path) -> Type[MemoStructure]:
         ) from exc
     for _, obj in inspect.getmembers(module, inspect.isclass):
         # select the class defined in this harness file; imported bases like
-        # forge.harness_base.MemoStructure are no longer abstract, so an
+        # forge.harness_base.MemoClass are no longer abstract, so an
         # isabstract filter would wrongly match them.
-        if issubclass(obj, MemoStructure) and obj.__module__ == module.__name__:
+        if issubclass(obj, MemoClass) and obj.__module__ == module.__name__:
             return obj
     raise ImportError(
-        f"No MemoStructure subclass found in {harness_py}. Define a class "
-        f"that inherits from `forge.harness_base.MemoStructure` and "
+        f"No MemoClass subclass found in {harness_py}. Define a class "
+        f"that inherits from `forge.harness_base.MemoClass` and "
         f"implements both `build_memory_from_data` and `retrieve_memory_for_query`."
     )
 

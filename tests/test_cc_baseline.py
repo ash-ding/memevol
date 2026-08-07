@@ -11,7 +11,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
-# -------------------- cc (native-answer MemoStructure) --------------------
+# -------------------- cc (native-answer MemoClass) --------------------
 
 def test_cc_use_memory_to_answer_runs_cc():
     import asyncio

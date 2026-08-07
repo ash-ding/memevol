@@ -74,7 +74,7 @@ baselines/evolve/alma/
 ├── config.example.yaml # documented, runnable example config (DEFAULT_CONFIG < YAML < CLI)
 ├── meta_agent.py       # MetaAgent: analyze → generate → examine → evaluate
 ├── memo_manager.py     # memo lifecycle, reward, softmax selection
-├── meta_agent_prompt.py  # meta-LLM prompts (shows common/harness_base.py as the contract)
+├── meta_agent_prompt.py  # meta-LLM prompts (shows common/memo_class.py as the contract)
 ├── launch.py           # subprocess entry (score.json + full traces, no sampling)
 ├── eval_runner.py      # subprocess manager (2h/8h wall-clock timeout)
 ├── sampling.py         # single-user bin sampling → analysis artifact (alma-only)

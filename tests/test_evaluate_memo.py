@@ -29,8 +29,8 @@ def test_gauntlet_passes_seed_into_every_stage_spec():
     import tempfile, shutil
     from datasets.locomo.workflow import LoCoMoWorkflow
     from common.evaluate import evaluate_memo
-    from common.harness_base import MemoStructure
-    class _M(MemoStructure):
+    from common.memo_class import MemoClass
+    class _M(MemoClass):
         async def retrieve_memory_for_query(self, r): return {}
     out_dir = Path(tempfile.mkdtemp(prefix="test_seed_spec_"))
     orig = LoCoMoWorkflow.run_all_users
@@ -64,9 +64,9 @@ def _run_evaluate_memo(reward, seen, **kwargs):
     from pathlib import Path
     from datasets.locomo.workflow import LoCoMoWorkflow
     from common.evaluate import evaluate_memo
-    from common.harness_base import MemoStructure
+    from common.memo_class import MemoClass
 
-    class _StubMemo(MemoStructure):
+    class _StubMemo(MemoClass):
         async def retrieve_memory_for_query(self, r): return {}
 
     async def _fake(self, task_list, *, stage="stage3", stage_spec=None,

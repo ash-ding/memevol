@@ -1,5 +1,5 @@
 """Zep (Graphiti temporal knowledge graph, arXiv:2501.13956) as a retrieval
-MemoStructure.
+MemoClass.
 
 BUILD: every ingestion unit becomes one Graphiti **episode** via
 `add_episode(episode_body, reference_time, source, ...)` — Graphiti's own pipeline
@@ -40,7 +40,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from common.harness_base import MemoStructure
+from common.memo_class import MemoClass
 from baselines.harness.hipporag2.memo import app_log_to_passage
 from baselines.harness.zep import _st_shim
 
@@ -176,7 +176,7 @@ def _format_context(edges: List[Any], nodes: List[Any]) -> str:
     return _CONTEXT_TEMPLATE.format(facts="\n".join(facts), entities="\n".join(entities))
 
 
-class ZepMemo(MemoStructure):
+class ZepMemo(MemoClass):
     _cfg: Dict = {}   # overridden per-run by eval_common.make_memo_class
 
     def __init__(self):

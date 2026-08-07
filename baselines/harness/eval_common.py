@@ -1,5 +1,5 @@
 """Shared entry for the harness baselines (cc, hipporag2, amem, lightmem,
-simplemem, zep, mem0, memoryos): adapt a fixed MemoStructure into the shared,
+simplemem, zep, mem0, memoryos): adapt a fixed MemoClass into the shared,
 execution-independent `common.evaluate.evaluate_memo` — the SAME function
 forge's container and alma's subprocess run — so a baseline's score is
 identical-by-construction to the main method's data path, not merely
@@ -12,11 +12,11 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Type
 
-from common.harness_base import MemoStructure
+from common.memo_class import MemoClass
 from baselines.registry import resolve
 
 
-def make_memo_class(base_cls: Type[MemoStructure], **cfg) -> Type[MemoStructure]:
+def make_memo_class(base_cls: Type[MemoClass], **cfg) -> Type[MemoClass]:
     """Workflow instantiates memo_class() with NO args (common/workflow.py:465),
     so per-run config travels as a class attribute the instance reads via
     self._cfg.
@@ -62,7 +62,7 @@ async def run_baseline(
     dataset: str,
     split: str,
     single_stage: Optional[Dict[str, Any]] = None,
-    memo_class: Type[MemoStructure],
+    memo_class: Type[MemoClass],
     qa_model: str,
     judge_model: str,
     out_dir: Path,

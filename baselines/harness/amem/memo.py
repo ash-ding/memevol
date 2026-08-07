@@ -1,4 +1,4 @@
-"""A-mem (Agentic Memory, arXiv:2502.12110) as a retrieval MemoStructure.
+"""A-mem (Agentic Memory, arXiv:2502.12110) as a retrieval MemoClass.
 
 BUILD: every ingestion unit becomes one A-mem note via
 `AgenticMemorySystem.add_note(content, time=...)` — the method's own pipeline
@@ -30,7 +30,7 @@ import json
 import os
 from typing import Dict, List, Tuple
 
-from common.harness_base import MemoStructure
+from common.memo_class import MemoClass
 from baselines.harness.hipporag2.memo import app_log_to_passage
 from baselines.harness.amem._st_shim import ensure_sentence_transformers, hf_datasets_active
 
@@ -82,7 +82,7 @@ def _init_to_note_units(init: Dict) -> List[Tuple[str, str]]:
     raise KeyError(f"unrecognized recorder.init keys: {list(init)}")
 
 
-class AMemMemo(MemoStructure):
+class AMemMemo(MemoClass):
     _cfg: Dict = {}   # overridden per-run by eval_common.make_memo_class
 
     def __init__(self):

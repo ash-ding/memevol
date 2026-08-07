@@ -1,5 +1,5 @@
 """SimpleMem (arXiv 2510.xxxxx, https://github.com/aiming-lab/SimpleMem) as a
-retrieval MemoStructure.
+retrieval MemoClass.
 
 BUILD: every ingestion unit becomes one SimpleMem ``Dialogue``; the vendored
 pipeline runs untouched — ``MemoryBuilder`` windows the dialogues
@@ -32,7 +32,7 @@ import uuid
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from common.harness_base import MemoStructure
+from common.memo_class import MemoClass
 from baselines.harness.hipporag2.memo import app_log_to_passage
 from baselines.harness.simplemem._st_shim import (
     ensure_sentence_transformers, install_embedding_cache, import_simplemem_system,
@@ -109,7 +109,7 @@ def _entry_to_passage(entry: MemoryEntry) -> str:
     return "\n".join(parts)
 
 
-class SimpleMemMemo(MemoStructure):
+class SimpleMemMemo(MemoClass):
     _cfg: Dict = {}   # overridden per-run by eval_common.make_memo_class
 
     def __init__(self):

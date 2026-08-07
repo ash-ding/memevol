@@ -1,4 +1,4 @@
-"""Mem0 (https://github.com/mem0ai/mem0) as a retrieval MemoStructure.
+"""Mem0 (https://github.com/mem0ai/mem0) as a retrieval MemoClass.
 
 BUILD: ingestion units are batched into ``Memory.add(messages, user_id=...)``,
 which is Mem0's actual contribution — an LLM reads each batch, EXTRACTS
@@ -34,7 +34,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from common.harness_base import MemoStructure
+from common.memo_class import MemoClass
 from baselines.harness.hipporag2.memo import app_log_to_passage
 
 # Must be set BEFORE importing mem0: the flag is read at module import time
@@ -105,7 +105,7 @@ def _init_to_messages(init: Dict) -> List[Dict[str, str]]:
     return out
 
 
-class Mem0Memo(MemoStructure):
+class Mem0Memo(MemoClass):
     _cfg: Dict = {}   # overridden per-run by eval_common.make_memo_class
 
     def __init__(self):

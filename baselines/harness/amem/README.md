@@ -1,7 +1,7 @@
 # A-mem baseline
 
 [A-Mem: Agentic Memory for LLM Agents](https://arxiv.org/pdf/2502.12110) as a
-ready-made memory system on the 3-hook `MemoStructure` contract.
+ready-made memory system on the 3-hook `MemoClass` contract.
 
 **Provenance**: `memory_layer.py` is vendored VERBATIM from
 <https://github.com/WujiangXu/A-mem> @

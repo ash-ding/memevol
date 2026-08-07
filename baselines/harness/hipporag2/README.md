@@ -1,8 +1,8 @@
-# hipporag2 baseline — graph-based RAG pipeline as a retrieval MemoStructure
+# hipporag2 baseline — graph-based RAG pipeline as a retrieval MemoClass
 
 `HippoRAGMemo` (`memo.py`) wraps [HippoRAG2](https://github.com/OSU-NLP-Group/HippoRAG)'s
 pipeline (OpenIE → NER + triples → knowledge graph + entity embeddings →
-personalized PageRank retrieval) as a `MemoStructure` — a fixed,
+personalized PageRank retrieval) as a `MemoClass` — a fixed,
 non-evolved memory architecture:
 
 - **Phase 1 (`build_memory_from_data`)**: converts the ingested unit's data into
@@ -26,7 +26,7 @@ not a compat-shim script. The old single-dataset `eval_hipporag2.py` was
 replaced by `run.py` (2026-07); numbers from that script are NOT comparable
 to `run.py`'s DynamicMem output (different protocol).
 
-Per the standardized `MemoStructure` contract, `build_memory_from_data` is called
+Per the standardized `MemoClass` contract, `build_memory_from_data` is called
 ONCE per build call with the whole newly-visible data already in
 `recorder.init` — the memo ingests the handed data however it chooses;
 `HippoRAGMemo` indexes the whole call's passages in one shot and relies on

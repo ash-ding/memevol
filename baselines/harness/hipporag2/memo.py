@@ -1,4 +1,4 @@
-"""HippoRAG2 as a retrieval MemoStructure: Phase 1 indexes the ingested unit's
+"""HippoRAG2 as a retrieval MemoClass: Phase 1 indexes the ingested unit's
 passages into a per-user HippoRAG graph; Phase 2 retrieves top-k passages. The
 shared QA agent answers from those passages (fair 'HippoRAG-as-memory'
 comparison), and the per-dataset workflow judges/scores identically to the main
@@ -28,7 +28,7 @@ import uuid
 from pathlib import Path
 from typing import Dict, List
 
-from common.harness_base import MemoStructure
+from common.memo_class import MemoClass
 
 OUTPUTS_DIR = Path(__file__).resolve().parent / "outputs"
 
@@ -66,7 +66,7 @@ def _init_to_passages(init: Dict) -> List[str]:
     raise KeyError(f"unrecognized recorder.init keys: {list(init)}")
 
 
-class HippoRAGMemo(MemoStructure):
+class HippoRAGMemo(MemoClass):
     def __init__(self):
         super().__init__()
         self._hippo = None
@@ -80,7 +80,7 @@ class HippoRAGMemo(MemoStructure):
         # So `recorder.user_id` is always the dataclass default "" in practice —
         # keying save_dir on it would collapse every user's HippoRAG graph onto
         # the same path (silent cross-user contamination under concurrent
-        # eval). Instead rely on the documented invariant "a fresh MemoStructure
+        # eval). Instead rely on the documented invariant "a fresh MemoClass
         # instance is created per user — no cross-user state" and key save_dir
         # on an instance-scoped id generated once here.
         self._instance_id = uuid.uuid4().hex[:12]

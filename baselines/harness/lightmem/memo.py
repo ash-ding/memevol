@@ -1,4 +1,4 @@
-"""LightMem (https://github.com/zjunlp/LightMem) as a retrieval MemoStructure.
+"""LightMem (https://github.com/zjunlp/LightMem) as a retrieval MemoClass.
 
 BUILD: every ingestion unit becomes a LightMem turn (a ``[user, assistant]``
 message pair carrying a session-level ``time_stamp``); the vendored pipeline runs
@@ -38,7 +38,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List
 
-from common.harness_base import MemoStructure
+from common.memo_class import MemoClass
 from baselines.harness.hipporag2.memo import app_log_to_passage
 from baselines.harness.lightmem._st_shim import (
     ensure_sentence_transformers, install_embedding_cache, install_eager_attention,
@@ -149,7 +149,7 @@ def _init_to_turns(init: Dict) -> List[List[Dict]]:
     raise KeyError(f"unrecognized recorder.init keys: {list(init)}")
 
 
-class LightMemMemo(MemoStructure):
+class LightMemMemo(MemoClass):
     _cfg: Dict = {}   # overridden per-run by eval_common.make_memo_class
 
     def __init__(self):

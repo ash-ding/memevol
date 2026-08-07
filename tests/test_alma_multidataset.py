@@ -81,7 +81,11 @@ def test_dataset_info_evidence_keys_and_recorders():
 
 
 def test_dynamicmem_prompts_byte_identical():
-    """The dataset_info extraction must not change DynamicMem prompt text."""
+    """DynamicMem prompt text is locked byte-identically against the fixture.
+    Fixture regenerated 2026-08-06 (contract rename): the embedded contract
+    source is now common/memo_class.py (class MemoClass + MemoStructure alias) —
+    alma prompt text intentionally changed at that point; comparisons to
+    pre-rename alma runs are prompt-version-crossing."""
     import json
     from pathlib import Path
     from baselines.evolve.alma import meta_agent_prompt as m
@@ -437,10 +441,10 @@ def test_alma_default_config_roundtrips():
 # single_stage, ValueError when absent, ValueError on an unknown field.
 
 _STUB_MEMO_SRC = '''\
-from common.harness_base import MemoStructure
+from common.memo_class import MemoClass
 
 
-class StubMemo(MemoStructure):
+class StubMemo(MemoClass):
     async def build_memory_from_data(self, recorder):
         return None
 

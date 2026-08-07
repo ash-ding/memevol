@@ -1,5 +1,5 @@
 """Tests for the hipporag2 harness baseline (baselines/harness/hipporag2/memo.py
-— retrieval MemoStructure). Zero-dependency runner; run in hipporag2's OWN uv
+— retrieval MemoClass). Zero-dependency runner; run in hipporag2's OWN uv
 project (baselines/harness/hipporag2/.venv/), not the repo-root dev env:
 
     uv run --project baselines/harness/hipporag2 python tests/test_hipporag2_baseline.py
@@ -11,7 +11,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
-# -------------------- hipporag2 (retrieval MemoStructure) --------------------
+# -------------------- hipporag2 (retrieval MemoClass) --------------------
 
 def test_hipporag_memo_passage_conversion():
     from baselines.harness.hipporag2.memo import _init_to_passages

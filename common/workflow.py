@@ -11,7 +11,7 @@ The base class handles (all unchanged from the prior DynamicMem_Workflow):
     the per-user error tally lands in `recorder.failure_info`, which the
     orchestrator's sanity gate inspects)
   - `save_full_traces` (one JSON per user under traces/)
-  - per-user isolation (fresh MemoStructure instance per user)
+  - per-user isolation (fresh MemoClass instance per user)
 
 To add a new benchmark, subclass `BaseWorkflow` and override the hooks listed
 under "subclass hooks" below. `DynamicMemWorkflow` in
@@ -30,7 +30,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Type
 
-from common.harness_base import MemoStructure
+from common.memo_class import MemoClass
 from common.logger import get_logger
 from common.recorder import Basic_Recorder
 
@@ -192,7 +192,7 @@ class BaseWorkflow(ABC):
 
     def __init__(
         self,
-        memo_class: Type[MemoStructure],
+        memo_class: Type[MemoClass],
         model: str,
         max_logs: Optional[int] = None,
         eval_n_qa: Optional[int] = None,
@@ -613,7 +613,7 @@ class BaseWorkflow(ABC):
 
     # ---- Phase 1 dispatch ----
 
-    async def _phase1_update(self, memo: MemoStructure, init_data: Any) -> None:
+    async def _phase1_update(self, memo: MemoClass, init_data: Any) -> None:
         """Hand the whole visible `init_data` to the memo in ONE build_memory_from_data
         call. Ingestion granularity is the memo's own choice; the workflow
         does not chunk."""

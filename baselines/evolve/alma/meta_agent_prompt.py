@@ -350,7 +350,7 @@ def get_metadata_dict(instance) -> dict:
 
 def _read_contract_files() -> str:
     """The backbone code shown to the LLM: the shared eval contract
-    (common/harness_base.py, which pulls in the Basic_Recorder envelope from
+    (common/memo_class.py, which pulls in the Basic_Recorder envelope from
     common/recorder.py) followed by alma's own layered-memory vocabulary
     (baselines/evolve/alma/memo_layers.py) — fixed order, each part labeled
     with its source path.
@@ -359,7 +359,7 @@ def _read_contract_files() -> str:
     the separate forge/harness_base.py, which alma must NOT pick up.)"""
     root = Path(__file__).resolve().parents[3]
     parts = []
-    for rel in ("common/harness_base.py", "baselines/evolve/alma/memo_layers.py"):
+    for rel in ("common/memo_class.py", "baselines/evolve/alma/memo_layers.py"):
         path = root / rel
         if not path.exists():
             raise FileNotFoundError(f"Cannot find {rel} at {path.resolve()}")

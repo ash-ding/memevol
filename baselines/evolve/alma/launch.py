@@ -2,7 +2,7 @@
 Alma subprocess entry point.
 
 Invoked by baselines/evolve/alma/eval_runner.py. Steps:
-  1. Dynamically load the MemoStructure subclass from the staged memo file.
+  1. Dynamically load the MemoClass subclass from the staged memo file.
   2. One call into the shared, execution-independent
      common.evaluate.evaluate_memo (gauntlet / single pass / check-mode smoke),
      which writes score.json, per-stage artifacts, traces and token usage
@@ -36,7 +36,7 @@ _project_root = Path(__file__).resolve().parents[3]
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
-from common.harness_base import MemoStructure
+from common.memo_class import MemoClass
 from baselines.registry import DATASETS
 from common.logger import get_logger
 
@@ -120,9 +120,9 @@ async def main(
     run_dir = Path(output_run_dir)
     run_dir.mkdir(parents=True, exist_ok=True)
 
-    # 1. Load MemoStructure class
+    # 1. Load MemoClass class
     try:
-        memo_class = find_subclass_in_file(module_path, MemoStructure)
+        memo_class = find_subclass_in_file(module_path, MemoClass)
     except Exception as exc:
         err = f"[{type(exc).__name__}] {exc}\n{traceback.format_exc()}"
         log.warning(f"Failed to load memo structure {memory_id}: {exc}")

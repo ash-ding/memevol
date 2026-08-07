@@ -21,7 +21,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from common.harness_base import MemoStructure
+from common.memo_class import MemoClass
 
 
 # --------------------------------------------------------------------------
@@ -38,7 +38,7 @@ class _FakeRec:
         self.failure_info = None
 
 
-class _StubMemo(MemoStructure):
+class _StubMemo(MemoClass):
     async def build_memory_from_data(self, r):
         return None
 
@@ -301,7 +301,7 @@ def test_whole_split_seed_is_noop():
 _BUILD_CALLS = []
 
 
-class _CountingMemo(MemoStructure):
+class _CountingMemo(MemoClass):
     """Picklable stub memo: no per-instance state (empty __dict__), so pickle
     of the built memo is trivial. Phase-1 bumps a module counter so we can
     detect that stage2/stage3 SKIP the build (cache hit)."""

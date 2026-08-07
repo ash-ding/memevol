@@ -49,7 +49,7 @@ baselines/
   does. Their unit of comparison is the search loop itself (proposer quality,
   sample efficiency, final evolved-harness score vs forge's).
 - **`harness/`** — fixed, hand-written memory systems implementing the same
-  standardized 3-hook `MemoStructure` contract
+  standardized 3-hook `MemoClass` contract
   (`build_memory_from_data` / `retrieve_memory_for_query` /
   `use_memory_to_answer`) that forge-evolved harnesses implement. Their unit
   of comparison is the harness artifact: they run through the SAME
@@ -62,7 +62,7 @@ These rules keep scores comparable while keeping methods independent. They
 bind every method here:
 
 - **The eval surface is mandatorily shared.** A method's FINAL ARTIFACT is a
-  `common.harness_base.MemoStructure` subclass implementing the 3-hook
+  `common.memo_class.MemoClass` subclass implementing the 3-hook
   contract, and it is scored ONLY through the shared registry/workflow path
   (`baselines/registry.py` → `datasets/<bench>/workflow.py` + the shared
   judge). No method ships its own scoring loop — otherwise its numbers stop
@@ -448,7 +448,7 @@ runner and is byte-identical to what forge-evolved harnesses get.
 ### Step 0 — understand what you're adapting to
 
 Your system is driven through three async hooks on a
-`common.harness_base.MemoStructure` subclass. The evaluation lifecycle per
+`common.memo_class.MemoClass` subclass. The evaluation lifecycle per
 user/sample:
 
 ```
@@ -488,9 +488,9 @@ Skeleton:
 # baselines/harness/<name>/memo.py
 import uuid
 from typing import Dict, Optional
-from common.harness_base import MemoStructure
+from common.memo_class import MemoClass
 
-class MyMemo(MemoStructure):
+class MyMemo(MemoClass):
     _cfg: Dict = {}                     # filled by eval_common.make_memo_class
 
     def __init__(self):
@@ -635,8 +635,8 @@ convention set above, concretely:
    search loop, prompts, checkpointing, its own base classes — lives in
    `baselines/evolve/<name>/`. Copy machinery from alma if useful; do not
    import it.
-2. **The final artifact is a 3-hook `MemoStructure`.** Whatever the search
-   produces must be loadable as a `common.harness_base.MemoStructure`
+2. **The final artifact is a 3-hook `MemoClass`.** Whatever the search
+   produces must be loadable as a `common.memo_class.MemoClass`
    subclass (directly, or via a thin adapter) so it can be scored through
    the shared workflow path. If the method's native artifact is not a
    Python class, the adapter is part of the baseline.

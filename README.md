@@ -8,7 +8,7 @@ long-context memory benchmarks.**
 
 1. [Codebase structure](#1-codebase-structure)
 2. [How forge works](#2-how-forge-works)
-3. [The `MemoStructure` contract](#3-the-memostructure-contract)
+3. [The `MemoClass` contract](#3-the-memoclass-contract)
 4. [Setup & quickstart](#4-setup--quickstart)
 
 Comparison baselines live under [`baselines/`](baselines/) — see
@@ -23,7 +23,7 @@ evaluation protocol.
 | Directory | Role |
 |---|---|
 | [`forge/`](forge/) | **The main method.** Claude-Code-SDK proposer + Singularity-sandboxed evaluator + frontier record store; searches over harness code |
-| [`common/`](common/) | The shared evaluation platform: the [`MemoStructure`](common/harness_base.py) contract, the [`Basic_Recorder`](common/recorder.py) data envelope, the [`BaseWorkflow`](common/workflow.py) scheduler, LLM/judge/embedding kernel, token tracking, memory cache, logging |
+| [`common/`](common/) | The shared evaluation platform: the [`MemoClass`](common/memo_class.py) contract, the [`Basic_Recorder`](common/recorder.py) data envelope, the [`BaseWorkflow`](common/workflow.py) scheduler, LLM/judge/embedding kernel, token tracking, memory cache, logging |
 | [`datasets/`](datasets/) | One adapter per benchmark: `env.py` (data loading + recorder + split), `workflow.py` (evaluation protocol), `prompts.py` (QA-agent prompt) |
 | [`baselines/`](baselines/) | Comparison methods, split into `evolve/` (search-method baselines, compared against forge itself) and `harness/` (ready-made memory systems, compared against forge-evolved harnesses) — [README](baselines/README.md) |
 | [`seeds/`](seeds/) | Opt-in seed harness library. A seed is copied into a run as candidate #0 (e.g. `no_memory` — the calibration floor any real memory design must beat) |
@@ -113,8 +113,8 @@ Each propose call runs Claude Code in a fresh Singularity container with a
 └── frontier.json               the population with per-benchmark scores
 
 /app                            (RO, selective; PYTHONPATH=/app)
-├── forge/harness_base.py       the MemoStructure base the new harness must inherit
-├── common/{harness_base,recorder,llm,logger}.py
+├── forge/harness_base.py       the MemoClass base the new harness must inherit
+├── common/{memo_class,harness_base,recorder,llm,logger}.py
 └── datasets/                   env/workflow/prompts per benchmark + raw data,
                                 with the held-out TEST SPLIT PHYSICALLY ABSENT
                                 (search-mode overlay binds shadow it — filtered
@@ -131,15 +131,15 @@ overlay during search.
 
 ---
 
-## 3. The `MemoStructure` contract
+## 3. The `MemoClass` contract
 
 Everything this repo evaluates — forge-evolved harnesses AND ready-made
 baseline memory systems — is a subclass of
-[`common.harness_base.MemoStructure`](common/harness_base.py) implementing
+[`common.memo_class.MemoClass`](common/memo_class.py) implementing
 three optional-override hooks:
 
 ```python
-class MyMemory(MemoStructure):
+class MyMemory(MemoClass):
 
     async def build_memory_from_data(self, recorder) -> None:
         """BUILD. recorder.init holds the data newly visible for THIS call.

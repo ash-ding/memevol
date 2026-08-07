@@ -111,9 +111,9 @@ def test_run_config_keys_match_constructor():
 
 
 def test_memo_implements_the_three_hook_contract():
-    from common.harness_base import MemoStructure
+    from common.memo_class import MemoClass
     from baselines.harness.memoryos.memo import MemoryOSMemo
-    assert issubclass(MemoryOSMemo, MemoStructure)
+    assert issubclass(MemoryOSMemo, MemoClass)
     for hook in ("build_memory_from_data", "retrieve_memory_for_query"):
         assert callable(getattr(MemoryOSMemo, hook, None)), hook
     # MemoryOS ships its own answerer (get_response); it must stay unused so the

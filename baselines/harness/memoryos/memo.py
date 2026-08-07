@@ -1,5 +1,5 @@
 """MemoryOS (arXiv 2506.06326, EMNLP 2025 Oral — github.com/BAI-LAB/MemoryOS)
-as a retrieval MemoStructure.
+as a retrieval MemoClass.
 
 BUILD: every ingestion unit becomes one MemoryOS *dialogue page* via
 ``Memoryos.add_memory(user_input, agent_response)``, and the vendored pipeline
@@ -42,7 +42,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from common.harness_base import MemoStructure
+from common.memo_class import MemoClass
 from baselines.harness.hipporag2.memo import app_log_to_passage
 from baselines.harness.memoryos._st_shim import ensure_sentence_transformers, hf_datasets_active
 
@@ -135,7 +135,7 @@ def _page_to_passage(page: Dict[str, Any]) -> str:
     return f"{head}{body}"
 
 
-class MemoryOSMemo(MemoStructure):
+class MemoryOSMemo(MemoClass):
     _cfg: Dict = {}   # overridden per-run by eval_common.make_memo_class
 
     def __init__(self):

@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from common.harness_base import MemoStructure
+from common.memo_class import MemoClass
 from common.llm import Agent
 from common.logger import get_logger
 from baselines.evolve.alma.memo_manager import Memo_Manager
@@ -80,7 +80,7 @@ class MetaAgent:
         n_score_bins: int = 3,
         samples_per_bin: int = 3,
     ):
-        """Analyze current MemoStructure and return suggestions."""
+        """Analyze current MemoClass and return suggestions."""
         memo_info = self.read_memo_info(
             memo_SHA, mode='eval',
             n_score_bins=n_score_bins, samples_per_bin=samples_per_bin,
@@ -101,7 +101,7 @@ class MetaAgent:
         analysis_result: Dict[str, Any] = {},
         memo_info: Dict[str, Any] = {},
     ) -> str:
-        """Generate a new MemoStructure code based on analysis. Returns code_str."""
+        """Generate a new MemoClass code based on analysis. Returns code_str."""
         recorder = self._get_recorder_class()
         sys_msg, user_msg = build_generate_new_code_prompt(
             memo_info=memo_info,

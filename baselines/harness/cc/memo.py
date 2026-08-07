@@ -1,4 +1,4 @@
-"""cc as a native-answer MemoStructure: Phase 1 (`build_memory_from_data`) stashes the
+"""cc as a native-answer MemoClass: Phase 1 (`build_memory_from_data`) stashes the
 currently-visible data into a per-user temp dir. Phase 2 (`retrieve_memory_for_query`)
 re-stashes the CURRENT visible data (the workflow may have grown the visible
 prefix, e.g. DynamicMem checkpoints) and returns `{}` — cc injects NO memory
@@ -30,7 +30,7 @@ from claude_code_sdk import (
 )
 from claude_code_sdk._errors import MessageParseError
 
-from common.harness_base import MemoStructure
+from common.memo_class import MemoClass
 
 # Monkey-patch SDK's parse_message to skip unknown message types
 # (e.g. rate_limit_event not yet handled in SDK 0.0.25).
@@ -191,7 +191,7 @@ async def ask_cc(question: str, tmp_dir: str, model: str, max_turns: int = 30,
     return final_text, usage_info, trace
 
 
-class CCMemo(MemoStructure):
+class CCMemo(MemoClass):
     def __init__(self):
         super().__init__()
         self._tmp_dir = None
@@ -236,7 +236,7 @@ class CCMemo(MemoStructure):
                          system_prompt=_system_prompt(self._key))
 
     def __del__(self):
-        # Best-effort cleanup of the per-instance scratch dir. One MemoStructure
+        # Best-effort cleanup of the per-instance scratch dir. One MemoClass
         # instance == one user (no cross-user state, see CLAUDE.md), so this
         # never removes another user's data; ignore_errors guards against
         # already-gone dirs / interpreter-shutdown teardown ordering.

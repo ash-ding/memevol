@@ -13,14 +13,14 @@ History:
                    default disallowed_tools relaxed to ["mcp__*"] (was
                    [Bash, WebFetch, WebSearch, mcp__*]); jq + tree added.
   v10 (2026-04-27) /app:ro whole-root bind replaced with selective bind to
-                   common/{harness_base,llm,logger,__init__}.py + datasets/
+                   common/{memo_class,harness_base,llm,logger,__init__}.py + datasets/
                    + forge/{__init__,prompts,propose_in_container}.py;
                    /seeds bind dropped (selected seed already copied into
                    /workspace/harnesses/0/ at startup). PROPOSER_SYSTEM made
                    sanity-conditional via build_proposer_system(...).
   2026-07-16       common/recorder.py added to the bind list (Basic_Recorder
-                   moved out of harness_base — the in-container
-                   `import common.harness_base` chain needs it).
+                   moved out of the contract module — the in-container
+                   `import common.memo_class` chain needs it).
 
 In-container runtime (set by propose_in_container.py from CLI args):
   cwd                        /workspace = workspace/<run_id>/
@@ -484,8 +484,8 @@ def _build_singularity_cmd(
         import) needs to be reachable via /app/forge/. Agents never read these.
       - Agent reference materials live under /app/{common,datasets,forge}/. Only
         the files that contribute to writing a correct harness are bound:
-          forge/harness_base.py    the MemoStructure base CC must inherit from
-          common/harness_base.py   the underlying ABC (forge's subclasses it)
+          forge/harness_base.py    the MemoClass base CC must inherit from
+          common/memo_class.py     the underlying ABC (forge's subclasses it; harness_base.py = shim)
           common/recorder.py       Basic_Recorder data envelope
                                    (harness_base imports it)
           common/llm.py            Agent + Embedding helpers (token-tracked)
@@ -519,6 +519,9 @@ def _build_singularity_cmd(
         # Agent reference materials
         f"{PROJECT_ROOT}/forge/harness_base.py:/app/forge/harness_base.py:ro",
         f"{PROJECT_ROOT}/common/__init__.py:/app/common/__init__.py:ro",
+        # memo_class.py is the canonical contract; harness_base.py is its
+        # back-compat shim (old harnesses import it) — bind BOTH.
+        f"{PROJECT_ROOT}/common/memo_class.py:/app/common/memo_class.py:ro",
         f"{PROJECT_ROOT}/common/harness_base.py:/app/common/harness_base.py:ro",
         f"{PROJECT_ROOT}/common/recorder.py:/app/common/recorder.py:ro",
         f"{PROJECT_ROOT}/common/llm.py:/app/common/llm.py:ro",

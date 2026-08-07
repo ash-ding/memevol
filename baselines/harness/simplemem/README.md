@@ -1,7 +1,7 @@
 # SimpleMem baseline
 
 [SimpleMem](https://github.com/aiming-lab/SimpleMem) — semantic-compression
-lifelong memory — as a ready-made memory system on the 3-hook `MemoStructure`
+lifelong memory — as a ready-made memory system on the 3-hook `MemoClass`
 contract. The paper PDF is in this directory ([simplemem.pdf](simplemem.pdf)).
 
 **Provenance**: the `vendor/simplemem/` subtree is vendored from

@@ -78,9 +78,9 @@ def test_run_config_keys_match_memo_reads():
 
 
 def test_memo_implements_the_three_hook_contract():
-    from common.harness_base import MemoStructure
+    from common.memo_class import MemoClass
     from baselines.harness.mem0.memo import Mem0Memo
-    assert issubclass(Mem0Memo, MemoStructure)
+    assert issubclass(Mem0Memo, MemoClass)
     for hook in ("build_memory_from_data", "retrieve_memory_for_query"):
         assert callable(getattr(Mem0Memo, hook, None)), hook
     # use_memory_to_answer must NOT be overridden: the shared QA agent answers.
