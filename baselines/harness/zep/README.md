@@ -5,13 +5,13 @@
 contract. Zep's memory engine is **Graphiti**; the baseline vendors and drives
 `graphiti_core` directly.
 
-**Provenance**: `vendor/graphiti_core/` is vendored VERBATIM (byte-identical) from
+**Provenance**: `src/graphiti_core/` is vendored VERBATIM (byte-identical) from
 <https://github.com/getzep/graphiti> @
 `4f62cfe7a2d519e55bfdf2dc4a2fd06649dc00b3`, excluding the top-level `server/` and
-`mcp_server/` service dirs (unused). No file under `vendor/graphiti_core/` is
+`mcp_server/` service dirs (unused). No file under `src/graphiti_core/` is
 edited — provenance lives here, not in per-file headers, to preserve byte-identity:
 
-    diff -r <(git -C <graphiti-clone> show 4f62cfe:graphiti_core) vendor/graphiti_core
+    diff -r <(git -C <graphiti-clone> show 4f62cfe:graphiti_core) src/graphiti_core
 
 ## How it works
 
@@ -77,7 +77,7 @@ true). See `config.example.yaml`.
 | Category | Items |
 |---|---|
 | Verbatim | whole `graphiti_core` (@ 4f62cfe); Graphiti's construction pipeline (entity/fact/temporal/community extraction, resolution, edge invalidation); BGE reranker (`BAAI/bge-reranker-v2-m3`); `COMBINED_HYBRID_SEARCH_CROSS_ENCODER` recipe; retrieve_k=20; internal graph LLM gpt-4o-mini; paper's FACTS/ENTITIES context template (§3) |
-| Integration adaptations (not algorithm) | **FalkorDB Lite** backend instead of the paper's Neo4j — full-text search is RediSearch, not Neo4j Lucene BM25 (a retrieval-backend difference; graph construction is backend-agnostic and identical); **BGE-m3 embedder** supplied via Graphiti's public `EmbedderClient` extension point (`_bge_embedder.py`) since graphiti_core ships no local embedder — the paper used BGE-m3, which is not in the OSS embedder list; longmemeval (per message) / dynamicmem (per app-log entry, hipporag2's `app_log_to_passage` text) episode mappings — the paper only ran LoCoMo/LongMemEval conversations; answering via the shared QA agent; `_st_shim.py` (memevol's `datasets/` shadows HF `datasets`, a sentence-transformers import-time dep) + shared model cache; context compose replicated here (a Zep-service feature, not in OSS Graphiti) |
+| Integration adaptations (not algorithm) | **FalkorDB Lite** backend instead of the paper's Neo4j — full-text search is RediSearch, not Neo4j Lucene BM25 (a retrieval-backend difference; graph construction is backend-agnostic and identical); **BGE-m3 embedder** supplied via Graphiti's public `EmbedderClient` extension point (`_bge_embedder.py`) since graphiti_core ships no local embedder — the paper used BGE-m3, which is not in the OSS embedder list; longmemeval (per message) / dynamicmem (per app-log entry, hipporag2's `app_log_to_passage` text) episode mappings — the paper only ran LoCoMo/LongMemEval conversations; answering via the shared QA agent; `_st_shim.py` (memevol's `benchmarks/` shadows HF `datasets`, a sentence-transformers import-time dep) + shared model cache; context compose replicated here (a Zep-service feature, not in OSS Graphiti) |
 | Upstream quirks preserved | Graphiti's last-n-message context window (paper n=4) and all prompts/thresholds untouched; episode `source=message` auto-extracts the speaker as an entity |
 
 ## Caveats

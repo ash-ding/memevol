@@ -7,7 +7,7 @@ needed by launch.py + harness imports are exposed:
   singularity exec \\
       --containall \\
       --bind <project_root>/common:/app/common:ro          # full common/ pkg
-      --bind <project_root>/datasets:/app/datasets:ro      # full datasets/ pkg (incl. raw data)
+      --bind <project_root>/datasets:/app/benchmarks:ro      # full datasets/ pkg (incl. raw data)
       --bind <project_root>/forge/__init__.py:/app/forge/__init__.py:ro
       --bind <project_root>/forge/launch.py:/app/forge/launch.py:ro
       --bind <project_root>/forge/memo_class.py:/app/forge/memo_class.py:ro
@@ -143,7 +143,7 @@ async def run_evaluation(
         # Selective binds — only what launch.py + harness actually need.
         # See module docstring for what's intentionally NOT bound.
         "--bind", f"{PROJECT_ROOT}/common:/app/common:ro",
-        "--bind", f"{PROJECT_ROOT}/datasets:/app/datasets:ro",
+        "--bind", f"{PROJECT_ROOT}/benchmarks:/app/benchmarks:ro",
         "--bind", f"{PROJECT_ROOT}/forge/__init__.py:/app/forge/__init__.py:ro",
         "--bind", f"{PROJECT_ROOT}/forge/launch.py:/app/forge/launch.py:ro",
         # Harnesses inherit forge.memo_class.MemoClass (subclass of the
@@ -157,7 +157,7 @@ async def run_evaluation(
         # survive across evaluator invocations for this harness+dataset).
         cmd += ["--bind", f"{memcache_dir}:/memcache:rw"]
     # Search-mode data isolation: overlay binds that shadow the test split
-    # inside /app/datasets (see forge/data_isolation.py). Passed only for
+    # inside /app/benchmarks (see forge/data_isolation.py). Passed only for
     # split=search runs with cfg.data_isolation on.
     for b in (data_isolation_binds or []):
         cmd += ["--bind", b]

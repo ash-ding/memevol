@@ -19,7 +19,7 @@ def test_st_shim_coexists_with_memevol_datasets():
     ensure_sentence_transformers()
     ensure_sentence_transformers()   # idempotent
     import sentence_transformers
-    from datasets.locomo.env import extract_sessions   # memevol's datasets
+    from benchmarks.locomo.env import extract_sessions   # memevol's datasets
     assert hasattr(sentence_transformers, "SentenceTransformer")
     assert callable(extract_sessions)
 
@@ -140,7 +140,7 @@ def test_retrieve_empty_store_returns_empty_dict():
 
 def test_hf_datasets_active_fixes_calltime_datasets_collision():
     # Reproduces the exact call-time failure the shim's context manager fixes:
-    # sentence-transformers' get_versions() does `from datasets import
+    # sentence-transformers' get_versions() does `from benchmarks import
     # __version__` at SentenceTransformer construction, which raises when
     # memevol's `datasets` package (no __version__) is the ambient view.
     from baselines.harness.amem._st_shim import (
@@ -150,7 +150,7 @@ def test_hf_datasets_active_fixes_calltime_datasets_collision():
     # Outside the context, memevol's datasets shadows HF -> the failing call raises:
     raised = False
     try:
-        from datasets import __version__ as _v  # noqa: F401
+        from benchmarks import __version__ as _v  # noqa: F401
     except ImportError:
         raised = True
     assert raised, "expected memevol `datasets` (no __version__) to shadow HF outside the context"
@@ -159,7 +159,7 @@ def test_hf_datasets_active_fixes_calltime_datasets_collision():
         import datasets as hf_ds
         assert isinstance(hf_ds.__version__, str) and hf_ds.__version__
     # After exit, memevol's benchmark package is restored:
-    from datasets.locomo.env import extract_sessions
+    from benchmarks.locomo.env import extract_sessions
     assert callable(extract_sessions)
 
 
@@ -167,7 +167,7 @@ class _HFAssertingSystem:
     """Fake AgenticMemorySystem asserting HF `datasets` is active whenever an
     A-mem op runs — i.e. the memo wrapped the op in hf_datasets_active(), which
     is what lets A-mem's internal SentenceTransformer (re)constructions resolve
-    `from datasets import __version__`."""
+    `from benchmarks import __version__`."""
     def __init__(self):
         self.calls = []
     @staticmethod
@@ -201,7 +201,7 @@ def test_build_runs_add_note_under_hf_datasets_active():
     asyncio.run(m.build_memory_from_data(rec))   # asserts HF-active inside add_note
     assert m._system.calls == [("user: a", "d1"), ("assistant: b", "d1")]
     # memevol datasets view restored after the hook returns:
-    from datasets.locomo.env import extract_sessions
+    from benchmarks.locomo.env import extract_sessions
     assert callable(extract_sessions)
 
 
@@ -212,7 +212,7 @@ def test_retrieve_runs_find_related_under_hf_datasets_active():
     out = asyncio.run(m.retrieve_memory_for_query(SimpleNamespace(init={"query": "who?"})))
     assert out == {"memories": "MEM"}       # asserts HF-active inside find_related_memories_raw
     assert m._retriever_llm.llm  # sanity: rewrite path used the fake LLM controller
-    from datasets.locomo.env import extract_sessions
+    from benchmarks.locomo.env import extract_sessions
     assert callable(extract_sessions)       # memevol view restored after the hook
 
 

@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Dict, List
 
 # LoCoMo category ids. cat-5 (adversarial) carries no gold answer and is excluded
-# at load time by datasets/locomo/env.py — the papers exclude it too.
+# at load time by benchmarks/locomo/env.py — the papers exclude it too.
 CATEGORY = {1: "multi-hop", 2: "temporal", 3: "open-domain", 4: "single-hop"}
 
 # Published LoCoMo numbers, GPT-4o-mini, for the reproduction check.

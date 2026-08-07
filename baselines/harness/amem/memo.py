@@ -32,10 +32,11 @@ from typing import Dict, List, Tuple
 
 from common.memo_class import MemoClass
 from baselines.harness.hipporag2.memo import app_log_to_passage
-from baselines.harness.amem._st_shim import ensure_sentence_transformers, hf_datasets_active
-
-ensure_sentence_transformers()   # MUST precede the memory_layer import (it imports ST)
-from baselines.harness.amem.memory_layer import AgenticMemorySystem, LLMController  # noqa: E402
+# NOTE: sentence-transformers eagerly imports HuggingFace `datasets`. That used
+# to collide with memevol's own top-level `datasets/` package and needed a
+# sys.modules shim (_st_shim.py); the package was renamed to `benchmarks/`
+# (2026-08-07), so plain imports are correct now.
+from baselines.harness.amem.src.memory_layer import AgenticMemorySystem, LLMController  # noqa: E402
 
 # Copied VERBATIM from A-mem test_advanced.py::generate_query_llm (@ 0c8039f).
 # (.format on this template renders byte-identically to upstream's f-string.)
@@ -65,7 +66,7 @@ def _init_to_note_units(init: Dict) -> List[Tuple[str, str]]:
     if "app_logs" in init:
         return [(app_log_to_passage(e), e.get("timestamp", "")) for e in init["app_logs"]]
     if "conversation" in init:
-        from datasets.locomo.env import extract_sessions
+        from benchmarks.locomo.env import extract_sessions
         units: List[Tuple[str, str]] = []
         for _idx, date_time, turns in extract_sessions(init["conversation"]):
             for t in turns:
@@ -95,31 +96,20 @@ class AMemMemo(MemoClass):
         model = self.config.get("amem_llm_model", "gpt-4o-mini")
         # Mirrors test_advanced.py::advancedMemAgent.__init__ (openai backend):
         # one AgenticMemorySystem + a separate retriever_llm, same model.
-        # Constructing AgenticMemorySystem builds a SentenceTransformer, whose
-        # __init__ -> model_card.get_versions() lazily runs `from datasets
-        # import __version__`; hf_datasets_active() makes `datasets` resolve to
-        # HF (not memevol's benchmark package) for that construction.
-        with hf_datasets_active():
-            self._system = AgenticMemorySystem(
-                model_name="all-MiniLM-L6-v2", llm_backend="openai", llm_model=model,
-            )
+        self._system = AgenticMemorySystem(
+            model_name="all-MiniLM-L6-v2", llm_backend="openai", llm_model=model,
+        )
         self._retriever_llm = LLMController(backend="openai", model=model, api_key=None)
 
     async def build_memory_from_data(self, recorder) -> None:
         self._ensure_system()
-        units = _init_to_note_units(recorder.init)   # memevol `datasets` (locomo branch) — OUTSIDE the hf window
+        units = _init_to_note_units(recorder.init)
         # A-mem prints every analysis + evolution prompt; silence the flood
         # (console-output-only adaptation — the algorithm is untouched). The
         # block contains no awaits, so redirect_stdout can't leak across tasks.
-        # add_note re-constructs a SentenceTransformer inside consolidate_memories()
-        # every evo_threshold evolutions; that (re)construction lazily runs
-        # `from datasets import __version__`, so keep HF `datasets` active for the
-        # whole loop (no memevol-`datasets` import happens inside it). No await in
-        # the block, so the global sys.modules swap can't interleave across tasks.
         with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
-            with hf_datasets_active():
-                for content, t in units:
-                    self._system.add_note(content, time=t)
+            for content, t in units:
+                self._system.add_note(content, time=t)
 
     def _rewrite_query(self, question: str) -> str:
         # VERBATIM logic of test_advanced.py::generate_query_llm (@ 0c8039f).
@@ -136,13 +126,8 @@ class AMemMemo(MemoClass):
         query = recorder.init.get("query", "")
         k = int(self.config.get("retrieve_k", 10))
         with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
-            keywords = self._rewrite_query(query)   # LLM call; no ST construction
-            # Uniform invariant: every self._system.* call runs under HF `datasets`
-            # (find_related_memories_raw does not construct today, but this keeps
-            # the "A-mem system ops run with HF datasets active" rule uniform and
-            # future-proof). No await inside; no memevol-`datasets` import inside.
-            with hf_datasets_active():
-                memory_str = self._system.find_related_memories_raw(keywords, k=k)
+            keywords = self._rewrite_query(query)   # LLM call
+            memory_str = self._system.find_related_memories_raw(keywords, k=k)
         if not memory_str:   # upstream returns [] when the store is empty
             return {}
         return {"memories": memory_str}

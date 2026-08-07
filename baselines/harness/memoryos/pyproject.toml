@@ -27,7 +27,7 @@ dependencies = [
     "sentence-transformers>=3.2.1",# utils.py: SentenceTransformer
     "transformers",                # ST backend
     "torch",                       # ST dep
-    "datasets",                    # HF datasets (ST import-time shadow shim, _st_shim.py)
+    "datasets",                    # HF datasets — sentence-transformers imports it eagerly
 ]
 
 [tool.uv]

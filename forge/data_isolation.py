@@ -1,7 +1,7 @@
 """Search-mode data isolation — make the TEST split technically invisible
 inside both sandbox containers (proposer + evaluator).
 
-Both containers bind the full `datasets/` package RO (the workflows need the
+Both containers bind the full `benchmarks/` package RO (the workflows need the
 .py modules and the search-split raw data). Without isolation, the search
 agent and evolved harness code could read the held-out test questions AND
 gold answers — the only protection was a prompt-level policy. This module
@@ -41,7 +41,7 @@ from forge.paths import PROJECT_ROOT, WORKSPACE_BASE
 
 log = logging.getLogger("forge.data_isolation")
 
-_DATASETS = PROJECT_ROOT / "datasets"
+_DATASETS = PROJECT_ROOT / "benchmarks"
 
 # Cross-run staging cache. The LongMemEval raw files are LARGE (m variant
 # ~2.6 GB) — filtering them costs minutes of JSON parse/dump, so staged
@@ -74,11 +74,11 @@ def _mark(out: Path, *srcs: Path) -> None:
         json.dumps(_src_fingerprint(*srcs)), encoding="utf-8"
     )
 # Container-side mount point of the datasets package (same in both sandboxes).
-_APP_DATASETS = "/app/datasets"
+_APP_DATASETS = "/app/benchmarks"
 
 
 def _stage_locomo(staging: Path) -> List[str]:
-    from datasets.locomo.env import TRAIN_SAMPLES, DATA_PATH
+    from benchmarks.locomo.env import TRAIN_SAMPLES, DATA_PATH
 
     src = Path(DATA_PATH)
     out = staging / "locomo10.json"
@@ -94,7 +94,7 @@ def _stage_locomo(staging: Path) -> List[str]:
 
 
 def _stage_dynamicmem(staging: Path) -> List[str]:
-    from datasets.dynamicmem.env import TRAIN_USERS, _get_all_user_dirs
+    from benchmarks.dynamicmem.env import TRAIN_USERS, _get_all_user_dirs
 
     empty = staging / "empty_user_data"
     empty.mkdir(parents=True, exist_ok=True)
@@ -113,7 +113,7 @@ def _stage_dynamicmem(staging: Path) -> List[str]:
 
 
 def _stage_longmemeval(staging: Path) -> List[str]:
-    from datasets.longmemeval.env import DATA_PATHS, _compute_split
+    from benchmarks.longmemeval.env import DATA_PATHS, _compute_split
 
     search_qids, _test_qids = _compute_split()
     keep = set(search_qids)
@@ -140,7 +140,7 @@ def _stage_longmemeval(staging: Path) -> List[str]:
         encoding="utf-8",
     )
     # Container-only path — binding to a target that doesn't pre-exist inside
-    # the host-bound /app/datasets dir would make Singularity create an empty
+    # the host-bound /app/benchmarks dir would make Singularity create an empty
     # placeholder file on the HOST (which then poisons host-side split
     # computation). /staging lives in the container overlay, never on disk.
     binds.append(f"{manifest}:/staging/split_manifest.json:ro")
@@ -161,7 +161,7 @@ def _stage_longmemeval(staging: Path) -> List[str]:
 def stage_search_data(staging_dir: Optional[Path] = None) -> List[str]:
     """Write search-split-only data under `staging_dir` (default: the shared
     cross-run cache workspace/.data_staging_cache) and return the singularity
-    `--bind` values that overlay it onto the container's /app/datasets.
+    `--bind` values that overlay it onto the container's /app/benchmarks.
     Deterministic; artifacts are fingerprinted against their source files and
     reused until the sources change. Derived from each env's OWN split
     functions (never re-implements a split). ALL benchmarks are filtered

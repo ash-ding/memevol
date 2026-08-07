@@ -453,7 +453,7 @@ async def evaluate_memo(
     import json as _json
     import shutil as _shutil
     from pathlib import Path
-    from datasets.registry import resolve as _resolve_dataset
+    from benchmarks.registry import resolve as _resolve_dataset
     from common.tokens import init_global_tracker
     from common.memory_cache import harness_fingerprint as _dir_fingerprint
 

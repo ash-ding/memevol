@@ -17,7 +17,7 @@ from collections.abc import Iterable
 
 from baselines.harness.zep import _st_shim
 
-_st_shim.ensure_vendor_on_path()
+_st_shim.ensure_src_on_path()
 _st_shim.ensure_sentence_transformers()   # before importing the graphiti reranker (imports ST)
 
 from graphiti_core.embedder.client import EmbedderClient, EmbedderConfig  # noqa: E402

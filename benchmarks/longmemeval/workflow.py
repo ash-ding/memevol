@@ -10,11 +10,11 @@ from typing import Any, Dict, List, Optional, Tuple, Type
 
 from common.recorder import Basic_Recorder
 from common.workflow import BaseWorkflow
-from datasets.longmemeval.env import (
+from benchmarks.longmemeval.env import (
     LongMemEvalRecorder,
     load_user_data,
 )
-from datasets.longmemeval.prompts import (
+from benchmarks.longmemeval.prompts import (
     LONGMEMEVAL_JUDGE_OTHER,
     LONGMEMEVAL_JUDGE_PROMPTS,
     get_longmemeval_prompt,

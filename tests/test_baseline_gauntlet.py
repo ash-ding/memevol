@@ -59,7 +59,7 @@ def _patch_run_all_users(reward, seen):
 
 
 def _run_with_fake_run_all_users(reward, seen, **run_kwargs):
-    from datasets.locomo.workflow import LoCoMoWorkflow
+    from benchmarks.locomo.workflow import LoCoMoWorkflow
     from baselines.harness.eval_utility import run_baseline
     orig = LoCoMoWorkflow.run_all_users
     LoCoMoWorkflow.run_all_users = _patch_run_all_users(reward, seen)
@@ -177,7 +177,7 @@ def test_progressive_false_single_stage_path():
 # --------------------------------------------------------------------------
 
 def test_progressive_false_sizes_from_single_stage():
-    from datasets.locomo.workflow import LoCoMoWorkflow
+    from benchmarks.locomo.workflow import LoCoMoWorkflow
     from baselines.harness.eval_utility import run_baseline
     from common.evaluate import single_stage_wire_spec
     from common.sampling import derive_sample_seed
@@ -280,7 +280,7 @@ def test_progressive_false_rejects_unknown_single_stage_field():
 def test_whole_split_seed_is_noop():
     # Directly against the primitive evaluate_memo calls (env.get_task_list →
     # shuffle_prefix): a seed at whole-split n=None must not change the SET.
-    from datasets.locomo.env import get_task_list
+    from benchmarks.locomo.env import get_task_list
     from common.sampling import derive_sample_seed
     seed = derive_sample_seed(42, 0, "locomo")
     assert seed  # non-empty seed derived
@@ -317,7 +317,7 @@ class _CountingMemo(MemoClass):
 
 def test_progressive_real_memcache_reuse():
     import common.llm as llm_mod
-    from datasets.locomo.workflow import LoCoMoWorkflow
+    from benchmarks.locomo.workflow import LoCoMoWorkflow
     from baselines.harness.eval_utility import run_baseline
 
     _BUILD_CALLS.clear()

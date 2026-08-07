@@ -1,6 +1,6 @@
 """Tests for the official DynamicMem TCE protocol port.
 
-Covers datasets/dynamicmem/tce_prompts.py (prompt builders + scoring math,
+Covers benchmarks/dynamicmem/tce_prompts.py (prompt builders + scoring math,
 ported verbatim from /export/scratch_large/ding/code/DynamicMem) and the
 env.py checkpoint loader against the real published data.
 
@@ -15,7 +15,7 @@ import traceback
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("OPENAI_API_KEY", "test-dummy-key")
 
-import datasets.dynamicmem.tce_prompts as tce
+import benchmarks.dynamicmem.tce_prompts as tce
 
 
 # ---------------- golden normalization (normalize_task_a_current_value) ----------------
@@ -318,9 +318,9 @@ def test_retrieved_to_memory_blocks():
 # ---------------- env loader on real data ----------------
 
 def test_env_loader_counts_match_real_data():
-    from datasets.dynamicmem.env import load_user_checkpoints
+    from benchmarks.dynamicmem.env import load_user_checkpoints
     user_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                            "datasets", "dynamicmem", "user_data", "001_user_001")
+                            "benchmarks", "dynamicmem", "user_data", "001_user_001")
     app_logs, checkpoints = load_user_checkpoints(user_dir)
     assert len(app_logs) == 1455, f"app_logs {len(app_logs)}"
     assert len(checkpoints) == 5, f"checkpoints {len(checkpoints)}"
@@ -354,9 +354,9 @@ def test_env_loader_counts_match_real_data():
 
 
 def test_env_sampling_stratified_and_deterministic():
-    from datasets.dynamicmem.env import load_user_checkpoints, sample_items
+    from benchmarks.dynamicmem.env import load_user_checkpoints, sample_items
     user_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                            "datasets", "dynamicmem", "user_data", "001_user_001")
+                            "benchmarks", "dynamicmem", "user_data", "001_user_001")
     _, checkpoints = load_user_checkpoints(user_dir)
     s1 = sample_items(checkpoints, 20, seed="001_user_001")
     s2 = sample_items(checkpoints, 20, seed="001_user_001")
@@ -376,9 +376,9 @@ def test_env_sampling_stratified_and_deterministic():
 
 
 def test_env_compat_shim_last_checkpoint_only():
-    from datasets.dynamicmem.env import load_user_data
+    from benchmarks.dynamicmem.env import load_user_data
     user_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                            "datasets", "dynamicmem", "user_data", "001_user_001")
+                            "benchmarks", "dynamicmem", "user_data", "001_user_001")
     app_logs, profile, qa_pairs = load_user_data(user_dir, None)
     assert len(app_logs) == 1455
     assert profile == {}

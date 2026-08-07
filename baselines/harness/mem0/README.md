@@ -83,7 +83,7 @@ open-domain the three-category mean is **38.4 vs the paper's 38.7**.
 **The open-domain cell is a repo-level metric artifact, not a Mem0 defect.**
 LoCoMo's category 3 is speculative yes/no ("Would Caroline want to move back?",
 gold `"No; she's in the process of adopting children."`), but the shared prompt
-in `datasets/locomo/prompts.py` asks for a short phrase "with exact words from
+in `benchmarks/locomo/prompts.py` asks for a short phrase "with exact words from
 the context", so answers come back as descriptive statements that share almost no
 tokens with the gold. It is not method-specific: a plain dense-retrieval memory
 measured under the same prompt scores 12.3–14.3 open-domain F1, and MemoryOS

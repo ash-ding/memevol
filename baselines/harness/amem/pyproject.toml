@@ -23,7 +23,7 @@ dependencies = [
     "rich",
     "tiktoken",
     # --- amem-specific ---
-    "sentence-transformers>=3.2.1",   # memory_layer.py: SentenceTransformer
+    "sentence-transformers>=3.2.1",   # src/memory_layer.py: SentenceTransformer
     "transformers",                   # AutoModel/AutoTokenizer
     "torch",                          # embedding path
     "nltk",                           # word_tokenize
@@ -31,7 +31,7 @@ dependencies = [
     "scikit-learn",                   # cosine_similarity
     "litellm",                        # completion
     "requests",
-    "datasets",                       # HF datasets (ST import-time shim)
+    "datasets",                       # HF datasets — sentence-transformers imports it eagerly
 ]
 
 [tool.uv]

@@ -16,13 +16,13 @@ from common.memo_class import MemoClass
 from common.logger import get_logger
 from common.recorder import Basic_Recorder
 from common.workflow import BaseWorkflow
-from datasets.locomo.env import (
+from benchmarks.locomo.env import (
     LoCoMoRecorder,
     extract_sessions,
     load_user_data,
     lookup_turns_by_dia_ids,
 )
-from datasets.locomo.prompts import LOCOMO_JUDGE_PROMPT, get_locomo_prompt
+from benchmarks.locomo.prompts import LOCOMO_JUDGE_PROMPT, get_locomo_prompt
 
 log = get_logger("main")
 
@@ -100,7 +100,7 @@ class LoCoMoWorkflow(BaseWorkflow):
     def build_qa_prompt(
         self, query: str, retrieved: Dict, qa_metadata: Dict, reference: str = ""
     ) -> List[Dict]:
-        # LoCoMo dispatches by qa_metadata.category (see datasets/locomo/prompts.py).
+        # LoCoMo dispatches by qa_metadata.category (see benchmarks/locomo/prompts.py).
         # Only categories 1-4 occur (cat-5 adversarial QAs are filtered at
         # load time); `reference` never reaches the QA prompt.
         return get_locomo_prompt(

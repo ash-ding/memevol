@@ -291,7 +291,7 @@ prompts:
 # Datasets (per-benchmark eval and sanity sizes)
 #
 # Each key under `datasets:` MUST match a workflow registered in
-# `datasets/registry.py`. Currently available:
+# `benchmarks/registry.py`. Currently available:
 #   dynamicmem, locomo, longmemeval_s, longmemeval_m
 #
 # Comment out a benchmark to skip it; the entire datasets block is required

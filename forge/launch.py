@@ -43,7 +43,7 @@ if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
 from common.memo_class import MemoClass
-from datasets.registry import DATASETS
+from benchmarks.registry import DATASETS
 
 
 def _load_harness_class(harness_dir: Path) -> Type[MemoClass]:

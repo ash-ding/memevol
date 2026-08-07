@@ -35,7 +35,7 @@ from forge.data_isolation import stage_search_data  # noqa: E402
 def _synthetic_lme():
     """Small fake LongMemEval data — the real m variant is ~2.6 GB, so unit
     tests must not stage it. Monkeypatches DATA_PATHS + the split cache."""
-    import datasets.longmemeval.env as lme
+    import benchmarks.longmemeval.env as lme
     with tempfile.TemporaryDirectory() as td:
         samples = [{"question_id": q, "haystack_sessions": []}
                    for q in ("q1", "q2", "q3")]
@@ -68,7 +68,7 @@ def test_locomo_filtered_is_search_prefix():
         DI._stage_locomo(Path(td))
         filtered = json.loads((Path(td) / "locomo10.json").read_text())
         full = json.loads(
-            Path(REPO, "datasets", "locomo", "locomo10.json").read_text())
+            Path(REPO, "benchmarks", "locomo", "locomo10.json").read_text())
         assert len(filtered) == 6
         assert [s["sample_id"] for s in filtered] == \
                [s["sample_id"] for s in full[:6]]
@@ -93,19 +93,19 @@ def test_bind_targets_shadow_container_paths():
         binds, _ = _stage(td)
         dsts = [b.split(":")[1] for b in binds]
         for expected in (
-            "/app/datasets/locomo/locomo10.json",
-            "/app/datasets/longmemeval/longmemeval_s_cleaned.json",
-            "/app/datasets/longmemeval/longmemeval_m_cleaned.json",
+            "/app/benchmarks/locomo/locomo10.json",
+            "/app/benchmarks/longmemeval/longmemeval_s_cleaned.json",
+            "/app/benchmarks/longmemeval/longmemeval_m_cleaned.json",
             "/staging/split_manifest.json",
-            "/app/datasets/longmemeval/longmemeval_oracle.json",
+            "/app/benchmarks/longmemeval/longmemeval_oracle.json",
         ):
             assert expected in dsts, expected
         assert all(b.endswith(":ro") for b in binds)
         # dynamicmem overlay only when local user_data exists
-        if os.path.isdir(os.path.join(REPO, "datasets", "dynamicmem", "user_data")):
-            assert "/app/datasets/dynamicmem/user_data" in dsts
+        if os.path.isdir(os.path.join(REPO, "benchmarks", "dynamicmem", "user_data")):
+            assert "/app/benchmarks/dynamicmem/user_data" in dsts
             backbound = [d for d in dsts
-                         if d.startswith("/app/datasets/dynamicmem/user_data/")]
+                         if d.startswith("/app/benchmarks/dynamicmem/user_data/")]
             assert len(backbound) == 6
             assert all("00" + str(i) in d or f"00{i}" in d
                        for i, d in enumerate(sorted(backbound), start=1))
@@ -125,7 +125,7 @@ def test_staging_cache_skips_regeneration():
 # ---------------- LongMemEval manifest hook ----------------
 
 def test_manifest_hook_used_when_present():
-    import datasets.longmemeval.env as lme
+    import benchmarks.longmemeval.env as lme
     with tempfile.TemporaryDirectory() as td:
         (Path(td) / "split_manifest.json").write_text(
             json.dumps({"search": ["q2", "q1"], "test": []}))
@@ -139,7 +139,7 @@ def test_manifest_hook_used_when_present():
 
 
 def test_no_manifest_recomputes_normally():
-    import datasets.longmemeval.env as lme
+    import benchmarks.longmemeval.env as lme
     orig_cache = lme._SPLIT_CACHE
     lme._SPLIT_CACHE = None
     try:
@@ -214,8 +214,8 @@ def test_run_evaluation_carries_isolation_binds():
                 E.asyncio.create_subprocess_exec = orig
         return " ".join(captured["cmd"])
 
-    cmd = asyncio.run(main(["/tmp/x.json:/app/datasets/locomo/locomo10.json:ro"]))
-    assert "/tmp/x.json:/app/datasets/locomo/locomo10.json:ro" in cmd
+    cmd = asyncio.run(main(["/tmp/x.json:/app/benchmarks/locomo/locomo10.json:ro"]))
+    assert "/tmp/x.json:/app/benchmarks/locomo/locomo10.json:ro" in cmd
     cmd = asyncio.run(main(None))
     assert "/tmp/x.json" not in cmd
 

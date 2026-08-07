@@ -44,7 +44,7 @@ from common.memo_class import MemoClass
 from baselines.harness.hipporag2.memo import app_log_to_passage
 from baselines.harness.zep import _st_shim
 
-_st_shim.ensure_vendor_on_path()          # `import graphiti_core` -> vendored copy
+_st_shim.ensure_src_on_path()          # `import graphiti_core` -> vendored copy
 _st_shim.ensure_sentence_transformers()   # before any graphiti cross_encoder import
 
 from graphiti_core import Graphiti  # noqa: E402
@@ -120,7 +120,7 @@ def _init_to_episodes(init: Dict) -> List[Dict[str, Any]]:
             for i, e in enumerate(init["app_logs"])
         ]
     if "conversation" in init:
-        from datasets.locomo.env import extract_sessions
+        from benchmarks.locomo.env import extract_sessions
         eps: List[Dict[str, Any]] = []
         for idx, date_time, turns in extract_sessions(init["conversation"]):
             ref = _parse_dt(date_time)

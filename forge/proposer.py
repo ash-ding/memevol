@@ -523,7 +523,7 @@ def _build_singularity_cmd(
         f"{PROJECT_ROOT}/common/recorder.py:/app/common/recorder.py:ro",
         f"{PROJECT_ROOT}/common/llm.py:/app/common/llm.py:ro",
         f"{PROJECT_ROOT}/common/logger.py:/app/common/logger.py:ro",
-        f"{PROJECT_ROOT}/datasets:/app/datasets:ro",
+        f"{PROJECT_ROOT}/benchmarks:/app/benchmarks:ro",
 
         # Workspace (cwd) + scratch HOME for whichever agent
         f"{paths.workspace}:/workspace:rw",

@@ -56,7 +56,7 @@ def test_combine_seed_backcompat_and_step():
 
 def test_get_task_list_seed_none_is_unchanged_all_datasets():
     # Back-compat anchor: seed=None must equal the historical raw-prefix output.
-    from datasets.locomo import env as lc
+    from benchmarks.locomo import env as lc
     base = lc.get_task_list(status="search", eval_n_samples=2)
     assert lc.get_task_list(status="search", eval_n_samples=2, seed=None) == base
     # the pool's raw prefix is what "no seed" means:
@@ -65,7 +65,7 @@ def test_get_task_list_seed_none_is_unchanged_all_datasets():
 
 
 def test_get_task_list_seed_varies_and_nests():
-    from datasets.longmemeval import env as lme
+    from benchmarks.longmemeval import env as lme
     full = lme.get_task_list(status="search", eval_n_samples=None, seed=None)
     if len(full) >= 8:
         s1 = lme.get_task_list(status="search", eval_n_samples=3, seed="STEP1")
@@ -76,7 +76,7 @@ def test_get_task_list_seed_varies_and_nests():
 
 
 def test_get_task_list_dynamicmem_seed_none_and_nesting():
-    from datasets.dynamicmem import env as dm
+    from benchmarks.dynamicmem import env as dm
     base = dm.get_task_list(status="search", eval_n_samples=2)
     assert dm.get_task_list(status="search", eval_n_samples=2, seed=None) == base   # back-compat
     full = dm.get_task_list(status="search", eval_n_samples=None, seed=None)
@@ -90,7 +90,7 @@ def test_get_task_list_dynamicmem_seed_none_and_nesting():
 
 def test_locomo_qa_sampling_honors_stage_sample_seed():
     # load_user_data must seed QA sampling on combine_seed(sample_seed, user_dir).
-    from datasets.locomo import env as lc
+    from benchmarks.locomo import env as lc
     from common.sampling import combine_seed
     tasks = lc.get_task_list(status="search", eval_n_samples=1)
     uid = tasks[0]

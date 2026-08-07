@@ -42,10 +42,10 @@ from common.memo_class import MemoClass
 from baselines.harness.hipporag2.memo import app_log_to_passage
 from baselines.harness.lightmem._st_shim import (
     ensure_sentence_transformers, install_embedding_cache, install_eager_attention,
-    hf_datasets_active, import_lightmemory,
+    import_lightmemory,
 )
 
-ensure_sentence_transformers()     # import ST past memevol's datasets/ shadow
+ensure_sentence_transformers()     # ST is imported eagerly by the vendored pipeline
 install_embedding_cache()          # share the embedder across per-user systems
 install_eager_attention()          # LLMlingua-2 segmenter needs eager output_attentions (transformers>=5)
 LightMemory = import_lightmemory()  # vendored, byte-identical
@@ -110,7 +110,7 @@ def _init_to_turns(init: Dict) -> List[List[Dict]]:
             turns.append(_turn_pair(app_log_to_passage(e), e.get("timestamp", ""), app, app))
         return turns
     if "conversation" in init:
-        from datasets.locomo.env import extract_sessions   # memevol datasets — NOT the HF library
+        from benchmarks.locomo.env import extract_sessions   # memevol datasets — NOT the HF library
         conv = init["conversation"]
         speaker_a = conv.get("speaker_a")
         speaker_b = conv.get("speaker_b")
@@ -229,16 +229,13 @@ class LightMemMemo(MemoClass):
         config = self._build_config()
         # Construction builds the LLMlingua-2 compressor + SentenceTransformer
         # embedder + Qdrant client; the patched SentenceTransformer (shared cache
-        # + hf_datasets_active) handles the datasets shadow. No await inside, so
         # the stdout redirect + sys.modules swap can't leak across samples.
         with _quiet_stdout():
-            with hf_datasets_active():
-                self._system = LightMemory.from_config(config)
+            self._system = LightMemory.from_config(config)
 
     async def build_memory_from_data(self, recorder) -> None:
         self._ensure_system()
         # _init_to_turns touches memevol's `datasets` (locomo branch) — compute
-        # BEFORE the stdout redirect and OUTSIDE any hf_datasets_active window.
         turns = _init_to_turns(recorder.init)
         if not turns:
             return

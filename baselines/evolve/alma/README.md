@@ -96,7 +96,7 @@ baselines/evolve/alma/
 
 Shared infrastructure (`memo_class.py`, `llm.py`, `tokens.py`,
 `logger.py`, the `DynamicMemWorkflow`) was long ago extracted to
-[`common/`](../../../common/) and [`datasets/dynamicmem/`](../../../datasets/dynamicmem/)
+[`common/`](../../../common/) and [`benchmarks/dynamicmem/`](../../../benchmarks/dynamicmem/)
 — alma imports it from there. Since the 2026-07 TCE upgrade, alma's
 DynamicMem evals therefore follow the official checkpoint protocol
 (0–1 holistic judge) automatically.
@@ -106,7 +106,7 @@ DynamicMem evals therefore follow the official checkpoint protocol
 The dataset-specific code (`get_task_list`, `load_user_checkpoints`,
 `DynamicMemRecorder`, the official TCE prompts + holistic judge in
 `tce_prompts.py`) is shared at
-[`datasets/dynamicmem/`](../../../datasets/dynamicmem/). It has zero dependency
+[`benchmarks/dynamicmem/`](../../../benchmarks/dynamicmem/). It has zero dependency
 on alma so other methods can reuse it.
 
 ## Datasets
@@ -115,7 +115,7 @@ ALMA targets exactly **one benchmark per run**, selected with
 `--dataset {dynamicmem,locomo,longmemeval_s,longmemeval_m}` (default
 `dynamicmem`). The dataset name resolves through
 [`registry.py`](registry.py) to a workflow class, env module, and recorder
-class (the shared `datasets/registry.py`, but ALMA is standalone and does
+class (the shared `benchmarks/registry.py`, but ALMA is standalone and does
 not import forge), and through [`dataset_info.py`](dataset_info.py) to the
 prompt fragments (`recorder.init` shape, evidence key, etc.) that the
 meta-agent's analysis/generation/reflection prompts render for that dataset.

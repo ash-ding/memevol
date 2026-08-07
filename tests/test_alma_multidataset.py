@@ -15,12 +15,12 @@ if str(PROJECT_ROOT) not in sys.path:
 
 def test_registry_resolves_all_four():
     from baselines.evolve.alma.registry import REGISTRY, DATASETS, resolve
-    from datasets.dynamicmem.workflow import DynamicMemWorkflow
-    from datasets.locomo.workflow import LoCoMoWorkflow
-    from datasets.longmemeval.workflow import LongMemEvalSWorkflow, LongMemEvalMWorkflow
-    from datasets.dynamicmem.env import DynamicMemRecorder
-    from datasets.locomo.env import LoCoMoRecorder
-    from datasets.longmemeval.env import LongMemEvalRecorder
+    from benchmarks.dynamicmem.workflow import DynamicMemWorkflow
+    from benchmarks.locomo.workflow import LoCoMoWorkflow
+    from benchmarks.longmemeval.workflow import LongMemEvalSWorkflow, LongMemEvalMWorkflow
+    from benchmarks.dynamicmem.env import DynamicMemRecorder
+    from benchmarks.locomo.env import LoCoMoRecorder
+    from benchmarks.longmemeval.env import LongMemEvalRecorder
 
     assert DATASETS == ["dynamicmem", "locomo", "longmemeval_m", "longmemeval_s"]
 
@@ -89,7 +89,7 @@ def test_dynamicmem_prompts_byte_identical():
     import json
     from pathlib import Path
     from baselines.evolve.alma import meta_agent_prompt as m
-    from datasets.dynamicmem.env import DynamicMemRecorder
+    from benchmarks.dynamicmem.env import DynamicMemRecorder
 
     fixture = json.loads(
         (PROJECT_ROOT / "tests/fixtures/alma_dynamicmem_prompts.json").read_text(encoding="utf-8")
@@ -138,7 +138,7 @@ def test_prompts_render_for_all_datasets():
 
 def test_launch_dispatches_via_registry():
     """launch.py routes everything through the shared execution-independent
-    evaluate_memo (which resolves workflows via datasets.registry) — no
+    evaluate_memo (which resolves workflows via benchmarks.registry) — no
     hardcoded DynamicMem import (main() can't be called in-process — it
     os._exit(0)s)."""
     import inspect
@@ -147,8 +147,8 @@ def test_launch_dispatches_via_registry():
     # dispatches through the shared evaluator (registry resolution lives there)
     assert "evaluate_memo" in src
     # no hardcoded DynamicMem workflow/get_task_list import survives
-    assert "from datasets.dynamicmem.workflow import DynamicMemWorkflow" not in src
-    assert "from datasets.dynamicmem.env import get_task_list" not in src
+    assert "from benchmarks.dynamicmem.workflow import DynamicMemWorkflow" not in src
+    assert "from benchmarks.dynamicmem.env import get_task_list" not in src
     # main() takes a dataset param defaulting to dynamicmem (back-compat)
     sig = inspect.signature(launch.main)
     assert sig.parameters["dataset"].default == "dynamicmem"
@@ -176,8 +176,8 @@ def test_memo_manager_archive_root_by_dataset():
 
 def test_meta_agent_recorder_by_dataset():
     from baselines.evolve.alma.meta_agent import MetaAgent
-    from datasets.locomo.env import LoCoMoRecorder
-    from datasets.dynamicmem.env import DynamicMemRecorder
+    from benchmarks.locomo.env import LoCoMoRecorder
+    from benchmarks.dynamicmem.env import DynamicMemRecorder
     ma = MetaAgent(dataset="locomo")
     assert ma._get_recorder_class() is LoCoMoRecorder
     assert ma.dataset == "locomo"
@@ -405,7 +405,7 @@ def test_per_step_seed_changes_task_subset():
     exact mechanism alma threads into evaluate_memo's sample_seed. Uses
     LoCoMo (git-tracked locomo10.json; no network)."""
     from common.sampling import derive_sample_seed
-    from datasets.locomo.env import get_task_list
+    from benchmarks.locomo.env import get_task_list
     ds = "locomo"
     s0 = derive_sample_seed(42, 0, ds)
     s1 = derive_sample_seed(42, 1, ds)

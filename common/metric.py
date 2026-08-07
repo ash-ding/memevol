@@ -7,7 +7,7 @@ Currently implemented:
 - `Judge` — LLM-as-judge: single-shot scoring with a per-benchmark prompt
   template + score range. Used by LoCoMo (binary, one prompt) and LongMemEval
   (binary, four per-question_type prompts); DynamicMem's official TCE holistic
-  scoring lives in datasets/dynamicmem/tce_prompts.py instead (structured
+  scoring lives in benchmarks/dynamicmem/tce_prompts.py instead (structured
   per-field verdicts — it shares only the common.llm transport).
 
 Planned (stubs below, tracked in the "lexical metrics" GitHub issue):

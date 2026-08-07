@@ -106,7 +106,7 @@ def test_launch_style_seed_forwarding_varies_task_list():
     # get_task_list(..., seed=...)) without needing the container: proves the
     # per-step seed actually reaches task-LIST selection, not just per-user
     # QA/item sampling. Regression target for the gap found in Task 7 review.
-    from datasets.longmemeval import env as lme
+    from benchmarks.longmemeval import env as lme
 
     def pick(spec):
         n = spec.get("n_samples")

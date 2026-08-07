@@ -13,7 +13,7 @@ Inside the Singularity sandbox we have (v10 SELECTIVE binds — see
 forge/proposer.py::_build_singularity_cmd for the authoritative list):
   /app/forge/{__init__,propose_in_container,memo_class}.py   RO
   /app/common/{__init__,memo_class,recorder,llm,logger}.py   RO
-  /app/datasets/       full pkg RO (env/workflow/prompts + raw data)
+  /app/benchmarks/       full pkg RO (env/workflow/prompts + raw data)
   /workspace           this run's workspace, RW  (cwd for the agent)
   /usr/local/bin/claude         host's claude binary, RO bind (CC)
   /usr/local/share/claude/      host's claude install, RO bind (CC)

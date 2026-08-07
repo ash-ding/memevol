@@ -32,7 +32,7 @@ dependencies = [
     "accelerate",                     # Qwen3 embedder loading
     "torch",
     "pydantic",                       # memory_entry model
-    "datasets",                       # HF datasets (ST/lancedb import-time shim)
+    "datasets",                       # HF datasets — ST/lancedb import it eagerly
 ]
 
 [tool.uv]
