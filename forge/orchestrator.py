@@ -84,7 +84,7 @@ from common.config import (
 from common.evaluate import (  # re-export: config moved to common/ 2026-07-25
     STAGE_ORDER, DEFAULT_STAGES, FULL_STAGE, _FAMILY_FIELDS,
     _benchmark_family, _wire_size, stage_wire_spec, full_wire_spec,
-    stage_plan, _resolve_dataset_stages, run_gauntlet, evaluate_memo, Executor,
+    stage_plan, _resolve_dataset_stages, run_gauntlet,
     missing_sizing_config,
 )
 from common.sampling import derive_sample_seed
@@ -1370,16 +1370,17 @@ async def evaluate_harness(
     # sample_seed_for defaults to `lambda ds: None` (unchanged behavior);
     # callers pass the real per-step seed function when cfg.random_sample
     # is on (see propose_eval_one, Task 6).
-    return await evaluate_memo(
+    # NOTE: still the per-stage-container path (run_gauntlet + injected stage
+    # runner). The single-container evaluate_memo switch lands with the
+    # launch.py/evaluator rework (next commit).
+    return await run_gauntlet(
         datasets_config=datasets_config,
         progressive=progressive,
-        executor=Executor(
-            run_stage=_run_stage_fn,
-            read_metrics=_read_metrics_fn,
-            write_stages=_stages_writer,
-        ),
-        sample_seed_for=sample_seed_for,
         smoke=smoke,
+        sample_seed_for=sample_seed_for,
+        run_stage_fn=_run_stage_fn,
+        read_metrics_fn=_read_metrics_fn,
+        stages_writer=_stages_writer,
     )
 
 

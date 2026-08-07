@@ -5,7 +5,6 @@ Moved from forge/orchestrator.py 2026-07-25."""
 from __future__ import annotations
 
 import copy
-from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple
 
 # ---------------------------------------------------------------------------
@@ -435,66 +434,299 @@ async def run_gauntlet(
 
 
 # ---------------------------------------------------------------------------
-# evaluate_memo — the single evaluation entry point + the executor seam.
+# evaluate_memo — the single, execution-independent evaluation entry point.
 # ---------------------------------------------------------------------------
 
-@dataclass(frozen=True)
-class Executor:
-    """HOW one stage of an evaluation runs — the ONE thing that differs by
-    execution model (the trust boundary): a Singularity container per stage for
-    forge (untrusted, model-generated harness code) vs a bare in-process
-    ``run_all_users`` for the baselines (trusted hand-written code). It bundles
-    the three run_gauntlet callbacks a caller must supply:
+def _build_score_json(recorder_list: List[Any]) -> Dict[str, Any]:
+    """Summarize a recorder list into the canonical score.json dict (mean per-user
+    reward + SE, per_user details, invalid_users). Promoted from alma's launch.py
+    (eval_common used to borrow alma's copy) — the ONE score-summary builder."""
+    rewards: List[float] = []
+    per_user: Dict[str, Any] = {}
+    invalid_users: List[Dict[str, Any]] = []
 
-    - ``run_stage(ds, stage, spec) -> Optional[Exception]`` executes one stage
-      (build the memo, run the workflow over the sampled users, write that
-      stage's score.json/token_usage.json/traces), returning a non-None
-      exception iff the stage crashed (which eliminates + stops the gauntlet).
-    - ``read_metrics(ds, stage) -> {raw_score, score_max, tokens}`` reads that
-      stage's metrics back (off disk for forge's container, from an in-memory
-      dict for the in-process runners).
-    - ``write_stages(ds, summary)`` (optional) persists the per-benchmark stage
-      summary — stages.json at the out_dir root + the reached-stage artifacts
-      copied up to the root.
+    for rec in recorder_list:
+        if isinstance(rec, Exception):
+            uid = getattr(rec, "user_id", "unknown")
+            invalid_users.append({"user_id": uid, "error": repr(rec)})
+            continue
+        try:
+            uid = getattr(rec, "user_id", "") or "unknown"
+            reward = float(getattr(rec, "reward", 0.0))
+            steps = getattr(rec, "steps", [])
+            fi = getattr(rec, "failure_info", None)
+            rewards.append(reward)
+            per_user[uid] = {"reward": reward, "n_qa": len(steps), "failure_info": fi}
+        except Exception as exc:
+            invalid_users.append({"user_id": "unknown", "error": f"record access error: {exc!r}"})
 
-    Everything else — promotion / elimination / sizing / seeding / cost
-    accounting / stages.json shape — lives in run_gauntlet, identical for every
-    execution model."""
-    run_stage: RunStageFn
-    read_metrics: ReadMetricsFn
-    write_stages: Optional[StagesWriter] = None
+    if rewards:
+        mean = sum(rewards) / len(rewards)
+        if len(rewards) > 1:
+            var = sum((r - mean) ** 2 for r in rewards) / (len(rewards) - 1)
+            se = (var ** 0.5) / (len(rewards) ** 0.5)
+        else:
+            se = 0.0
+    else:
+        mean, se = 0.0, 0.0
+
+    return {
+        "benchmark_eval_score": {
+            "benchmark_overall_eval_score": mean,
+            "benchmark_overall_eval_standard_deviation": se,
+        },
+        "per_user": per_user,
+        "invalid_users": invalid_users,
+    }
+
+
+def _per_user_stddev(score: Dict[str, Any]) -> Optional[float]:
+    """Population stddev over per_user rewards (None with <2 users) — the
+    robustness telemetry forge's host used to compute off score.json."""
+    rewards = [float(u.get("reward", 0.0)) for u in score.get("per_user", {}).values()]
+    if len(rewards) < 2:
+        return None
+    mean = sum(rewards) / len(rewards)
+    return (sum((r - mean) ** 2 for r in rewards) / len(rewards)) ** 0.5
+
+
+def _total_tokens(summary: Dict[str, Any]) -> int:
+    """Sum total_tokens across all models in a TokenTracker.summary()."""
+    return sum(
+        int(m.get("total_tokens", 0)) for m in summary.values() if isinstance(m, dict)
+    )
+
+
+def _memo_source_dir(memo_class: type) -> Optional["Path"]:
+    """Directory holding the memo module — fingerprinted (common.memory_cache.
+    harness_fingerprint) so a change to the memo's source invalidates the
+    cross-stage cache. `memo_class` may be a configured wrapper subclass whose
+    source file is elsewhere; walk the MRO to the first class defined in its own
+    real file (skipping this module)."""
+    import inspect
+    from pathlib import Path
+    this_file = Path(__file__).resolve()
+    for cls in memo_class.__mro__:
+        try:
+            src = inspect.getsourcefile(cls)
+        except TypeError:
+            src = None
+        if not src:
+            continue
+        srcp = Path(src).resolve()
+        if srcp == this_file:
+            continue
+        if cls.__module__ in ("common.harness_base", "forge.harness_base", "abc", "builtins"):
+            break  # reached the framework base — no useful source dir above it
+        return srcp.parent
+    return None
 
 
 async def evaluate_memo(
     *,
-    datasets_config: Dict[str, Dict[str, Any]],
+    memo_class: type,
+    dataset: str,
+    split: str,
     progressive: bool,
-    executor: Executor,
-    sample_seed_for: SampleSeedFn = lambda ds: None,
+    out_dir: "Path",
+    qa_model: str,
+    judge_model: str,
+    stages: Optional[Dict[str, Any]] = None,
+    single_stage: Optional[Dict[str, Any]] = None,
+    max_sample_concurrent: int = 3,
+    sample_seed: Optional[str] = None,
+    memory_cache: bool = True,
+    memcache_fingerprint: Optional[str] = None,
     smoke: bool = False,
-) -> Dict[str, Dict[str, Any]]:
-    """Evaluate a memo across benchmarks — the SINGLE entry every context uses
-    (forge search, forge.heldout, harness baselines, alma), so "evaluate a
-    harness on a task" is one function regardless of who calls it.
+    max_logs: Optional[int] = None,
+    memo_sha: str = "",
+) -> Dict[str, Any]:
+    """Evaluate one memo on one dataset/split — the single, EXECUTION-INDEPENDENT
+    entry point. It runs the whole evaluation in the CURRENT process; isolation
+    is the CALLER's wrapper, not a parameter: forge's container runs this inside
+    `singularity exec` (launch.py), alma inside its plain subprocess, the harness
+    baselines call it directly in-process. No injected executor.
 
-    - ``progressive=True``  → the staged stage1→2→3 gauntlet (sizes from each
-      dataset's ``stages`` block; promotion thresholds gate advancement).
-    - ``progressive=False`` → ONE ('single', spec, None) pass sized by the
-      REQUIRED ``single_stage`` block (raises ValueError if absent).
-    - ``smoke=True`` → one sanity-size pass per benchmark, no gating.
+    Modes:
+    - ``smoke=True``          → ONE sanity_check-sized pass (sizes from the
+      `stages` block / family DEFAULT_STAGES), artifacts at the out_dir ROOT,
+      telemetry stage=0.0, no stages.json. Used by forge's sanity gate +
+      smoke_test and alma's mode=check.
+    - ``progressive=True``    → the staged stage1→2→3 gauntlet with promotion
+      thresholds, sized by `stages` (None → family DEFAULT_STAGES).
+    - ``progressive=False``   → ONE ('single', spec, None) pass sized by the
+      REQUIRED `single_stage` block (raises ValueError if absent).
 
-    ``datasets_config`` carries the per-dataset sizing (``stages`` /
-    ``single_stage``). HOW a stage executes is injected via ``executor`` (the
-    container-vs-in-process seam); ``sample_seed_for(ds)`` supplies the per-run
-    seed. Thin facade over run_gauntlet: forwards ``progressive`` + the executor's
-    three callbacks. Returns run_gauntlet's per-dataset metrics
-    dict {ds: {raw_score, score_max, stage, eliminated, tokens, ...}}."""
-    return await run_gauntlet(
-        datasets_config=datasets_config,
-        progressive=progressive,
-        smoke=smoke,
-        sample_seed_for=sample_seed_for,
-        run_stage_fn=executor.run_stage,
-        read_metrics_fn=executor.read_metrics,
-        stages_writer=executor.write_stages,
-    )
+    Per executed stage it writes ``out_dir/<stage>/{score.json, token_usage.json,
+    traces/}``; afterwards the reached stage's score.json / token_usage.json /
+    traces/ are copied to the out_dir root and a ``stages.json`` summary is
+    written (non-smoke). A root score.json is guaranteed even when the first
+    stage crashes (error score), so callers can always read one. Returns the
+    metrics dict {raw_score, score_max, per_user_stddev, tokens, stage,
+    eliminated} (stage: 1/2/3 gauntlet tier, FULL_STAGE for the single pass,
+    0.0 for smoke).
+
+    ``sample_seed`` rides every stage spec (constant across stages so the
+    stage1 ⊂ stage2 ⊂ stage3 nesting holds). ``memory_cache`` mounts the
+    cross-stage Phase-1 memory cache at out_dir/memory_cache (skipped for
+    smoke); ``memcache_fingerprint`` overrides the source-dir fingerprint
+    (alma fingerprints its single staged memo file). ``max_logs`` /
+    ``memo_sha`` are forwarded to the workflow (alma's knobs)."""
+    import json as _json
+    import shutil as _shutil
+    from pathlib import Path
+    from datasets.registry import resolve as _resolve_dataset
+    from common.tokens import init_global_tracker
+    from common.memory_cache import harness_fingerprint as _dir_fingerprint
+
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    family = _benchmark_family(dataset)
+
+    # ---- plan ----
+    if smoke or progressive:
+        params: Dict[str, Any] = {"stages": copy.deepcopy(stages) if stages else copy.deepcopy(DEFAULT_STAGES[family])}
+        _resolve_dataset_stages(dataset, params)
+    if smoke:
+        plan: List[Tuple[str, Dict[str, Any], Optional[float]]] = [
+            ("sanity", stage_wire_spec(dataset, params["stages"]["sanity_check"]), None)
+        ]
+    elif progressive:
+        plan = stage_plan(dataset, params)
+    else:
+        plan = [("single", resolve_single_stage_spec(dataset, single_stage), None)]
+
+    workflow_cls, env_module, _rec = _resolve_dataset(dataset)
+    tracker = init_global_tracker()
+
+    # ---- cross-stage memory cache (gauntlet + single; never smoke/sanity) ----
+    memcache_dir: Optional[Path] = None
+    fingerprint = ""
+    if memory_cache and not smoke:
+        fingerprint = memcache_fingerprint if memcache_fingerprint is not None else ""
+        if not fingerprint:
+            src_dir = _memo_source_dir(memo_class)
+            fingerprint = _dir_fingerprint(src_dir) if src_dir is not None else ""
+        memcache_dir = out_dir / "memory_cache"
+        memcache_dir.mkdir(parents=True, exist_ok=True)
+
+    stage_summary: Dict[str, Any] = {}
+    final_metrics: Dict[str, Any] = {}
+    reached = ""
+    eliminated = False
+
+    for stage_name, wire_spec, threshold in plan:
+        stage_dir = out_dir if smoke else out_dir / stage_name
+        stage_dir.mkdir(parents=True, exist_ok=True)
+        spec = dict(wire_spec)
+        if sample_seed is not None:
+            spec["sample_seed"] = sample_seed
+
+        n = spec.get("n_samples")
+        task_list = env_module.get_task_list(
+            status=split,
+            eval_n_samples=None if n is None else int(n),
+            seed=spec.get("sample_seed"),
+        )
+
+        workflow = workflow_cls(
+            memo_class=memo_class, model=qa_model, max_logs=max_logs,
+            judge_model=judge_model,
+        )
+        workflow.memo_sha = memo_sha
+        workflow.status = split
+        workflow.output_run_dir = stage_dir
+        if memcache_dir is not None:
+            workflow.memory_cache_dir = memcache_dir
+            workflow.harness_fingerprint = fingerprint
+
+        tokens_before = _total_tokens(tracker.summary())
+        raw_score = 0.0
+        stddev: Optional[float] = None
+        crashed: Optional[Exception] = None
+        try:
+            records, rlen = await workflow.run_all_users(
+                task_list, stage=stage_name, stage_spec=spec,
+                max_sample_concurrent=max_sample_concurrent,
+            )
+            workflow.save_full_traces(records[:rlen])
+            score = _build_score_json(records[:rlen])
+            raw_score = float(score["benchmark_eval_score"]["benchmark_overall_eval_score"])
+            stddev = _per_user_stddev(score)
+            with (stage_dir / "score.json").open("w", encoding="utf-8") as f:
+                _json.dump(score, f, indent=2, ensure_ascii=False)
+            with (stage_dir / "token_usage.json").open("w", encoding="utf-8") as f:
+                _json.dump(tracker.summary(), f, indent=2, ensure_ascii=False)
+        except Exception as exc:  # a crashed stage eliminates + stops
+            crashed = exc
+        tokens_after = _total_tokens(tracker.summary())
+
+        m: Dict[str, Any] = {
+            "raw_score": raw_score,
+            "score_max": workflow.judge_score_max,
+            "per_user_stddev": stddev,
+            "tokens": tokens_after - tokens_before,
+        }
+        score_max = int(m["score_max"]) or 1
+        normalized = raw_score / score_max
+        stage_summary[stage_name] = {
+            "raw_score": raw_score,
+            "score_max": m["score_max"],
+            "normalized": normalized,
+            "threshold": threshold,
+            "tokens": m["tokens"],
+            "spec": spec,
+        }
+        # Cost accounting spans ALL executed stages, not just the last.
+        m["tokens"] += sum(s["tokens"] for k, s in stage_summary.items() if k != stage_name)
+        final_metrics = m
+        reached = stage_name
+        if crashed is not None:
+            eliminated = True
+            stage_summary[stage_name]["crashed"] = repr(crashed)
+            break
+        if threshold is not None and normalized < threshold:
+            eliminated = True
+            break
+
+    if smoke:
+        final_metrics["stage"] = 0.0  # sanity-size smoke run, not a gauntlet tier
+        final_metrics["eliminated"] = False
+    else:
+        final_metrics["stage"] = {
+            "stage1": 1.0, "stage2": 2.0, "stage3": 3.0, "single": FULL_STAGE,
+        }.get(reached, 0.0)
+        final_metrics["eliminated"] = eliminated
+        # Reached-stage artifacts up to the root (score/tokens/traces) + stages.json.
+        reached_dir = out_dir / reached
+        for fname in ("score.json", "token_usage.json"):
+            src = reached_dir / fname
+            if src.exists():
+                _shutil.copy2(src, out_dir / fname)
+        src_traces = reached_dir / "traces"
+        if src_traces.is_dir():
+            dst_traces = out_dir / "traces"
+            if dst_traces.exists():
+                _shutil.rmtree(dst_traces)
+            _shutil.copytree(src_traces, dst_traces)
+        with (out_dir / "stages.json").open("w", encoding="utf-8") as f:
+            _json.dump(
+                {"reached": reached, "eliminated": eliminated, "stages": stage_summary},
+                f, indent=2, ensure_ascii=False,
+            )
+
+    # Guarantee a root score.json even if the first stage crashed before writing
+    # one (callers — alma's memo_manager, forge's sanity gate — always read one).
+    if not (out_dir / "score.json").exists():
+        err = stage_summary.get(reached, {}).get("crashed", "no stage produced a score")
+        with (out_dir / "score.json").open("w", encoding="utf-8") as f:
+            _json.dump({
+                "benchmark_eval_score": {
+                    "benchmark_overall_eval_score": 0.0,
+                    "benchmark_overall_eval_standard_deviation": 0.0,
+                },
+                "per_user": {},
+                "invalid_users": [{"user_id": "eval_crashed", "error": str(err)}],
+            }, f, indent=2, ensure_ascii=False)
+
+    return final_metrics

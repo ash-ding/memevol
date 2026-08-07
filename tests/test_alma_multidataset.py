@@ -133,14 +133,15 @@ def test_prompts_render_for_all_datasets():
 
 
 def test_launch_dispatches_via_registry():
-    """launch.py resolves its workflow/env from the registry, not a hardcoded
-    DynamicMem import (main() can't be called in-process — it os._exit(0)s)."""
+    """launch.py routes everything through the shared execution-independent
+    evaluate_memo (which resolves workflows via datasets.registry) — no
+    hardcoded DynamicMem import (main() can't be called in-process — it
+    os._exit(0)s)."""
     import inspect
     import baselines.evolve.alma.launch as launch
     src = inspect.getsource(launch)
-    # dispatches through the shared registry
-    assert "from baselines.registry import" in src
-    assert "resolve(dataset)" in src
+    # dispatches through the shared evaluator (registry resolution lives there)
+    assert "evaluate_memo" in src
     # no hardcoded DynamicMem workflow/get_task_list import survives
     assert "from datasets.dynamicmem.workflow import DynamicMemWorkflow" not in src
     assert "from datasets.dynamicmem.env import get_task_list" not in src
@@ -449,28 +450,32 @@ class StubMemo(MemoStructure):
 
 
 class _StopEval(Exception):
-    """Sentinel raised by the fake _run_single_stage to halt launch.main just
+    """Sentinel raised by the fake evaluate_memo to halt launch.main just
     before its terminal os._exit(0) (which would otherwise kill the test)."""
 
 
 def _run_launch_main_eval(single_stage, dataset="locomo"):
     """Drive launch.main through the progressive=false (single-pass) routing with
-    a fake _run_single_stage that captures the (stage, spec) it is handed and
-    raises _StopEval to stop before the real workflow + os._exit(0). Returns the
-    captured dict; any routing-time ValueError (single_stage validation) is left
-    to propagate to the caller."""
+    common.evaluate.evaluate_memo patched by a fake that (a) captures the kwargs
+    launch hands over, (b) runs the SAME shared single_stage resolution the real
+    evaluate_memo runs (resolve_single_stage_spec — so validation ValueErrors
+    propagate exactly like the real path), then (c) raises _StopEval to stop
+    before any real workflow work + os._exit(0). Returns the captured dict."""
     import asyncio
     import os as _os
     import shutil as _shutil
     import tempfile
 
+    import common.evaluate as ce
     import baselines.evolve.alma.launch as launch
 
     captured = {}
 
-    async def _fake_single_stage(**kwargs):
-        captured["stage"] = kwargs.get("stage")
-        captured["spec"] = dict(kwargs.get("spec") or {})
+    async def _fake_evaluate_memo(**kwargs):
+        captured.update(kwargs)
+        if not kwargs.get("smoke") and not kwargs.get("progressive"):
+            captured["spec"] = ce.resolve_single_stage_spec(
+                kwargs["dataset"], kwargs.get("single_stage"))
         raise _StopEval()
 
     fd = tempfile.NamedTemporaryFile(
@@ -480,8 +485,8 @@ def _run_launch_main_eval(single_stage, dataset="locomo"):
     fd.close()
     memo_path = fd.name
     out_dir = tempfile.mkdtemp(prefix="alma_launch_main_")
-    orig = launch._run_single_stage
-    launch._run_single_stage = _fake_single_stage
+    orig = ce.evaluate_memo
+    ce.evaluate_memo = _fake_evaluate_memo
     try:
         asyncio.run(launch.main(
             module_path=memo_path, memory_id="stub", output_run_dir=out_dir,
@@ -491,19 +496,21 @@ def _run_launch_main_eval(single_stage, dataset="locomo"):
     except _StopEval:
         pass
     finally:
-        launch._run_single_stage = orig
+        ce.evaluate_memo = orig
         _os.unlink(memo_path)
         _shutil.rmtree(out_dir, ignore_errors=True)
     return captured
 
 
 def test_alma_non_progressive_sizes_from_single_stage():
-    """mode=eval + progressive=false sizes the single pass from single_stage
-    (stage='single', spec == single_stage_wire_spec) — NOT from stage3."""
+    """mode=eval + progressive=false hands the raw single_stage block to the
+    shared evaluate_memo, whose resolution sizes the pass
+    (spec == single_stage_wire_spec) — NOT from stage3."""
     from common.evaluate import single_stage_wire_spec
     single_stage = {"n_conversations": 2, "n_qa": 5}
     captured = _run_launch_main_eval(single_stage, dataset="locomo")
-    assert captured.get("stage") == "single", captured.get("stage")
+    assert captured.get("progressive") is False and captured.get("smoke") is False
+    assert captured.get("single_stage") == single_stage
     expected = single_stage_wire_spec("locomo", single_stage)   # {"n_samples": 2, "n_qa": 5}
     for k, v in expected.items():
         assert captured["spec"].get(k) == v, (k, captured["spec"])

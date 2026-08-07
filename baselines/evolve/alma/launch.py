@@ -3,9 +3,10 @@ Alma subprocess entry point.
 
 Invoked by baselines/evolve/alma/eval_runner.py. Steps:
   1. Dynamically load the MemoStructure subclass from the staged memo file.
-  2. Run the dataset's workflow (resolved from the registry) across all users.
-  3. Write score.json, full traces (per-user), and token usage
-     to the caller-supplied output_run_dir.
+  2. One call into the shared, execution-independent
+     common.evaluate.evaluate_memo (gauntlet / single pass / check-mode smoke),
+     which writes score.json, per-stage artifacts, traces and token usage
+     under the caller-supplied output_run_dir.
 
 No QA sampling is done here — alma's sampling.py reads the full traces
 in the main process when constructing the meta-agent analysis input.
@@ -20,19 +21,15 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import copy
 import hashlib
 import importlib.util
 import inspect
 import json
 import os
-import shutil
 import sys
 import traceback
 from pathlib import Path
-from typing import Any, Dict, List, Optional
-
-import numpy as np
+from typing import Optional
 
 # Ensure project root is on sys.path
 _project_root = Path(__file__).resolve().parents[3]
@@ -40,8 +37,7 @@ if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
 from common.harness_base import MemoStructure
-from baselines.registry import resolve, DATASETS
-from common.tokens import init_global_tracker
+from baselines.registry import DATASETS
 from common.logger import get_logger
 
 log = get_logger("main", level_styles={
@@ -68,44 +64,6 @@ def find_subclass_in_file(file_path: str, base_class: type):
     return subclasses[0]
 
 
-def _build_score_json(recorder_list: List[Any]) -> dict:
-    """Summarize the recorder list into a score dict."""
-    rewards = []
-    per_user = {}
-    invalid_users = []
-
-    for rec in recorder_list:
-        if isinstance(rec, Exception):
-            uid = getattr(rec, "user_id", "unknown")
-            invalid_users.append({"user_id": uid, "error": repr(rec)})
-            continue
-        try:
-            uid = getattr(rec, "user_id", "") or "unknown"
-            reward = float(getattr(rec, "reward", 0.0))
-            steps = getattr(rec, "steps", [])
-            fi = getattr(rec, "failure_info", None)
-            rewards.append(reward)
-            per_user[uid] = {
-                "reward": reward,
-                "n_qa": len(steps),
-                "failure_info": fi,
-            }
-        except Exception as exc:
-            invalid_users.append({"user_id": "unknown", "error": f"record access error: {exc!r}"})
-
-    overall_avg = float(np.mean(rewards)) if rewards else 0.0
-    overall_se = float(np.std(rewards, ddof=1) / np.sqrt(len(rewards))) if len(rewards) > 1 else 0.0
-
-    return {
-        "benchmark_eval_score": {
-            "benchmark_overall_eval_score": overall_avg,
-            "benchmark_overall_eval_standard_deviation": overall_se,
-        },
-        "per_user": per_user,
-        "invalid_users": invalid_users,
-    }
-
-
 def _write_error_score(output_run_dir: Path, error_info: str) -> None:
     """Write a minimal score.json when the memo file fails to load at all."""
     output_run_dir.mkdir(parents=True, exist_ok=True)
@@ -119,15 +77,6 @@ def _write_error_score(output_run_dir: Path, error_info: str) -> None:
     }
     with (output_run_dir / "score.json").open("w", encoding="utf-8") as f:
         json.dump(payload, f, indent=2, ensure_ascii=False)
-
-
-def _total_tokens(summary: Dict[str, Any]) -> int:
-    """Sum total_tokens across all models in a TokenTracker.summary()."""
-    return sum(
-        int(m.get("total_tokens", 0))
-        for m in summary.values()
-        if isinstance(m, dict)
-    )
 
 
 def _module_fingerprint(module_path: Path) -> str:
@@ -144,200 +93,6 @@ def _module_fingerprint(module_path: Path) -> str:
     except OSError:
         return ""
     return h.hexdigest()[:16]
-
-
-def _task_list(env_module, status: str, spec: Dict[str, Any]) -> List[str]:
-    """env.get_task_list honoring n_samples + the per-step sample_seed (mirrors
-    forge/launch.py). seed absent → historical deterministic prefix."""
-    n = spec.get("n_samples")
-    return env_module.get_task_list(
-        status=status,
-        eval_n_samples=None if n is None else int(n),
-        seed=spec.get("sample_seed"),
-    )
-
-
-async def _run_single_stage(
-    *,
-    workflow_cls,
-    env_module,
-    memo_class,
-    memo_sha: str,
-    status: str,
-    out_dir: Path,
-    stage: str,
-    spec: Dict[str, Any],
-    model: str,
-    max_logs: Optional[int],
-    judge_model: str,
-    max_sample_concurrent: int,
-    tracker,
-) -> dict:
-    """One workflow pass at a single tier (no gauntlet). Writes score.json /
-    traces/ / token_usage.json under out_dir and returns the score dict. Used
-    for mode=check (alma's sanity gate) ONLY — progressive=False eval now goes
-    through run_gauntlet with progressive=False like forge + eval_common."""
-    out_dir.mkdir(parents=True, exist_ok=True)
-    task_list = _task_list(env_module, status, spec)
-    log.info(f"Task list ({status}, stage={stage}, size={len(task_list)}): "
-             f"{[t[-15:] for t in task_list]}")
-
-    workflow = workflow_cls(
-        memo_class=memo_class, model=model, max_logs=max_logs, judge_model=judge_model,
-    )
-    workflow.memo_sha = memo_sha
-    workflow.status = status
-    workflow.output_run_dir = out_dir
-
-    records, rlen = await workflow.run_all_users(
-        task_list=task_list, stage=stage, stage_spec=spec,
-        max_sample_concurrent=max_sample_concurrent,
-    )
-    score = _build_score_json(records[:rlen])
-    with (out_dir / "score.json").open("w", encoding="utf-8") as f:
-        json.dump(score, f, indent=2, ensure_ascii=False)
-    workflow.save_full_traces(records[:rlen])
-    with (out_dir / "token_usage.json").open("w", encoding="utf-8") as f:
-        json.dump(tracker.summary(), f, indent=2, ensure_ascii=False)
-    log.info(f"score.json written: overall="
-             f"{score['benchmark_eval_score']['benchmark_overall_eval_score']:.3f}")
-    return score
-
-
-async def _run_gauntlet_eval(
-    *,
-    workflow_cls,
-    env_module,
-    dataset: str,
-    datasets_config: Dict[str, Dict[str, Any]],
-    memo_class,
-    module_path: str,
-    memo_sha: str,
-    status: str,
-    out_dir: Path,
-    sample_seed: Optional[str],
-    model: str,
-    max_logs: Optional[int],
-    judge_model: str,
-    max_sample_concurrent: int,
-    use_memcache: bool,
-    progressive: bool = True,
-    tracker,
-) -> Dict[str, Dict[str, Any]]:
-    """Drive one candidate through the shared common.evaluate.run_gauntlet with an
-    IN-PROCESS stage runner — for BOTH the progressive stage1→2→3 gauntlet
-    (progressive=True) and a single ('single', spec, None) pass (progressive=False).
-    Same pattern as baselines/harness/eval_common.py's runner, but
-    alma's per-STEP seed (already folded into `sample_seed`) rides every stage
-    spec. Per-stage artifacts under out_dir/<stage>/, cross-stage Phase-1 memory
-    reuse via out_dir/memory_cache/, and the highest-reached stage's
-    score.json/token_usage.json/traces/ copied to the out_dir root (where alma's
-    memo_manager + sampling read the reward + examples). stages.json at the
-    root."""
-    from common.evaluate import Executor, evaluate_memo
-
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    # Cross-stage memcache: one dir shared across stage1..3 (stage2/3 reuse
-    # stage1's Phase-1 memory). Fingerprint the single staged memo file.
-    memcache_dir: Optional[Path] = None
-    fingerprint = ""
-    if use_memcache:
-        fingerprint = _module_fingerprint(Path(module_path))
-        memcache_dir = out_dir / "memory_cache"
-        memcache_dir.mkdir(parents=True, exist_ok=True)
-
-    stage_metrics: Dict[str, Dict[str, Any]] = {}
-
-    async def _run_stage_fn(ds: str, stage_name: str,
-                            spec: Dict[str, Any]) -> Optional[Exception]:
-        stage_dir = out_dir / stage_name
-        stage_dir.mkdir(parents=True, exist_ok=True)
-        task_list = _task_list(env_module, status, spec)   # honors n_samples + sample_seed
-
-        workflow = workflow_cls(
-            memo_class=memo_class, model=model, max_logs=max_logs, judge_model=judge_model,
-        )
-        workflow.memo_sha = memo_sha
-        workflow.status = status
-        workflow.output_run_dir = stage_dir
-        if memcache_dir is not None:
-            workflow.memory_cache_dir = memcache_dir
-            workflow.harness_fingerprint = fingerprint
-
-        tokens_before = _total_tokens(tracker.summary())
-        raw_score = 0.0
-        crashed: Optional[Exception] = None
-        try:
-            records, n = await workflow.run_all_users(
-                task_list=task_list, stage=stage_name, stage_spec=spec,
-                max_sample_concurrent=max_sample_concurrent,
-            )
-            workflow.save_full_traces(records[:n])
-            score = _build_score_json(records[:n])
-            raw_score = float(
-                score["benchmark_eval_score"]["benchmark_overall_eval_score"]
-            )
-            with (stage_dir / "score.json").open("w", encoding="utf-8") as f:
-                json.dump(score, f, indent=2, ensure_ascii=False)
-            with (stage_dir / "token_usage.json").open("w", encoding="utf-8") as f:
-                json.dump(tracker.summary(), f, indent=2, ensure_ascii=False)
-        except Exception as exc:  # a crashed stage eliminates + stops (run_gauntlet)
-            crashed = exc
-            log.warning(f"[{stage_name}] stage crashed: {exc!r}")
-        tokens_after = _total_tokens(tracker.summary())
-
-        stage_metrics[stage_name] = {
-            "raw_score": raw_score,
-            "score_max": workflow.judge_score_max,
-            "tokens": tokens_after - tokens_before,
-        }
-        return crashed
-
-    def _read_metrics_fn(ds: str, stage_name: str) -> Dict[str, Any]:
-        return dict(stage_metrics[stage_name])   # copy: run_gauntlet mutates tokens
-
-    def _stages_writer(ds: str, summary: Dict[str, Any]) -> None:
-        reached = summary["reached"]
-        for fname in ("score.json", "token_usage.json"):
-            src = out_dir / reached / fname
-            if src.exists():
-                shutil.copy2(src, out_dir / fname)
-        # alma reads per-user traces from out_dir/traces — mirror the final
-        # (highest-reached) stage's traces up to the root.
-        src_traces = out_dir / reached / "traces"
-        dst_traces = out_dir / "traces"
-        if src_traces.is_dir():
-            if dst_traces.exists():
-                shutil.rmtree(dst_traces)
-            shutil.copytree(src_traces, dst_traces)
-        with (out_dir / "stages.json").open("w", encoding="utf-8") as f:
-            json.dump(
-                {"reached": reached, "eliminated": summary["eliminated"],
-                 "stages": summary["stages"]},
-                f, indent=2, ensure_ascii=False,
-            )
-
-    def _sample_seed_for(ds: str) -> Optional[str]:
-        return sample_seed   # per-step seed already derived (None when random_sample off)
-
-    metrics = await evaluate_memo(
-        datasets_config=datasets_config,
-        progressive=progressive,
-        executor=Executor(
-            run_stage=_run_stage_fn,
-            read_metrics=_read_metrics_fn,
-            write_stages=_stages_writer,
-        ),
-        sample_seed_for=_sample_seed_for,
-    )
-    # Guarantee a root score.json even if the first stage crashed before writing
-    # one, so alma's memo_manager never hard-fails on a missing file (it degrades
-    # to a 0.0-reward examination failure, matching the pre-gauntlet contract).
-    if not (out_dir / "score.json").exists():
-        _write_error_score(out_dir, "progressive gauntlet produced no score "
-                                     "(first stage crashed before writing one)")
-    return metrics
 
 
 async def main(
@@ -359,9 +114,7 @@ async def main(
     single_stage: Optional[dict] = None,
     memory_cache: bool = True,
 ):
-    from common.evaluate import (
-        DEFAULT_STAGES, _benchmark_family, _resolve_dataset_stages, stage_wire_spec,
-    )
+    from common.evaluate import evaluate_memo
     from common.sampling import derive_sample_seed
 
     run_dir = Path(output_run_dir)
@@ -380,53 +133,31 @@ async def main(
              f"(mode={mode}, progressive={progressive}, random_sample={random_sample}, "
              f"step={step_index})")
 
-    # 2. Init token tracker (Judge picks it up via GLOBAL_TOKEN_TRACKER)
-    tracker = init_global_tracker()
-
-    # 3. Resolve workflow/env + the stages block (user override or family default).
-    workflow_cls, env_module, _recorder_cls = resolve(dataset)
-    family = _benchmark_family(dataset)
-    ds_params: Dict[str, Any] = {
-        "stages": copy.deepcopy(stages) if stages else copy.deepcopy(DEFAULT_STAGES[family])
-    }
-    _resolve_dataset_stages(dataset, ds_params)   # fill defaults + validate, in place
-    stages_block = ds_params["stages"]
-
     # Per-STEP seed: differs across search steps (design decision 2) so each
     # step samples a different subset; None when random_sample is off (historical
     # deterministic prefix / nesting).
     sample_seed = derive_sample_seed(sampling_seed, step_index, dataset) if random_sample else None
 
-    # 4. Route the eval.
-    #  - mode=eval → the SHARED run_gauntlet, both progressive and single-stage:
-    #      progressive → the stage1→2→3 gauntlet ({"stages": ...}, progressive=True);
-    #      else        → a single ('single', spec, None) pass sized by the REQUIRED
-    #                    `single_stage` block ({"single_stage": ...}, progressive=False;
-    #                    run_gauntlet raises if it is absent — no silent whole-split).
-    #    No hand-rolled single-stage eval any more — unified with forge + eval_common.
-    #  - mode=check → alma's cheap sanity gate: ONE sanity-size pass (NOT the
-    #                 gauntlet; sizes from `sanity_check`, ignores `single_stage`).
-    if mode == "eval":
-        eval_params = {dataset: ds_params} if progressive else {dataset: {"single_stage": single_stage}}
-        await _run_gauntlet_eval(
-            workflow_cls=workflow_cls, env_module=env_module, dataset=dataset,
-            datasets_config=eval_params, memo_class=memo_class,
-            module_path=module_path, memo_sha=memory_id, status=status,
-            out_dir=run_dir, sample_seed=sample_seed, model=model, max_logs=max_logs,
-            judge_model=judge_model, max_sample_concurrent=max_sample_concurrent,
-            use_memcache=memory_cache, progressive=progressive,
-            tracker=tracker,
-        )
-    else:  # mode == "check"
-        spec = stage_wire_spec(dataset, stages_block["sanity_check"])
-        if sample_seed is not None:
-            spec["sample_seed"] = sample_seed
-        await _run_single_stage(
-            workflow_cls=workflow_cls, env_module=env_module, memo_class=memo_class,
-            memo_sha=memory_id, status=status, out_dir=run_dir, stage="sanity", spec=spec,
-            model=model, max_logs=max_logs, judge_model=judge_model,
-            max_sample_concurrent=max_sample_concurrent, tracker=tracker,
-        )
+    # 4. One call into the shared, execution-independent evaluate_memo — the
+    # SAME function forge's container runs. mode=check → smoke=True (ONE
+    # sanity_check-sized pass, artifacts at the run_dir root, no gauntlet);
+    # mode=eval → the staged gauntlet (progressive) or the REQUIRED-single_stage
+    # single pass. evaluate_memo owns sizing resolution, the token tracker,
+    # per-stage artifacts, stages.json, root copies (incl. traces — alma's
+    # memo_manager/sampling read them from the run_dir root), and the
+    # crashed-run root score.json guarantee.
+    await evaluate_memo(
+        memo_class=memo_class, dataset=dataset, split=status,
+        progressive=progressive, out_dir=run_dir,
+        qa_model=model, judge_model=judge_model,
+        stages=stages, single_stage=single_stage,
+        max_sample_concurrent=max_sample_concurrent,
+        sample_seed=sample_seed,
+        memory_cache=memory_cache,
+        memcache_fingerprint=_module_fingerprint(Path(module_path)),
+        smoke=(mode == "check"),
+        max_logs=max_logs, memo_sha=memory_id,
+    )
 
     log.info(f"Evaluation complete: results under {run_dir}")
 
