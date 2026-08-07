@@ -64,7 +64,7 @@ def load_harness_class(harness_dir: Path) -> Type[MemoClass]:
     candidates = [
         obj for _, obj in inspect.getmembers(module, inspect.isclass)
         # select the class defined in this harness file; imported bases like
-        # forge.harness_base.MemoClass are no longer abstract, so an
+        # forge.memo_class.MemoClass are no longer abstract, so an
         # isabstract filter would wrongly match them.
         if issubclass(obj, MemoClass) and obj.__module__ == module.__name__
     ]

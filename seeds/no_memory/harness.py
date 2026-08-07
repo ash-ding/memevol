@@ -9,9 +9,9 @@ into some form of memory.
 """
 from typing import Dict
 
-from forge.harness_base import MemoStructure
+from forge.memo_class import MemoClass
 
-class NoMemoryHarness(MemoStructure):
+class NoMemoryHarness(MemoClass):
     async def build_memory_from_data(self, recorder) -> None:
         return None
 

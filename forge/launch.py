@@ -21,7 +21,7 @@ Steps:
 
 The harness_dir is bind-mounted read-only; /out is bind-mounted read-write.
 Binds are SELECTIVE (v10): only common/, datasets/, forge/{__init__,launch,
-harness_base}.py are mounted under /app — the rest of forge/ (host outer
+memo_class}.py are mounted under /app — the rest of forge/ (host outer
 loop) and baselines/ are deliberately NOT visible in-container. See
 forge/evaluator.py's module docstring for the authoritative bind list.
 """
@@ -82,13 +82,13 @@ def _load_harness_class(harness_dir: Path) -> Type[MemoClass]:
         ) from exc
     for _, obj in inspect.getmembers(module, inspect.isclass):
         # select the class defined in this harness file; imported bases like
-        # forge.harness_base.MemoClass are no longer abstract, so an
+        # forge.memo_class.MemoClass are no longer abstract, so an
         # isabstract filter would wrongly match them.
         if issubclass(obj, MemoClass) and obj.__module__ == module.__name__:
             return obj
     raise ImportError(
         f"No MemoClass subclass found in {harness_py}. Define a class "
-        f"that inherits from `forge.harness_base.MemoClass` and "
+        f"that inherits from `forge.memo_class.MemoClass` and "
         f"implements both `build_memory_from_data` and `retrieve_memory_for_query`."
     )
 

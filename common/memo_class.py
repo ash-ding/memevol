@@ -8,10 +8,8 @@ is created per user/sample, so no cross-user state is possible.
 The data envelope the hooks receive is `Basic_Recorder`, defined in
 `common/recorder.py` (re-imported here for convenience).
 
-Renamed from common/harness_base.py::MemoStructure (2026-08-06);
-`common/harness_base.py` remains as a re-export shim and `MemoStructure`
-as an alias, so historical evolved harnesses, archived alma memos and the
-immutable proposer prompt templates keep working unchanged.
+(Hard-renamed 2026-08-06 — no legacy shim or alias exists; every consumer
+imports `common.memo_class.MemoClass`.)
 """
 
 from __future__ import annotations
@@ -47,8 +45,3 @@ class MemoClass(ABC):
         benchmark's standard QA agent (the default). `prompt` is the workflow's
         fully-formatted answer prompt. Default: None."""
         return None
-
-
-# Backward-compat alias — old evolved harnesses, archived alma memos and the
-# immutable prompt templates say `MemoStructure`; both names are the same class.
-MemoStructure = MemoClass

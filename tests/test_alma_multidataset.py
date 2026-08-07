@@ -83,7 +83,7 @@ def test_dataset_info_evidence_keys_and_recorders():
 def test_dynamicmem_prompts_byte_identical():
     """DynamicMem prompt text is locked byte-identically against the fixture.
     Fixture regenerated 2026-08-06 (contract rename): the embedded contract
-    source is now common/memo_class.py (class MemoClass + MemoStructure alias) —
+    source is now common/memo_class.py (class MemoClass + MemoClass alias) —
     alma prompt text intentionally changed at that point; comparisons to
     pre-rename alma runs are prompt-version-crossing."""
     import json

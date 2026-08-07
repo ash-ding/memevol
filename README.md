@@ -113,8 +113,8 @@ Each propose call runs Claude Code in a fresh Singularity container with a
 └── frontier.json               the population with per-benchmark scores
 
 /app                            (RO, selective; PYTHONPATH=/app)
-├── forge/harness_base.py       the MemoClass base the new harness must inherit
-├── common/{memo_class,harness_base,recorder,llm,logger}.py
+├── forge/memo_class.py       the MemoClass base the new harness must inherit
+├── common/{memo_class,memo_class,recorder,llm,logger}.py
 └── datasets/                   env/workflow/prompts per benchmark + raw data,
                                 with the held-out TEST SPLIT PHYSICALLY ABSENT
                                 (search-mode overlay binds shadow it — filtered
@@ -166,7 +166,7 @@ keys), the workflow logs steps and reward for traces. One contract, two
 consumers:
 
 - **forge-evolved harnesses** implement build + retrieve (inheriting
-  [`forge/harness_base.py`](forge/harness_base.py), a documented subclass);
+  [`forge/memo_class.py`](forge/memo_class.py), a documented subclass);
 - **baseline memory systems** implement the same hooks and are scored
   through the *same* per-dataset workflows — see
   [baselines/README.md](baselines/README.md) for the adaptation guide.

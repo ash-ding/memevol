@@ -389,7 +389,7 @@ def _memo_source_dir(memo_class: type) -> Optional["Path"]:
         srcp = Path(src).resolve()
         if srcp == this_file:
             continue
-        if cls.__module__ in ("common.memo_class", "forge.harness_base", "abc", "builtins"):
+        if cls.__module__ in ("common.memo_class", "forge.memo_class", "abc", "builtins"):
             break  # reached the framework base — no useful source dir above it
         return srcp.parent
     return None

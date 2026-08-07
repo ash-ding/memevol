@@ -36,7 +36,7 @@ Your memory structure aims to help a downstream QA agent accurately answer quest
       Each app_log entry has: app_log_id, timestamp, app_name, api_name, request, response.
       Expected behaviour: extract and store user habits, preferences, and behavioural patterns into internal DB.
       NOTE: build_memory_from_data may be called multiple times (once per chunk of logs); your internal DB must be
-      persistent across calls (store it as self.* attributes on the MemoStructure instance).
+      persistent across calls (store it as self.* attributes on the MemoClass instance).
 
     Phase 2 — retrieve_memory_for_query(recorder):
       Called once per QA question (after Phase 1 is complete).
@@ -53,7 +53,7 @@ Your memory structure aims to help a downstream QA agent accurately answer quest
       and build a personalised user profile in the internal database.
     - `retrieve_memory_for_query(recorder)`: called during Phase 2 (once per QA question) to retrieve
       relevant facts from the stored profile. The returned Dict is given directly to the answering agent.
-    IMPORTANT: each user gets a fresh MemoStructure() instance — there is NO cross-user memory sharing.
+    IMPORTANT: each user gets a fresh MemoClass() instance — there is NO cross-user memory sharing.
     The same instance persists across all Phase 1 + Phase 2 calls for one user.""",  # lines 468-474
     "design_goals": """### Your Task:
 Modify or create code that fully satisfies the following design goals:
@@ -65,7 +65,7 @@ Modify or create code that fully satisfies the following design goals:
      (e.g., temporal patterns, cross-domain correlations, preference summaries).
 
 2. **General Retrieve/Update Orchestration:**
-   - Create a subclass of `MemoStructure` that orchestrates all layers.
+   - Create a subclass of `MemoClass` that orchestrates all layers.
    - `build_memory_from_data()` should propagate app-log information to relevant layers.
    - `retrieve_memory_for_query()` should chain layer outputs intelligently for the given query.
      Output from one layer can become input to the next.
@@ -89,7 +89,7 @@ Modify or create code that fully satisfies the following design goals:
 6. **Code Quality:**
    - Output clean, runnable Python code following PEP8.
    - `retrieve_memory_for_query()` and `build_memory_from_data()` accept a `Basic_Recorder` and orchestrate end-to-end.
-   - Initialize all layers in `MemoStructure.__init__`.
+   - Initialize all layers in `MemoClass.__init__`.
    - Avoid placeholders like `pass` or `# TODO`.
    - Do not overuse defensive programming; raise exceptions for unexpected conditions.
 
@@ -111,7 +111,7 @@ and retrieves the right facts for any personalisation question.
     "reflection_code_usage": """Your memory structure will be used in the DynamicMem two-phase workflow:
     - `build_memory_from_data(recorder)`: Phase 1 — ingest app logs and build user profile.
     - `retrieve_memory_for_query(recorder)`: Phase 2 — retrieve facts relevant to the query; return a Dict.
-    IMPORTANT: each user gets a fresh MemoStructure() instance — no cross-user sharing.""",  # lines 590-593
+    IMPORTANT: each user gets a fresh MemoClass() instance — no cross-user sharing.""",  # lines 590-593
     "analysis_protocol": """    - Two-phase protocol:
         - `build_memory_from_data(recorder)`: called during Phase 1 with chunks of app logs.
           `recorder.init['app_logs']` = current batch of log entries.
@@ -169,7 +169,7 @@ _LOCOMO = {
       (Only `conversation` is provided — there are NO summaries, observations, or event_summary.)
       Expected behaviour: extract and store conversational facts, their speaker, and their session date into an internal DB.
       NOTE: build_memory_from_data may be called multiple times (once per chunk of sessions); your internal DB must be
-      persistent across calls (store it as self.* attributes on the MemoStructure instance).
+      persistent across calls (store it as self.* attributes on the MemoClass instance).
 
     Phase 2 — retrieve_memory_for_query(recorder):
       Called once per QA question (after Phase 1 is complete).
@@ -185,7 +185,7 @@ _LOCOMO = {
       and build a structured memory of the dialogue.
     - `retrieve_memory_for_query(recorder)`: called during Phase 2 (once per QA question) to retrieve
       relevant turns/facts. The returned Dict is given directly to the answering agent.
-    IMPORTANT: each conversation gets a fresh MemoStructure() instance — there is NO cross-conversation memory sharing.
+    IMPORTANT: each conversation gets a fresh MemoClass() instance — there is NO cross-conversation memory sharing.
     The same instance persists across all Phase 1 + Phase 2 calls for one conversation.""",
     "design_goals": """### Your Task:
 Modify or create code that fully satisfies the following design goals:
@@ -197,7 +197,7 @@ Modify or create code that fully satisfies the following design goals:
      (e.g., per-speaker facts, entity/event links, temporal index of sessions).
 
 2. **General Retrieve/Update Orchestration:**
-   - Create a subclass of `MemoStructure` that orchestrates all layers.
+   - Create a subclass of `MemoClass` that orchestrates all layers.
    - `build_memory_from_data()` should propagate conversation-turn information to relevant layers.
    - `retrieve_memory_for_query()` should chain layer outputs intelligently for the given query.
      Output from one layer can become input to the next.
@@ -222,7 +222,7 @@ Modify or create code that fully satisfies the following design goals:
 6. **Code Quality:**
    - Output clean, runnable Python code following PEP8.
    - `retrieve_memory_for_query()` and `build_memory_from_data()` accept a `Basic_Recorder` and orchestrate end-to-end.
-   - Initialize all layers in `MemoStructure.__init__`.
+   - Initialize all layers in `MemoClass.__init__`.
    - Avoid placeholders like `pass` or `# TODO`.
    - Do not overuse defensive programming; raise exceptions for unexpected conditions.
 
@@ -244,7 +244,7 @@ and retrieves the right turns for any question about it.
     "reflection_code_usage": """Your memory structure will be used in the LoCoMo two-phase workflow:
     - `build_memory_from_data(recorder)`: Phase 1 — ingest conversation sessions and build memory.
     - `retrieve_memory_for_query(recorder)`: Phase 2 — retrieve turns relevant to the query; return a Dict.
-    IMPORTANT: each conversation gets a fresh MemoStructure() instance — no cross-conversation sharing.""",
+    IMPORTANT: each conversation gets a fresh MemoClass() instance — no cross-conversation sharing.""",
     "analysis_protocol": """    - Two-phase protocol:
         - `build_memory_from_data(recorder)`: called during Phase 1 with chunks of conversation sessions.
           `recorder.init['conversation']` = current subset of the multi-session conversation.
@@ -296,7 +296,7 @@ _LONGMEMEVAL_COMMON = {
         messages (List[{"role": "user"|"assistant", "content": str}]).
       Expected behaviour: index the informative content of each session (with its date) into an internal DB.
       NOTE: build_memory_from_data may be called multiple times (once per chunk of sessions); your internal DB must be
-      persistent across calls (store it as self.* attributes on the MemoStructure instance).
+      persistent across calls (store it as self.* attributes on the MemoClass instance).
 
     Phase 2 — retrieve_memory_for_query(recorder):
       Called once per QA question (after Phase 1 is complete).
@@ -313,7 +313,7 @@ _LONGMEMEVAL_COMMON = {
       and build a searchable memory of the haystack.
     - `retrieve_memory_for_query(recorder)`: called during Phase 2 (once per question) to retrieve
       the relevant sessions/messages. The returned Dict is given directly to the answering agent.
-    IMPORTANT: each user gets a fresh MemoStructure() instance — there is NO cross-user memory sharing.
+    IMPORTANT: each user gets a fresh MemoClass() instance — there is NO cross-user memory sharing.
     The same instance persists across all Phase 1 + Phase 2 calls for one user.""",
     "design_goals": """### Your Task:
 Modify or create code that fully satisfies the following design goals:
@@ -325,7 +325,7 @@ Modify or create code that fully satisfies the following design goals:
      (e.g., per-session content index, temporal index by date, entity/topic links).
 
 2. **General Retrieve/Update Orchestration:**
-   - Create a subclass of `MemoStructure` that orchestrates all layers.
+   - Create a subclass of `MemoClass` that orchestrates all layers.
    - `build_memory_from_data()` should propagate session content to relevant layers.
    - `retrieve_memory_for_query()` should chain layer outputs intelligently for the given query.
      Output from one layer can become input to the next.
@@ -350,7 +350,7 @@ Modify or create code that fully satisfies the following design goals:
 6. **Code Quality:**
    - Output clean, runnable Python code following PEP8.
    - `retrieve_memory_for_query()` and `build_memory_from_data()` accept a `Basic_Recorder` and orchestrate end-to-end.
-   - Initialize all layers in `MemoStructure.__init__`.
+   - Initialize all layers in `MemoClass.__init__`.
    - Avoid placeholders like `pass` or `# TODO`.
    - Do not overuse defensive programming; raise exceptions for unexpected conditions.
 
@@ -373,7 +373,7 @@ from a large haystack for any question, grounded in time.
     "reflection_code_usage": """Your memory structure will be used in the LongMemEval two-phase workflow:
     - `build_memory_from_data(recorder)`: Phase 1 — ingest chat sessions and build memory.
     - `retrieve_memory_for_query(recorder)`: Phase 2 — retrieve sessions relevant to the query; return a Dict.
-    IMPORTANT: each user gets a fresh MemoStructure() instance — no cross-user sharing.""",
+    IMPORTANT: each user gets a fresh MemoClass() instance — no cross-user sharing.""",
     "analysis_protocol": """    - Two-phase protocol:
         - `build_memory_from_data(recorder)`: called during Phase 1 with chunks of chat sessions.
           `recorder.init['sessions']` = current batch of sessions (session_id, date, messages).

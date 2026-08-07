@@ -13,7 +13,7 @@ History:
                    default disallowed_tools relaxed to ["mcp__*"] (was
                    [Bash, WebFetch, WebSearch, mcp__*]); jq + tree added.
   v10 (2026-04-27) /app:ro whole-root bind replaced with selective bind to
-                   common/{memo_class,harness_base,llm,logger,__init__}.py + datasets/
+                   common/{memo_class,llm,logger,__init__}.py + datasets/
                    + forge/{__init__,prompts,propose_in_container}.py;
                    /seeds bind dropped (selected seed already copied into
                    /workspace/harnesses/0/ at startup). PROPOSER_SYSTEM made
@@ -484,10 +484,10 @@ def _build_singularity_cmd(
         import) needs to be reachable via /app/forge/. Agents never read these.
       - Agent reference materials live under /app/{common,datasets,forge}/. Only
         the files that contribute to writing a correct harness are bound:
-          forge/harness_base.py    the MemoClass base CC must inherit from
-          common/memo_class.py     the underlying ABC (forge's subclasses it; harness_base.py = shim)
+          forge/memo_class.py    the MemoClass base CC must inherit from
+          common/memo_class.py     the underlying ABC (forge's subclasses it)
           common/recorder.py       Basic_Recorder data envelope
-                                   (harness_base imports it)
+                                   (memo_class imports it)
           common/llm.py            Agent + Embedding helpers (token-tracked)
           common/logger.py         transitive dep of common.llm
           common/__init__.py       package marker
@@ -517,12 +517,9 @@ def _build_singularity_cmd(
         f"{PROJECT_ROOT}/forge/propose_in_container.py:/app/forge/propose_in_container.py:ro",
 
         # Agent reference materials
-        f"{PROJECT_ROOT}/forge/harness_base.py:/app/forge/harness_base.py:ro",
+        f"{PROJECT_ROOT}/forge/memo_class.py:/app/forge/memo_class.py:ro",
         f"{PROJECT_ROOT}/common/__init__.py:/app/common/__init__.py:ro",
-        # memo_class.py is the canonical contract; harness_base.py is its
-        # back-compat shim (old harnesses import it) — bind BOTH.
         f"{PROJECT_ROOT}/common/memo_class.py:/app/common/memo_class.py:ro",
-        f"{PROJECT_ROOT}/common/harness_base.py:/app/common/harness_base.py:ro",
         f"{PROJECT_ROOT}/common/recorder.py:/app/common/recorder.py:ro",
         f"{PROJECT_ROOT}/common/llm.py:/app/common/llm.py:ro",
         f"{PROJECT_ROOT}/common/logger.py:/app/common/logger.py:ro",
@@ -559,7 +556,7 @@ def _build_singularity_cmd(
         # CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING is a no-op for codex (and
         # we no longer use the SDK anyway), but harmless — leave for CC.
         "--env", "CLAUDE_CODE_ENABLE_SDK_FILE_CHECKPOINTING=true",
-        # PYTHONPATH so any `python -c "from common.harness_base import ..."`
+        # PYTHONPATH so any `python -c "from common.memo_class import ..."`
         # the agent runs for self-validation finds the bound /app/common package.
         "--env", "PYTHONPATH=/app",
         str(PROPOSER_BASE_SIF),

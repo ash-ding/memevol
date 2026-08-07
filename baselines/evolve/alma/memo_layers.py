@@ -2,8 +2,8 @@
 
 alma's meta-agent decomposes a memory system into multiple specialised
 layers, each owning a database plus a retrieve/update pair, orchestrated
-by the final `MemoStructure` subclass. This is alma's OWN design opinion,
-NOT part of the shared eval contract (`common/harness_base.py`).
+by the final `MemoClass` subclass. This is alma's OWN design opinion,
+NOT part of the shared eval contract (`common/memo_class.py`).
 Generated memo code imports it from here:
 
     from baselines.evolve.alma.memo_layers import Sub_memo_layer

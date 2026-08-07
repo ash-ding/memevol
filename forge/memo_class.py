@@ -1,4 +1,4 @@
-"""forge's harness contract — the base class every EVOLVED harness inherits.
+"""forge's memo contract — the base class every EVOLVED harness inherits.
 
 This is forge's own evolution surface, split from `common.memo_class` so
 the forge contract can gain documentation / optional hooks without touching
@@ -10,7 +10,7 @@ everything downstream that type-checks against the common ABC
 (`forge/launch.py::_load_harness_class`, `forge/contract.py`,
 `common/workflow.py`) accepts forge harnesses unchanged — including
 historical harnesses in old workspaces that still import
-`common.harness_base` directly.
+`common.memo_class` directly (pre-2026-08 workspaces need their harness imports updated to load).
 
 The contract (unchanged from common):
 
@@ -32,7 +32,7 @@ The contract (unchanged from common):
   DynamicMem answer prompt (blocks are joined verbatim); any other dict
   shape is serialized as one JSON block.
 
-A fresh MemoStructure instance is created per user/sample — no cross-user
+A fresh MemoClass instance is created per user/sample — no cross-user
 state is possible.
 """
 
@@ -48,7 +48,7 @@ class MemoClass(_CommonMemoClass):
     Inherit from this and implement build (`build_memory_from_data`) and retrieve
     (`retrieve_memory_for_query`):
 
-        class MyHarness(MemoStructure):
+        class MyHarness(MemoClass):
             async def build_memory_from_data(self, recorder) -> None: ...
             async def retrieve_memory_for_query(self, recorder) -> dict: ...
 
@@ -77,8 +77,3 @@ class MemoClass(_CommonMemoClass):
 
     def load_memory(self, path) -> bool:
         return False
-
-
-# Backward-compat alias — the immutable prompt templates and historical
-# harnesses inherit `forge.harness_base.MemoStructure`; same class.
-MemoStructure = MemoClass

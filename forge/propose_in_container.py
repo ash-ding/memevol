@@ -11,8 +11,8 @@ Launched by `forge/proposer.py` via:
 
 Inside the Singularity sandbox we have (v10 SELECTIVE binds — see
 forge/proposer.py::_build_singularity_cmd for the authoritative list):
-  /app/forge/{__init__,propose_in_container,harness_base}.py   RO
-  /app/common/{__init__,harness_base,recorder,llm,logger}.py   RO
+  /app/forge/{__init__,propose_in_container,memo_class}.py   RO
+  /app/common/{__init__,memo_class,recorder,llm,logger}.py   RO
   /app/datasets/       full pkg RO (env/workflow/prompts + raw data)
   /workspace           this run's workspace, RW  (cwd for the agent)
   /usr/local/bin/claude         host's claude binary, RO bind (CC)

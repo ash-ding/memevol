@@ -94,7 +94,7 @@ baselines/evolve/alma/
 └── test.sh             # held-out evaluation invocations
 ```
 
-Shared infrastructure (`harness_base.py`, `llm.py`, `tokens.py`,
+Shared infrastructure (`memo_class.py`, `llm.py`, `tokens.py`,
 `logger.py`, the `DynamicMemWorkflow`) was long ago extracted to
 [`common/`](../../../common/) and [`datasets/dynamicmem/`](../../../datasets/dynamicmem/)
 — alma imports it from there. Since the 2026-07 TCE upgrade, alma's

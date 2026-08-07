@@ -10,7 +10,7 @@ needed by launch.py + harness imports are exposed:
       --bind <project_root>/datasets:/app/datasets:ro      # full datasets/ pkg (incl. raw data)
       --bind <project_root>/forge/__init__.py:/app/forge/__init__.py:ro
       --bind <project_root>/forge/launch.py:/app/forge/launch.py:ro
-      --bind <project_root>/forge/harness_base.py:/app/forge/harness_base.py:ro
+      --bind <project_root>/forge/memo_class.py:/app/forge/memo_class.py:ro
       --bind <harness_dir>:/harness:ro \\
       --bind <out_dir>:/out:rw \\
       --env OPENAI_API_KEY=... ANTHROPIC_API_KEY=... \\
@@ -146,9 +146,9 @@ async def run_evaluation(
         "--bind", f"{PROJECT_ROOT}/datasets:/app/datasets:ro",
         "--bind", f"{PROJECT_ROOT}/forge/__init__.py:/app/forge/__init__.py:ro",
         "--bind", f"{PROJECT_ROOT}/forge/launch.py:/app/forge/launch.py:ro",
-        # Harnesses inherit forge.harness_base.MemoClass (subclass of the
+        # Harnesses inherit forge.memo_class.MemoClass (subclass of the
         # common ABC) — the module must be importable inside the container.
-        "--bind", f"{PROJECT_ROOT}/forge/harness_base.py:/app/forge/harness_base.py:ro",
+        "--bind", f"{PROJECT_ROOT}/forge/memo_class.py:/app/forge/memo_class.py:ro",
         "--bind", f"{harness_dir}:/harness:ro",
         "--bind", f"{out_dir}:/out:rw",
     ]
