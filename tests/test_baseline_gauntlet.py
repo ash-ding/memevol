@@ -1,5 +1,5 @@
 """Progressive gauntlet + memcache + seed for the harness baselines
-(baselines/harness/eval_common.py::run_baseline).
+(baselines/harness/eval_utility.py::run_baseline).
 
 Zero-dependency runner (baselines venv; no network — the QA agent + judge are
 stubbed, run_all_users is faked for the gauntlet-logic tests):
@@ -60,7 +60,7 @@ def _patch_run_all_users(reward, seen):
 
 def _run_with_fake_run_all_users(reward, seen, **run_kwargs):
     from datasets.locomo.workflow import LoCoMoWorkflow
-    from baselines.harness.eval_common import run_baseline
+    from baselines.harness.eval_utility import run_baseline
     orig = LoCoMoWorkflow.run_all_users
     LoCoMoWorkflow.run_all_users = _patch_run_all_users(reward, seen)
     try:
@@ -178,7 +178,7 @@ def test_progressive_false_single_stage_path():
 
 def test_progressive_false_sizes_from_single_stage():
     from datasets.locomo.workflow import LoCoMoWorkflow
-    from baselines.harness.eval_common import run_baseline
+    from baselines.harness.eval_utility import run_baseline
     from common.evaluate import single_stage_wire_spec
     from common.sampling import derive_sample_seed
 
@@ -225,7 +225,7 @@ def test_progressive_false_sizes_from_single_stage():
 # --------------------------------------------------------------------------
 
 def test_progressive_false_requires_single_stage():
-    from baselines.harness.eval_common import run_baseline
+    from baselines.harness.eval_utility import run_baseline
 
     out_dir = Path(tempfile.mkdtemp(prefix="test_gauntlet_no_single_"))
     raised = None
@@ -252,7 +252,7 @@ def test_progressive_false_requires_single_stage():
 # --------------------------------------------------------------------------
 
 def test_progressive_false_rejects_unknown_single_stage_field():
-    from baselines.harness.eval_common import run_baseline
+    from baselines.harness.eval_utility import run_baseline
 
     out_dir = Path(tempfile.mkdtemp(prefix="test_gauntlet_bad_field_"))
     raised = None
@@ -318,7 +318,7 @@ class _CountingMemo(MemoClass):
 def test_progressive_real_memcache_reuse():
     import common.llm as llm_mod
     from datasets.locomo.workflow import LoCoMoWorkflow
-    from baselines.harness.eval_common import run_baseline
+    from baselines.harness.eval_utility import run_baseline
 
     _BUILD_CALLS.clear()
 

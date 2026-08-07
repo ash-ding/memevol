@@ -20,7 +20,7 @@ try:
 except ImportError:
     pass
 from baselines.registry import DATASETS
-from baselines.harness.eval_common import run_baseline, print_result
+from baselines.harness.eval_utility import run_baseline, print_result
 from baselines.harness.cc.memo import CCMemo, MODEL_ALIASES
 from common.config import resolve_config
 

@@ -31,7 +31,7 @@ baselines/
 │   ├── evolvemem/       #   (paper PDF; to be implemented under the conventions below)
 │   └── memevolve/       #   (paper PDF; to be implemented under the conventions below)
 └── harness/             # READY-MADE MEMORY SYSTEMS — compared against forge's
-    ├── eval_common.py   #   EVOLVED HARNESSES. Shared runner: run_baseline()
+    ├── eval_utility.py   #   EVOLVED HARNESSES. Shared runner: run_baseline()
     ├── cc/              #   Claude Code as direct QA agent (native answer)
     ├── hipporag2/       #   HippoRAG2 graph-RAG pipeline as retrieval memory
     │                    #     (+ editable install of the external HippoRAG repo)
@@ -53,7 +53,7 @@ baselines/
   (`build_memory_from_data` / `retrieve_memory_for_query` /
   `use_memory_to_answer`) that forge-evolved harnesses implement. Their unit
   of comparison is the harness artifact: they run through the SAME
-  per-dataset workflows via `baselines.harness.eval_common.run_baseline`, so
+  per-dataset workflows via `baselines.harness.eval_utility.run_baseline`, so
   their scores sit on the same axis as any evolved harness's.
 
 ## Method-boundary conventions
@@ -538,7 +538,7 @@ adjust the flags your system needs. Core shape:
 
 ```python
 from baselines.registry import DATASETS
-from baselines.harness.eval_common import run_baseline, print_result
+from baselines.harness.eval_utility import run_baseline, print_result
 from baselines.harness.<name>.memo import MyMemo
 from common.config import resolve_config
 

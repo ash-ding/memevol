@@ -19,7 +19,7 @@ non-evolved memory architecture:
   end-to-end HippoRAG pipeline comparison.
 
 hipporag2 runs through the **same shared runner** as cc
-(`baselines.harness.eval_common.run_baseline`), which resolves the SAME production
+(`baselines.harness.eval_utility.run_baseline`), which resolves the SAME production
 per-dataset workflow the main method uses (`baselines.registry.resolve`) —
 so DynamicMem gets the official TCE v2 checkpoint protocol + holistic judge,
 not a compat-shim script. The old single-dataset `eval_hipporag2.py` was

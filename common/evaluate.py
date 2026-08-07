@@ -160,7 +160,7 @@ def resolve_single_stage_spec(ds: str, single_stage: Optional[Dict[str, Any]]
     raises ValueError — but an empty `{}` counts as PRESENT (all-null = whole
     split), NOT absent. The single source of the progressive=false sizing
     semantics, shared by forge (resolve_sampling_plan) AND the baseline
-    single-pass paths (harness eval_common, alma launch)."""
+    single-pass paths (harness eval_utility, alma launch)."""
     if single_stage is None:
         sample_field = _FAMILY_FIELDS[_benchmark_family(ds)][0]
         raise ValueError(
@@ -313,7 +313,7 @@ def _resolve_dataset_stages(ds: str, params: Dict[str, Any]) -> None:
 def _build_score_json(recorder_list: List[Any]) -> Dict[str, Any]:
     """Summarize a recorder list into the canonical score.json dict (mean per-user
     reward + SE, per_user details, invalid_users). Promoted from alma's launch.py
-    (eval_common used to borrow alma's copy) — the ONE score-summary builder."""
+    (eval_utility used to borrow alma's copy) — the ONE score-summary builder."""
     rewards: List[float] = []
     per_user: Dict[str, Any] = {}
     invalid_users: List[Dict[str, Any]] = []

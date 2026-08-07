@@ -11,7 +11,7 @@ benchmark's required output format (e.g. DynamicMem TCE's "Return JSON
 only" skeleton) instead of free prose the judge can't parse.
 
 cc runs through the **same shared runner** as hipporag2
-(`baselines.harness.eval_common.run_baseline`), which resolves the SAME production
+(`baselines.harness.eval_utility.run_baseline`), which resolves the SAME production
 per-dataset workflow the main method uses (`baselines.registry.resolve`) —
 so DynamicMem gets the official TCE v2 checkpoint protocol + holistic judge,
 not a compat-shim script. The old single-dataset `eval_cc.py` was replaced
