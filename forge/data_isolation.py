@@ -42,8 +42,8 @@ log = logging.getLogger("forge.data_isolation")
 
 _DATASETS = PROJECT_ROOT / "benchmarks"
 
-# Cross-run staging cache. The LongMemEval raw files are LARGE (m variant
-# ~2.6 GB) — filtering them costs minutes of JSON parse/dump, so staged
+# Cross-run staging cache. The LongMemEval raw file is LARGE (~277 MB) —
+# filtering it costs a JSON parse/dump, so staged
 # artifacts are fingerprinted against their sources (size + mtime_ns) and
 # reused across runs. Lives under the gitignored workspace/ root.
 DEFAULT_STAGING_DIR = WORKSPACE_BASE / ".data_staging_cache"

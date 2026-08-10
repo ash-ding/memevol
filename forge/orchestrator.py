@@ -777,8 +777,8 @@ def _isolation_binds(cfg: Dict[str, Any]) -> Optional[List[str]]:
     if _ISOLATION_BINDS_CACHE is None:
         from forge.data_isolation import stage_search_data
         # Shared cross-run staging cache (fingerprinted against the source
-        # data files) — the LongMemEval m variant is ~2.6 GB, so per-run
-        # re-filtering would cost minutes + gigabytes each run.
+        # data files) — the LongMemEval file is ~277 MB, so per-run
+        # re-filtering would cost a full parse/dump each run.
         _ISOLATION_BINDS_CACHE = stage_search_data()
     return _ISOLATION_BINDS_CACHE
 

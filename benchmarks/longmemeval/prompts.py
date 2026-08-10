@@ -8,7 +8,7 @@ LongMemEval paper. Adaptations applied:
     the unified Judge JSON contract (paper asks for "yes"/"no" labels;
     semantically yes=1, no=0).
   - Question-type strings match the actual data in
-    longmemeval_{s,m,oracle}_cleaned.json:
+    longmemeval_s_cleaned.json:
       paper "temp-reasoning"            → data "temporal-reasoning"
       paper "knowledge-update"          → data "knowledge-update"
       paper "single-session-preference" → data "single-session-preference"
