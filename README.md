@@ -180,12 +180,33 @@ against the same harness):
 |---|---|---|---|
 | **[DynamicMem](benchmarks/dynamicmem/)** | App-activity logs (~1500/user over 15 months) | Official **TCE v2 checkpoint protocol**: ingestion interleaved with tasks at 5 quarterly checkpoints; two task families (state completion + personalized service); official holistic Core+Detail judge, scores 0–1 | 6 users search / 4 test |
 | **[LoCoMo](benchmarks/locomo/)** | Multi-session two-person conversations (~154 QA each after filtering) | Two-phase; binary CORRECT/WRONG judge (community-standard); QA **categories 1–4 only** (cat-5 adversarial excluded — the data carries no gold answers for them) | 6 conv search / 4 test |
-| **[LongMemEval](benchmarks/longmemeval/)** | 500 questions, each with its own haystack of chat sessions (`s` ~48, `m` ~476) | Two-phase, 1 QA per question; binary yes/no judge (paper) | 300 search / 200 test (stratified by question type) |
+| **[LongMemEval](benchmarks/longmemeval/)** | 500 questions, each with its own haystack of ~48 chat sessions (the `s` variant) | Two-phase, 1 QA per question; binary yes/no judge (paper) | 300 search / 200 test (stratified by question type) |
 
-Data files are **not** in the repo (DynamicMem `user_data/<user>/{app_log_large,task_packs}.json`,
-~77 MB total; LongMemEval `m_cleaned.json` 2.6 GB). Acquire separately and
-place under `benchmarks/<bench>/`; DynamicMem honors a `DYNAMICMEM_DATA`
-env-var override.
+The data files are **not** in the repo (~360 MB total). Fetch them with:
+
+```bash
+python3 tools/fetch_data.py            # all three; stdlib only, no venv needed
+python3 tools/fetch_data.py --check    # report what is present, download nothing
+```
+
+It is idempotent (files that already verify are skipped) and atomic, so
+re-running is safe. Every file is fetched **verbatim** and checked against the
+upstream's own digest, so a fresh clone is provably byte-identical to the data
+behind the numbers recorded here.
+
+| Dataset | Upstream |
+|---|---|
+| LoCoMo | `snap-research/locomo` → `data/locomo10.json` |
+| DynamicMem | HF `xiewenya/dynamicmem` (the release TCE v2 is defined against) |
+| LongMemEval-S | HF **`xiaowu0162/longmemeval-cleaned`** |
+
+Note the LongMemEval source: the `_cleaned` in the filename is the dataset
+author's, not ours. They publish that repo to replace the original, "removing
+noisy history sessions that interfere with the answer correctness". Using the
+raw `xiaowu0162/longmemeval` file instead would leave those sessions in the
+haystack and make scores incomparable with everything here.
+
+DynamicMem also honors a `DYNAMICMEM_DATA` env-var override.
 
 ---
 
@@ -206,6 +227,10 @@ cd memevol
 # Singularity images. Managed with uv (pyproject.toml + uv.lock):
 uv sync            # → .venv/ (CPython 3.12 from .python-version)
 # then run forge with `uv run python -m forge.orchestrator ...`
+
+# Benchmark data (~360 MB) — not in git, fetched from the upstream releases.
+# Stdlib only, so it works with or without the venv; idempotent + atomic.
+python3 tools/fetch_data.py
 
 cp .env.example .env
 # Edit .env: OPENAI_API_KEY=sk-...

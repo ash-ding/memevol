@@ -1,17 +1,13 @@
 """LongMemEval environment — dataset-layer utilities.
 
-Supports two variants that share the same 500 questions but differ in
-haystack density:
-
-  - "s" (longmemeval_s_cleaned.json,  ~277 MB, ~48 sessions/sample)
-  - "m" (longmemeval_m_cleaned.json,  ~2.7 GB, ~475 sessions/sample)
+LongMemEval-S (longmemeval_s_cleaned.json, ~277 MB, ~48 sessions/sample) over
+500 questions.
 
 Each sample is a single (question, answer) pair with a "haystack" of chat
 sessions to retrieve from. Forge's BaseWorkflow treats one sample as one
 "user" and the single QA as one Phase-2 step.
 
-Train/test split (deterministic, same question_ids across variants;
-changed from 50/450 on 2026-07-07):
+Train/test split (deterministic; changed from 50/450 on 2026-07-07):
   * search  — 300 question_ids, stratified by question_type
                 (multi-session 80, temporal-reasoning 80,
                  knowledge-update 47, single-session-user 42,
@@ -42,10 +38,7 @@ from common.recorder import Basic_Recorder
 _data_env = os.environ.get("LONGMEMEVAL_DATA", "")
 _DATA_DIR: Path = Path(_data_env) if _data_env else Path(__file__).resolve().parent
 
-DATA_PATHS: Dict[str, Path] = {
-    "s": _DATA_DIR / "longmemeval_s_cleaned.json",
-    "m": _DATA_DIR / "longmemeval_m_cleaned.json",
-}
+DATA_PATH: Path = _DATA_DIR / "longmemeval_s_cleaned.json"
 
 # 6:4 split (300 search / 200 test), aligned with the other benchmarks and
 # sized so staged evaluation's stage3 (100 questions) fits inside the search
@@ -126,23 +119,22 @@ class LongMemEvalRecorder(Basic_Recorder):
 
 
 # ---------------------------------------------------------------------------
-# Lazy variant loader
+# Lazy data loader
 # ---------------------------------------------------------------------------
 
-_CACHE: Dict[str, List[Dict]] = {}
+_CACHE: Optional[List[Dict]] = None
 
 
-def _load_variant(variant: str) -> List[Dict]:
-    if variant not in DATA_PATHS:
-        raise KeyError(f"Unknown LongMemEval variant '{variant}'; known: {sorted(DATA_PATHS)}")
-    if variant not in _CACHE:
-        with open(str(DATA_PATHS[variant]), encoding="utf-8") as f:
-            _CACHE[variant] = json.load(f)
-    return _CACHE[variant]
+def _load_samples() -> List[Dict]:
+    global _CACHE
+    if _CACHE is None:
+        with open(str(DATA_PATH), encoding="utf-8") as f:
+            _CACHE = json.load(f)
+    return _CACHE
 
 
 # ---------------------------------------------------------------------------
-# Stratified search/test split — variant-agnostic (same 500 qids across s/m)
+# Stratified search/test split
 # ---------------------------------------------------------------------------
 
 _SPLIT_CACHE: Optional[Tuple[List[str], List[str]]] = None
@@ -168,11 +160,7 @@ def _proportional_counts(
 
 
 def _compute_split() -> Tuple[List[str], List[str]]:
-    """Returns (search_qids, test_qids). Deterministic, cached.
-
-    Works off the "s" variant (cheapest to load) — question_ids are identical
-    across variants.
-    """
+    """Returns (search_qids, test_qids). Deterministic, cached."""
     global _SPLIT_CACHE
     if _SPLIT_CACHE is not None:
         return _SPLIT_CACHE
@@ -201,7 +189,7 @@ def _compute_split() -> Tuple[List[str], List[str]]:
         )
         return _SPLIT_CACHE
 
-    samples = _load_variant("s")
+    samples = _load_samples()
     by_type: Dict[str, List[str]] = {}
     for s in samples:
         by_type.setdefault(s["question_type"], []).append(s["question_id"])
@@ -265,10 +253,9 @@ def load_user_data(
     user_dir: str,
     eval_n_qa: Optional[int] = None,
     *,
-    variant: str = "s",
     sample_seed: Optional[str] = None,
 ) -> Tuple[List[Dict], Dict, List[Dict]]:
-    """Load one LongMemEval sample for the given variant.
+    """Load one LongMemEval sample.
 
     Parameters
     ----------
@@ -277,8 +264,6 @@ def load_user_data(
         DynamicMem/LoCoMo signature consumed by forge.BaseWorkflow.
     eval_n_qa : Optional[int]
         Ignored — LongMemEval has 1 QA per sample. Kept for API parity.
-    variant : str
-        "s" or "m" — which haystack density to use.
     sample_seed : Optional[str]
         Unused — LongMemEval has exactly 1 QA per sample, so there is no QA
         subset to seed. Accepted for hook-uniformity with locomo/dynamicmem.
@@ -291,7 +276,7 @@ def load_user_data(
       - user_profile: empty dict (API parity).
       - qa_pairs:     list with exactly one normalized QA dict.
     """
-    samples = _load_variant(variant)
+    samples = _load_samples()
     sample = _find_sample(samples, user_dir)
 
     sessions = _build_sessions(sample)

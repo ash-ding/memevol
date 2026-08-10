@@ -6,7 +6,7 @@ Zero-dependency runner (no pytest in the venvs):
 
 Covers:
   - stage_search_data: deterministic filtered artifacts (locomo first-6,
-    longmemeval search-300 + manifest, oracle stub) and bind targets
+    longmemeval search-300 + manifest) and bind targets
   - LongMemEval _compute_split manifest hook (staged env) + no-manifest
     regression (host env)
   - orchestrator._isolation_binds gating (search on / test off / disabled)
@@ -33,26 +33,21 @@ from forge.data_isolation import stage_search_data  # noqa: E402
 
 @contextlib.contextmanager
 def _synthetic_lme():
-    """Small fake LongMemEval data — the real m variant is ~2.6 GB, so unit
-    tests must not stage it. Monkeypatches DATA_PATHS + the split cache."""
+    """Small fake LongMemEval data — the real file is ~277 MB, so unit tests
+    must not stage it. Monkeypatches DATA_PATH + the split cache."""
     import benchmarks.longmemeval.env as lme
     with tempfile.TemporaryDirectory() as td:
         samples = [{"question_id": q, "haystack_sessions": []}
                    for q in ("q1", "q2", "q3")]
-        paths = {}
-        for variant, name in (("s", "longmemeval_s_cleaned.json"),
-                              ("m", "longmemeval_m_cleaned.json")):
-            fp = Path(td) / name
-            fp.write_text(json.dumps(samples))
-            paths[variant] = fp
-        paths["oracle"] = Path(td) / "longmemeval_oracle.json"
-        orig_paths, orig_cache = lme.DATA_PATHS, lme._SPLIT_CACHE
-        lme.DATA_PATHS = {**lme.DATA_PATHS, **paths}
+        fp = Path(td) / "longmemeval_s_cleaned.json"
+        fp.write_text(json.dumps(samples))
+        orig_path, orig_cache = lme.DATA_PATH, lme._SPLIT_CACHE
+        lme.DATA_PATH = fp
         lme._SPLIT_CACHE = (["q1", "q2"], ["q3"])   # search / test
         try:
             yield
         finally:
-            lme.DATA_PATHS, lme._SPLIT_CACHE = orig_paths, orig_cache
+            lme.DATA_PATH, lme._SPLIT_CACHE = orig_path, orig_cache
 
 
 def _stage(td):
@@ -79,13 +74,11 @@ def test_longmemeval_filtered_matches_env_split():
         with _synthetic_lme():
             DI._stage_longmemeval(Path(td))
         staging = Path(td)
-        for name in ("longmemeval_s_cleaned.json", "longmemeval_m_cleaned.json"):
-            filtered = json.loads((staging / name).read_text())
-            assert sorted(s["question_id"] for s in filtered) == ["q1", "q2"]
+        filtered = json.loads((staging / "longmemeval_s_cleaned.json").read_text())
+        assert sorted(s["question_id"] for s in filtered) == ["q1", "q2"]
         manifest = json.loads((staging / "split_manifest.json").read_text())
         assert manifest["search"] == ["q1", "q2"]
         assert manifest["test"] == []
-        assert json.loads((staging / "longmemeval_oracle.json").read_text()) == []
 
 
 def test_bind_targets_shadow_container_paths():
@@ -95,9 +88,7 @@ def test_bind_targets_shadow_container_paths():
         for expected in (
             "/app/benchmarks/locomo/locomo10.json",
             "/app/benchmarks/longmemeval/longmemeval_s_cleaned.json",
-            "/app/benchmarks/longmemeval/longmemeval_m_cleaned.json",
             "/staging/split_manifest.json",
-            "/app/benchmarks/longmemeval/longmemeval_oracle.json",
         ):
             assert expected in dsts, expected
         assert all(b.endswith(":ro") for b in binds)

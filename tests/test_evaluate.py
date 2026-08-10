@@ -207,9 +207,9 @@ def test_config_defaults_fill():
     assert cfg["datasets"]["locomo"]["judge_model"] == cfg["judge_model"]
 
 
-def test_config_family_defaults_for_longmemeval_m():
-    cfg = _resolve("datasets:\n  longmemeval_m: {}\n")
-    assert cfg["datasets"]["longmemeval_m"]["stages"]["stage1"]["n_questions"] == 20
+def test_config_family_defaults_for_longmemeval():
+    cfg = _resolve("datasets:\n  longmemeval_s: {}\n")
+    assert cfg["datasets"]["longmemeval_s"]["stages"]["stage1"]["n_questions"] == 20
 
 
 def test_config_partial_override():
@@ -269,7 +269,7 @@ def test_wire_spec_normalization():
     assert dm == {"n_samples": 4, "n_checkpoints": 3, "n_task_a": 5, "n_task_c": 5}
     lc = stage_wire_spec("locomo", {"n_conversations": 2, "n_qa": 20, "threshold": 0.3})
     assert lc == {"n_samples": 2, "n_qa": 20}
-    lme = stage_wire_spec("longmemeval_m", {"n_questions": 50})
+    lme = stage_wire_spec("longmemeval_s", {"n_questions": 50})
     assert lme == {"n_samples": 50}
 
 
