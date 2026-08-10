@@ -7,49 +7,46 @@
 
 Stdlib only — run it with any Python 3.9+, before or after `uv sync`.
 Downloads are atomic (`.part` + rename) and idempotent: a file that already
-exists and passes its structural check is skipped, so re-running is cheap and
+exists and matches its expected digest is skipped, so re-running is cheap and
 never clobbers good data. Pass `--force` to re-download anyway.
+
+Every file is fetched VERBATIM from its upstream release — this script applies
+no transformation of its own, and verifies every download against the
+upstream's own digest (sha256 for HF LFS files, git blob sha1 otherwise).
 
 Sources
 -------
 LoCoMo        github.com/snap-research/locomo, data/locomo10.json
-              → benchmarks/locomo/locomo10.json          (~2.7 MB, verbatim)
+              → benchmarks/locomo/locomo10.json                     (~2.7 MB)
 
-DynamicMem    HF dataset xiewenya/dynamicmem (the official release used by the
-              TCE v2 protocol), 10 users × {app_log_large,task_packs}.json
-              → benchmarks/dynamicmem/user_data/<NNN_user_NNN>/   (~77 MB, verbatim)
+DynamicMem    HF dataset xiewenya/dynamicmem — the official release the TCE v2
+              protocol is defined against; 10 users × 2 files, and the repo
+              layout maps 1:1 onto ours
+              → benchmarks/dynamicmem/user_data/<NNN_user_NNN>/      (~77 MB)
 
-LongMemEval   HF dataset xiaowu0162/longmemeval, file `longmemeval_s`
-              → benchmarks/longmemeval/longmemeval_s_cleaned.json (~277 MB)
-              NOT verbatim — see "The LongMemEval cleaning step" below.
+LongMemEval   HF dataset xiaowu0162/longmemeval-**cleaned**
+              → benchmarks/longmemeval/longmemeval_s_cleaned.json    (~277 MB)
+
+Why the `-cleaned` LongMemEval repo, not `xiaowu0162/longmemeval`
+-----------------------------------------------------------------
+The `_cleaned` in the filename is the UPSTREAM author's, not ours. They publish
+a second dataset that "replaces the original LongMemEval dataset ... removes
+noisy history sessions that interfere with the answer correctness"
+(https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned). This repo has
+always used that release verbatim — confirmed by sha256, see LONGMEMEVAL_SHA256
+below. Fetching the raw `xiaowu0162/longmemeval` file instead would leave those
+noisy sessions in the haystack and make scores incomparable with everything
+recorded here.
 
 Only the -S variant is fetched. The upstream -M variant (~2.7 GB) and the
-oracle file are deliberately not used by this repo.
-
-The LongMemEval cleaning step
------------------------------
-The filename this repo reads (`..._cleaned.json`) is a DERIVED artifact: the
-raw upstream file contains haystack sessions with **zero messages**, carried in
-the three parallel lists (`haystack_dates` / `haystack_session_ids` /
-`haystack_sessions`). An empty session is not evidence and not a distractor —
-it is a hole that every memory system has to special-case — so the cleaning
-step drops those entries from all three lists in lockstep.
-
-Honest caveat: this rule was recovered by differencing the repo's existing file
-against upstream, not from a recorded preprocessing script (none exists in the
-repo's history). On a 12-question sample it reproduces 11 exactly; one question
-(`118b2229`) has a further session removed upstream-side that no rule derived
-from the data explains. So a file produced here can differ from the one used
-for previously recorded numbers by a small number of sessions. `--check`
-reports how many empty sessions a local file still carries — a non-zero count
-means it is raw upstream, not cleaned.
+oracle file are not used by this repo.
 """
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
-import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -59,19 +56,24 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 BENCHMARKS = REPO_ROOT / "benchmarks"
 
 HF_RESOLVE = "https://huggingface.co/datasets/{repo}/resolve/main/{path}"
+HF_PATHS_INFO = "https://huggingface.co/api/datasets/{repo}/paths-info/main"
+
 LOCOMO_URL = "https://raw.githubusercontent.com/snap-research/locomo/main/data/locomo10.json"
+LOCOMO_SHA256 = "79fa87e90f04081343b8c8debecb80a9a6842b76a7aa537dc9fdf651ea698ff4"
 
 DYNAMICMEM_REPO = "xiewenya/dynamicmem"
 DYNAMICMEM_USERS = [f"{i:03d}_user_{i:03d}" for i in range(1, 11)]
 DYNAMICMEM_FILES = ("app_log_large.json", "task_packs.json")
 
-LONGMEMEVAL_REPO = "xiaowu0162/longmemeval"
-LONGMEMEVAL_FILE = "longmemeval_s"
+LONGMEMEVAL_REPO = "xiaowu0162/longmemeval-cleaned"
+LONGMEMEVAL_FILE = "longmemeval_s_cleaned.json"
+LONGMEMEVAL_SHA256 = "d6f21ea9d60a0d56f34a05b609c79c88a451d2ae03597821ea3d5a9678c3a442"
 
-# Structural invariants — cheaper and more durable than pinning byte sizes,
-# which would rot the moment upstream re-uploads an identical-content file.
-EXPECT_LOCOMO_CONVERSATIONS = 10
-EXPECT_LONGMEMEVAL_QUESTIONS = 500
+# Pinned hashes are the point, not an optimization: they are what makes a fresh
+# clone provably identical to the data behind every number recorded in this
+# repo. A mismatch means upstream re-published — worth failing loudly over,
+# not absorbing silently. DynamicMem's 20 hashes are fetched from the HF API at
+# run time instead (too many to pin readably, and the API is authoritative).
 
 
 # ---------------------------------------------------------------------------
@@ -86,8 +88,50 @@ def _human(n: float) -> str:
     return f"{n:.1f} GB"
 
 
-def _download(url: str, dest: Path, label: str, retries: int = 3) -> None:
-    """Fetch `url` to `dest` atomically, with a progress line and retries."""
+def _sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for block in iter(lambda: fh.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def _git_blob_sha1(path: Path) -> str:
+    """Git's object id for a file: sha1(b"blob <size>\\0" + content).
+
+    Needed because HF only reports a content sha256 for LFS-tracked files. A
+    plain (non-LFS) file's `oid` is this git blob hash instead — same integrity
+    guarantee, different preimage.
+    """
+    data = path.read_bytes()
+    return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
+
+
+def _hf_digests(repo: str, paths: List[str]) -> Dict[str, Tuple[str, str]]:
+    """path -> (kind, expected_digest), kind in {"sha256", "git-blob-sha1"}."""
+    req = urllib.request.Request(
+        HF_PATHS_INFO.format(repo=repo),
+        data=json.dumps({"paths": paths}).encode(),
+        headers={"Content-Type": "application/json", "User-Agent": "memevol-fetch-data"},
+    )
+    with urllib.request.urlopen(req, timeout=60) as resp:
+        entries = json.load(resp)
+    out: Dict[str, Tuple[str, str]] = {}
+    for e in entries:
+        if e.get("lfs"):
+            out[e["path"]] = ("sha256", e["lfs"]["oid"])
+        elif e.get("oid"):
+            out[e["path"]] = ("git-blob-sha1", e["oid"])
+    return out
+
+
+def _digest(path: Path, kind: str) -> str:
+    return _sha256(path) if kind == "sha256" else _git_blob_sha1(path)
+
+
+def _download(url: str, dest: Path, label: str, expect: Optional[str] = None,
+              kind: str = "sha256", retries: int = 3) -> None:
+    """Fetch `url` to `dest` atomically, verifying its digest before the rename."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     last_err: Optional[Exception] = None
     for attempt in range(1, retries + 1):
@@ -105,13 +149,20 @@ def _download(url: str, dest: Path, label: str, retries: int = 3) -> None:
                         fh.write(chunk)
                         done += len(chunk)
                         if total and sys.stderr.isatty():
-                            pct = 100 * done / total
-                            print(f"\r  {label}: {pct:5.1f}%  {_human(done)} / {_human(total)}",
-                                  end="", file=sys.stderr)
+                            print(f"\r  {label}: {100 * done / total:5.1f}%  "
+                                  f"{_human(done)} / {_human(total)}", end="", file=sys.stderr)
             if sys.stderr.isatty():
-                print("\r" + " " * 70 + "\r", end="", file=sys.stderr)
+                print("\r" + " " * 72 + "\r", end="", file=sys.stderr)
             if total and tmp.stat().st_size != total:
                 raise IOError(f"short read: got {tmp.stat().st_size}, expected {total}")
+            if expect:
+                got = _digest(tmp, kind)
+                if got != expect:
+                    raise IOError(
+                        f"{kind} mismatch\n     expected {expect}\n     got      {got}\n"
+                        f"     Upstream may have re-published this file. Do NOT mix it with "
+                        f"existing results — the data behind them differs."
+                    )
             tmp.replace(dest)
             return
         except (urllib.error.URLError, IOError, TimeoutError) as exc:
@@ -122,109 +173,55 @@ def _download(url: str, dest: Path, label: str, retries: int = 3) -> None:
     raise RuntimeError(f"{label}: download failed after {retries} attempts: {last_err}")
 
 
-def _load_json(path: Path):
-    with open(path, encoding="utf-8") as fh:
-        return json.load(fh)
-
-
-# ---------------------------------------------------------------------------
-# LongMemEval cleaning
-# ---------------------------------------------------------------------------
-
-def clean_longmemeval(raw: List[Dict]) -> Tuple[List[Dict], int]:
-    """Drop zero-message haystack sessions from every question.
-
-    The three haystack lists are parallel, so an index is removed from all of
-    them or none — dropping from one alone would silently mis-align dates and
-    ids against sessions. Returns (cleaned, n_sessions_dropped).
-    """
-    dropped = 0
-    out: List[Dict] = []
-    for q in raw:
-        dates = q.get("haystack_dates", [])
-        ids = q.get("haystack_session_ids", [])
-        sessions = q.get("haystack_sessions", [])
-        if not (len(dates) == len(ids) == len(sessions)):
-            raise ValueError(
-                f"{q.get('question_id')}: parallel haystack lists disagree "
-                f"({len(dates)}/{len(ids)}/{len(sessions)}) — upstream format changed"
-            )
-        keep = [i for i, msgs in enumerate(sessions) if msgs]
-        dropped += len(sessions) - len(keep)
-        cleaned = dict(q)
-        cleaned["haystack_dates"] = [dates[i] for i in keep]
-        cleaned["haystack_session_ids"] = [ids[i] for i in keep]
-        cleaned["haystack_sessions"] = [sessions[i] for i in keep]
-        out.append(cleaned)
-    return out, dropped
+def _verify(path: Path, expect: str, kind: str = "sha256") -> Tuple[bool, str]:
+    if not path.is_file():
+        return False, "missing"
+    got = _digest(path, kind)
+    return (True, f"{kind} OK") if got == expect else (False, f"{kind} differs ({got[:12]}…)")
 
 
 # ---------------------------------------------------------------------------
 # Per-dataset fetchers — each returns a one-line status string
 # ---------------------------------------------------------------------------
 
-def _check_locomo(path: Path) -> str:
-    data = _load_json(path)
-    if len(data) != EXPECT_LOCOMO_CONVERSATIONS:
-        raise ValueError(f"expected {EXPECT_LOCOMO_CONVERSATIONS} conversations, got {len(data)}")
-    return f"{len(data)} conversations"
-
-
 def fetch_locomo(force: bool) -> str:
     dest = BENCHMARKS / "locomo" / "locomo10.json"
-    if dest.exists() and not force:
-        return f"present ({_check_locomo(dest)})"
-    _download(LOCOMO_URL, dest, "locomo10.json")
-    return f"downloaded ({_check_locomo(dest)})"
+    ok, why = _verify(dest, LOCOMO_SHA256)
+    if ok and not force:
+        return f"present ({why})"
+    _download(LOCOMO_URL, dest, "locomo10.json", LOCOMO_SHA256)
+    return "downloaded (sha256 OK)"
 
 
 def fetch_dynamicmem(force: bool) -> str:
     root = BENCHMARKS / "dynamicmem" / "user_data"
+    rel = [f"{u}/{n}" for u in DYNAMICMEM_USERS for n in DYNAMICMEM_FILES]
+    expected = _hf_digests(DYNAMICMEM_REPO, rel)
+    absent = [p for p in rel if p not in expected]
+    if absent:
+        raise RuntimeError(f"HF metadata missing for {absent[:3]} — repo layout changed?")
+
     got, skipped = 0, 0
-    for user in DYNAMICMEM_USERS:
-        for name in DYNAMICMEM_FILES:
-            dest = root / user / name
-            if dest.exists() and not force:
-                skipped += 1
-                continue
-            url = HF_RESOLVE.format(repo=DYNAMICMEM_REPO, path=f"{user}/{name}")
-            _download(url, dest, f"{user}/{name}")
-            _load_json(dest)          # structural check: must parse
-            got += 1
-    missing = [u for u in DYNAMICMEM_USERS
-               if not all((root / u / n).exists() for n in DYNAMICMEM_FILES)]
-    if missing:
-        raise RuntimeError(f"incomplete: {missing}")
-    return f"{len(DYNAMICMEM_USERS)} users ({got} downloaded, {skipped} already present)"
-
-
-def _check_longmemeval(path: Path) -> str:
-    data = _load_json(path)
-    if len(data) != EXPECT_LONGMEMEVAL_QUESTIONS:
-        raise ValueError(f"expected {EXPECT_LONGMEMEVAL_QUESTIONS} questions, got {len(data)}")
-    empties = sum(1 for q in data for s in q.get("haystack_sessions", []) if not s)
-    note = f", {empties} empty sessions still present (NOT cleaned)" if empties else ""
-    return f"{len(data)} questions{note}"
+    for p in rel:
+        dest = root / p
+        kind, digest = expected[p]
+        ok, _ = _verify(dest, digest, kind)
+        if ok and not force:
+            skipped += 1
+            continue
+        _download(HF_RESOLVE.format(repo=DYNAMICMEM_REPO, path=p), dest, p, digest, kind)
+        got += 1
+    return f"{len(DYNAMICMEM_USERS)} users, {len(rel)} files ({got} downloaded, {skipped} verified)"
 
 
 def fetch_longmemeval(force: bool) -> str:
-    dest = BENCHMARKS / "longmemeval" / "longmemeval_s_cleaned.json"
-    if dest.exists() and not force:
-        return f"present ({_check_longmemeval(dest)})"
-
-    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest = BENCHMARKS / "longmemeval" / LONGMEMEVAL_FILE
+    ok, why = _verify(dest, LONGMEMEVAL_SHA256)
+    if ok and not force:
+        return f"present ({why})"
     url = HF_RESOLVE.format(repo=LONGMEMEVAL_REPO, path=LONGMEMEVAL_FILE)
-    with tempfile.TemporaryDirectory(dir=str(dest.parent)) as td:
-        raw_path = Path(td) / "longmemeval_s.raw.json"
-        _download(url, raw_path, "longmemeval_s (~277 MB)")
-        print("  parsing + cleaning (this needs ~3 GB RAM briefly) ...", file=sys.stderr)
-        raw = _load_json(raw_path)
-        cleaned, dropped = clean_longmemeval(raw)
-        tmp = Path(td) / "cleaned.json"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(cleaned, fh, indent=4, ensure_ascii=False)
-        tmp.replace(dest)
-    return f"downloaded + cleaned ({len(cleaned)} questions, {dropped} empty sessions dropped)"
+    _download(url, dest, f"{LONGMEMEVAL_FILE} (~277 MB)", LONGMEMEVAL_SHA256)
+    return "downloaded (sha256 OK)"
 
 
 FETCHERS: Dict[str, Callable[[bool], str]] = {
@@ -233,35 +230,59 @@ FETCHERS: Dict[str, Callable[[bool], str]] = {
     "longmemeval": fetch_longmemeval,
 }
 
-CHECKS: Dict[str, Callable[[], str]] = {
-    "locomo": lambda: _check_locomo(BENCHMARKS / "locomo" / "locomo10.json"),
-    "dynamicmem": lambda: _check_dynamicmem_present(),
-    "longmemeval": lambda: _check_longmemeval(
-        BENCHMARKS / "longmemeval" / "longmemeval_s_cleaned.json"),
-}
+
+# ---------------------------------------------------------------------------
+# --check: verify what is on disk, download nothing
+# ---------------------------------------------------------------------------
+
+def check_locomo() -> str:
+    ok, why = _verify(BENCHMARKS / "locomo" / "locomo10.json", LOCOMO_SHA256)
+    if not ok:
+        raise ValueError(why)
+    return why
 
 
-def _check_dynamicmem_present() -> str:
+def check_longmemeval() -> str:
+    ok, why = _verify(BENCHMARKS / "longmemeval" / LONGMEMEVAL_FILE, LONGMEMEVAL_SHA256)
+    if not ok:
+        raise ValueError(why)
+    return why
+
+
+def check_dynamicmem() -> str:
     root = BENCHMARKS / "dynamicmem" / "user_data"
-    have = [u for u in DYNAMICMEM_USERS
-            if all((root / u / n).is_file() for n in DYNAMICMEM_FILES)]
-    if len(have) != len(DYNAMICMEM_USERS):
-        raise ValueError(f"{len(have)}/{len(DYNAMICMEM_USERS)} users complete")
-    return f"{len(have)} users"
+    rel = [f"{u}/{n}" for u in DYNAMICMEM_USERS for n in DYNAMICMEM_FILES]
+    expected = _hf_digests(DYNAMICMEM_REPO, rel)
+    bad = []
+    for p in rel:
+        kind, digest = expected.get(p, ("sha256", ""))
+        if not _verify(root / p, digest, kind)[0]:
+            bad.append(p)
+    if bad:
+        raise ValueError(f"{len(bad)}/{len(rel)} files missing or mismatched, e.g. {bad[:2]}")
+    return f"{len(rel)} files, digest OK"
+
+
+CHECKS: Dict[str, Callable[[], str]] = {
+    "locomo": check_locomo,
+    "dynamicmem": check_dynamicmem,
+    "longmemeval": check_longmemeval,
+}
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        description="Download memevol's benchmark data (not tracked in git).",
+        description="Download memevol's benchmark data (not tracked in git). "
+                    "Every file is fetched verbatim and verified by sha256.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Disk: ~360 MB total (locomo 2.7 MB, dynamicmem 77 MB, longmemeval 277 MB).",
     )
     ap.add_argument("--dataset", default="all",
                     help="comma-separated: locomo,dynamicmem,longmemeval (default: all)")
     ap.add_argument("--force", action="store_true",
-                    help="re-download even if the file is already present and valid")
+                    help="re-download even if the local file already verifies")
     ap.add_argument("--check", action="store_true",
-                    help="report what is present and valid; download nothing")
+                    help="verify what is present; download nothing")
     args = ap.parse_args()
 
     names = sorted(FETCHERS) if args.dataset == "all" else \
@@ -279,9 +300,6 @@ def main() -> int:
             else:
                 print(f"{name} ...", file=sys.stderr)
                 print(f"  {name:12s} {FETCHERS[name](args.force)}")
-        except FileNotFoundError:
-            print(f"  {name:12s} MISSING")
-            failed.append(name)
         except Exception as exc:                     # noqa: BLE001 — report, keep going
             print(f"  {name:12s} FAILED — {exc}")
             failed.append(name)

@@ -189,13 +189,24 @@ python3 tools/fetch_data.py            # all three; stdlib only, no venv needed
 python3 tools/fetch_data.py --check    # report what is present, download nothing
 ```
 
-It is idempotent (existing valid files are skipped) and atomic, so re-running
-is safe. Sources: LoCoMo from `snap-research/locomo`, DynamicMem from the HF
-dataset `xiewenya/dynamicmem`, LongMemEval-S from `xiaowu0162/longmemeval` —
-the first two verbatim, LongMemEval with a documented cleaning step (empty
-haystack sessions dropped; see the script's docstring for the caveat on
-reproducing the exact file). DynamicMem also honors a `DYNAMICMEM_DATA`
-env-var override.
+It is idempotent (files that already verify are skipped) and atomic, so
+re-running is safe. Every file is fetched **verbatim** and checked against the
+upstream's own digest, so a fresh clone is provably byte-identical to the data
+behind the numbers recorded here.
+
+| Dataset | Upstream |
+|---|---|
+| LoCoMo | `snap-research/locomo` → `data/locomo10.json` |
+| DynamicMem | HF `xiewenya/dynamicmem` (the release TCE v2 is defined against) |
+| LongMemEval-S | HF **`xiaowu0162/longmemeval-cleaned`** |
+
+Note the LongMemEval source: the `_cleaned` in the filename is the dataset
+author's, not ours. They publish that repo to replace the original, "removing
+noisy history sessions that interfere with the answer correctness". Using the
+raw `xiaowu0162/longmemeval` file instead would leave those sessions in the
+haystack and make scores incomparable with everything here.
+
+DynamicMem also honors a `DYNAMICMEM_DATA` env-var override.
 
 ---
 
