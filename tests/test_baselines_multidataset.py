@@ -14,11 +14,11 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
-def test_shared_registry_resolves_all_four():
+def test_shared_registry_resolves_all_datasets():
     from baselines.registry import REGISTRY, DATASETS, resolve
     from benchmarks.locomo.workflow import LoCoMoWorkflow
     from benchmarks.locomo.env import LoCoMoRecorder
-    assert DATASETS == ["dynamicmem", "locomo", "longmemeval_m", "longmemeval_s"]
+    assert DATASETS == ["dynamicmem", "locomo", "longmemeval_s"]
     wf, env, rec = resolve("locomo")
     assert wf is LoCoMoWorkflow and rec is LoCoMoRecorder and hasattr(env, "get_task_list")
 
@@ -161,7 +161,7 @@ def test_single_stage_whole_split_matches_main_method():
     Both sides go through common.evaluate (shared with forge)."""
     from common.evaluate import single_stage_wire_spec
     from forge.orchestrator import full_wire_spec   # test-only import (baselines never import forge)
-    for ds in ("dynamicmem", "locomo", "longmemeval_s", "longmemeval_m"):
+    for ds in ("dynamicmem", "locomo", "longmemeval_s"):
         assert single_stage_wire_spec(ds, {}) == full_wire_spec(ds), ds
     # dynamicmem single_stage carries the n_checkpoints KEY → TCE path
     assert "n_checkpoints" in single_stage_wire_spec("dynamicmem", {})

@@ -13,16 +13,16 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
-def test_registry_resolves_all_four():
+def test_registry_resolves_all_datasets():
     from baselines.evolve.alma.registry import REGISTRY, DATASETS, resolve
     from benchmarks.dynamicmem.workflow import DynamicMemWorkflow
     from benchmarks.locomo.workflow import LoCoMoWorkflow
-    from benchmarks.longmemeval.workflow import LongMemEvalSWorkflow, LongMemEvalMWorkflow
+    from benchmarks.longmemeval.workflow import LongMemEvalWorkflow
     from benchmarks.dynamicmem.env import DynamicMemRecorder
     from benchmarks.locomo.env import LoCoMoRecorder
     from benchmarks.longmemeval.env import LongMemEvalRecorder
 
-    assert DATASETS == ["dynamicmem", "locomo", "longmemeval_m", "longmemeval_s"]
+    assert DATASETS == ["dynamicmem", "locomo", "longmemeval_s"]
 
     wf, env, rec = resolve("dynamicmem")
     assert wf is DynamicMemWorkflow and rec is DynamicMemRecorder
@@ -32,10 +32,8 @@ def test_registry_resolves_all_four():
     assert wf is LoCoMoWorkflow and rec is LoCoMoRecorder
 
     wf, _, rec = resolve("longmemeval_s")
-    assert wf is LongMemEvalSWorkflow and rec is LongMemEvalRecorder
+    assert wf is LongMemEvalWorkflow and rec is LongMemEvalRecorder
 
-    wf, _, rec = resolve("longmemeval_m")
-    assert wf is LongMemEvalMWorkflow and rec is LongMemEvalRecorder
 
 
 def test_registry_unknown_raises():
@@ -71,7 +69,6 @@ def test_dataset_info_evidence_keys_and_recorders():
     assert DATASET_INFO["dynamicmem"]["evidence_key"] == "relevant_app_logs"
     assert DATASET_INFO["locomo"]["evidence_key"] == "relevant_turns"
     assert DATASET_INFO["longmemeval_s"]["evidence_key"] == "relevant_sessions"
-    assert DATASET_INFO["longmemeval_m"]["evidence_key"] == "relevant_sessions"
     assert DATASET_INFO["locomo"]["recorder_class_name"] == "LoCoMoRecorder"
     # each dataset's protocol names its own recorder.init shape
     assert "app_logs" in DATASET_INFO["dynamicmem"]["gen_protocol"]
@@ -132,7 +129,7 @@ def test_prompts_render_for_all_datasets():
         r_sys, _ = m.build_reflection_prompt("class B: pass", rec, "e", dataset=ds)
         # dataset-appropriate shape word shows up in the rendered gen prompt
         shape_word = {"dynamicmem": "app_logs", "locomo": "conversation",
-                      "longmemeval_s": "sessions", "longmemeval_m": "sessions"}[ds]
+                      "longmemeval_s": "sessions"}[ds]
         assert shape_word in g_sys
 
 
@@ -189,12 +186,12 @@ def test_run_parses_dataset():
     import importlib
     rm = importlib.import_module("baselines.evolve.alma.run")
     import sys as _sys
-    argv = ["run.py", "--dataset", "longmemeval_m", "--steps", "1"]
+    argv = ["run.py", "--dataset", "longmemeval_s", "--steps", "1"]
     old = _sys.argv
     _sys.argv = argv
     try:
         cfg = rm.build_cfg(rm.parse_args())
-        assert cfg["dataset"] == "longmemeval_m"
+        assert cfg["dataset"] == "longmemeval_s"
     finally:
         _sys.argv = old
     # default: CLI None sentinel resolves to DEFAULT_CONFIG's dynamicmem

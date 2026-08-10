@@ -292,7 +292,7 @@ prompts:
 #
 # Each key under `datasets:` MUST match a workflow registered in
 # `benchmarks/registry.py`. Currently available:
-#   dynamicmem, locomo, longmemeval_s, longmemeval_m
+#   dynamicmem, locomo, longmemeval_s
 #
 # Comment out a benchmark to skip it; the entire datasets block is required
 # (orchestrator errors out if no datasets configured).
@@ -389,5 +389,3 @@ datasets:
   #     stage2: {n_questions: 50, threshold: 0.30}
   #     stage3: {n_questions: 100}
 
-  # longmemeval_m:                # same 500 Qs as _s but ~476-session haystacks
-  #   stages: { ... same shape as longmemeval_s ... }   # (2.7 GB JSON; ~30s/exec)

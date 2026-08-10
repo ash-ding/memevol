@@ -86,12 +86,8 @@ are non-empty in the expected note format:
 | dynamicmem | `app_logs` | `{"n_samples":1,"n_checkpoints":1,"n_task_a":1,"n_task_c":1}` | overall 0.75, invalid=[] | `talk start time:…memory content:` (app-log passage) |
 | locomo | `conversation` | `{"n_samples":1,"n_qa":3}` | overall 0.667, invalid=[] | verbatim `Speaker Xsays :` (missing-space quirk) |
 | longmemeval_s | `sessions` | `{"n_samples":1}` | overall 1.0, invalid=[] | `role: content` (`assistant: …` / `user: …`) |
-| longmemeval_m | `sessions` (same as _s) | — | not run | — |
 
 Scores are single-sample sanity signals, NOT benchmark numbers.
-`longmemeval_m` shares the exact `sessions` branch as `longmemeval_s`, so `_s`
-already exercises its code path; it was skipped because one question ≈ 5000
-messages (~10× `_s`) — see the estimate below.
 
 ## Cost profile
 
@@ -118,13 +114,11 @@ $2.00 per 1M in/out (plug in real rates — the total is gpt-4o-mini-build-domin
 | dynamicmem (4 users) | ~7 k | ~1.6 k | ~$14 | ~4–5 h |
 | locomo (4 convs) | ~2.4 k | 655 | ~$2 | ~1 h |
 | longmemeval_s (200 q) | ~101 k | 200 | ~$40 | ~2.5 days |
-| longmemeval_m (200 q) | ~977 k | 200 | ~$390 | ~5–6 weeks |
 
-- **Excluding longmemeval_m: ≈ $55 total, ≈ 3 days wall-clock** (dominated by
-  longmemeval_s's serial build).
-- **Including longmemeval_m: ≈ $450 total, many weeks** — the per-message note
-  model + O(n²) consolidate makes it impractical at full scale without
-  engineering changes (coarser ingestion / lower consolidate frequency), which
+- **≈ $55 total, ≈ 3 days wall-clock** across the three benchmarks (dominated
+  by longmemeval_s's serial build). The per-message note model + O(n²)
+  consolidate is what makes amem expensive; scaling it further would need
+  engineering changes (coarser ingestion / lower consolidate frequency) that
   would depart from the faithful method.
 
 Time, not money, is the binding constraint. The build is API-bound, so raising

@@ -14,11 +14,10 @@ RO dir bind):
                train = all 6, test = []) bound over the original file.
   DynamicMem   an empty dir bound over user_data/ hides all users; the
                search users are bound back individually (zero-copy).
-  LongMemEval  filtered s/m jsons (the 300 search question_ids, from the
-               env's own _compute_split) + a split_manifest.json the env
-               prefers over recomputing (a filtered file would otherwise be
-               re-stratified into a bogus 180/120 split); the unregistered
-               oracle file (contains gold answers) is shadowed by a stub.
+  LongMemEval  a filtered longmemeval_s json (the 300 search question_ids,
+               from the env's own _compute_split) + a split_manifest.json the
+               env prefers over recomputing (a filtered file would otherwise
+               be re-stratified into a bogus 180/120 split).
 
 Isolation applies to every orchestrator run (the orchestrator only ever
 drives the search split, including the sanity tier and smoke-test runs).
@@ -113,24 +112,23 @@ def _stage_dynamicmem(staging: Path) -> List[str]:
 
 
 def _stage_longmemeval(staging: Path) -> List[str]:
-    from benchmarks.longmemeval.env import DATA_PATHS, _compute_split
+    from benchmarks.longmemeval.env import DATA_PATH, _compute_split
 
     search_qids, _test_qids = _compute_split()
     keep = set(search_qids)
 
     binds: List[str] = []
-    for variant in ("s", "m"):
-        src = Path(DATA_PATHS[variant])
-        out = staging / src.name
-        if not _fresh(out, src):
-            # The m variant is ~2.6 GB — this parse/dump is exactly what the
-            # fingerprint cache exists to avoid repeating across runs.
-            data = json.loads(src.read_text(encoding="utf-8"))
-            filtered = [s for s in data if s.get("question_id") in keep]
-            out.write_text(json.dumps(filtered, ensure_ascii=False), encoding="utf-8")
-            _mark(out, src)
-            log.info(f"data_isolation: staged {out.name} ({len(filtered)} questions)")
-        binds.append(f"{out}:{_APP_DATASETS}/longmemeval/{src.name}:ro")
+    src = Path(DATA_PATH)
+    out = staging / src.name
+    if not _fresh(out, src):
+        # ~277 MB — this parse/dump is exactly what the fingerprint cache
+        # exists to avoid repeating across runs.
+        data = json.loads(src.read_text(encoding="utf-8"))
+        filtered = [s for s in data if s.get("question_id") in keep]
+        out.write_text(json.dumps(filtered, ensure_ascii=False), encoding="utf-8")
+        _mark(out, src)
+        log.info(f"data_isolation: staged {out.name} ({len(filtered)} questions)")
+    binds.append(f"{out}:{_APP_DATASETS}/longmemeval/{src.name}:ro")
 
     # The env prefers this manifest over recomputing the stratified split —
     # a 300-question file would otherwise be re-split into a bogus 180/120.
@@ -145,15 +143,9 @@ def _stage_longmemeval(staging: Path) -> List[str]:
     # computation). /staging lives in the container overlay, never on disk.
     binds.append(f"{manifest}:/staging/split_manifest.json:ro")
 
-    # The oracle variant is not registered in any workflow but carries gold
-    # answers for all 500 questions — shadow it with a stub.
-    stub = staging / "longmemeval_oracle.json"
-    stub.write_text("[]", encoding="utf-8")
-    binds.append(f"{stub}:{_APP_DATASETS}/longmemeval/longmemeval_oracle.json:ro")
-
     log.info(
         f"data_isolation: longmemeval staged {len(keep)} search questions "
-        f"(test + oracle hidden)"
+        f"(test hidden)"
     )
     return binds
 

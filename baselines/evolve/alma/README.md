@@ -112,7 +112,7 @@ on alma so other methods can reuse it.
 ## Datasets
 
 ALMA targets exactly **one benchmark per run**, selected with
-`--dataset {dynamicmem,locomo,longmemeval_s,longmemeval_m}` (default
+`--dataset {dynamicmem,locomo,longmemeval_s}` (default
 `dynamicmem`). The dataset name resolves through
 [`registry.py`](registry.py) to a workflow class, env module, and recorder
 class (the shared `benchmarks/registry.py`, but ALMA is standalone and does

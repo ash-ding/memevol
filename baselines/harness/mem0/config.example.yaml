@@ -12,7 +12,7 @@
 # =============================================================================
 
 
-dataset: locomo                # which benchmark: dynamicmem | locomo | longmemeval_s | longmemeval_m (Mem0 reports on LoCoMo)
+dataset: locomo                # which benchmark: dynamicmem | locomo | longmemeval_s (Mem0 reports on LoCoMo)
 split: test                    # test | search (search = the training split used during evolution)
 progressive: false             # false = ONE single pass (sized by single_stage); true = staged stage1->2->3 gauntlet (sized by stages)
 sampling_seed: 42              # seeds the sampled subset (both paths; a no-op at whole-split)

@@ -403,5 +403,4 @@ DATASET_INFO: Dict[str, Dict[str, str]] = {
     "dynamicmem": _DYNAMICMEM,
     "locomo": _LOCOMO,
     "longmemeval_s": dict(_LONGMEMEVAL_COMMON),
-    "longmemeval_m": dict(_LONGMEMEVAL_COMMON),
 }

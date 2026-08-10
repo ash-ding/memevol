@@ -20,7 +20,7 @@ def _normalize_active_datasets(
 ) -> List[str]:
     """Map dataset registration names → canonical shape group keys, in render order.
 
-    longmemeval_s + longmemeval_m share the same shape doc → both → "longmemeval".
+    longmemeval_s uses the "longmemeval" shape doc.
     Unknown names are silently dropped (defensive against typos / future names).
     None / empty → all groups in canonical order (back-compat: render full prompt).
     """

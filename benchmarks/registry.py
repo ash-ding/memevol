@@ -20,15 +20,14 @@ from benchmarks.locomo.env import LoCoMoRecorder
 from benchmarks.locomo.workflow import LoCoMoWorkflow
 from benchmarks.longmemeval import env as lme_env
 from benchmarks.longmemeval.env import LongMemEvalRecorder
-from benchmarks.longmemeval.workflow import LongMemEvalSWorkflow, LongMemEvalMWorkflow
+from benchmarks.longmemeval.workflow import LongMemEvalWorkflow
 
 # dataset → (workflow_cls, env_module, recorder_cls).
 # env_module must expose get_task_list(status, eval_n_samples).
 REGISTRY: Dict[str, Tuple[type, ModuleType, type]] = {
     "dynamicmem":    (DynamicMemWorkflow,   dm_env,     DynamicMemRecorder),
     "locomo":        (LoCoMoWorkflow,       locomo_env, LoCoMoRecorder),
-    "longmemeval_s": (LongMemEvalSWorkflow, lme_env,    LongMemEvalRecorder),
-    "longmemeval_m": (LongMemEvalMWorkflow, lme_env,    LongMemEvalRecorder),
+    "longmemeval_s": (LongMemEvalWorkflow,  lme_env,    LongMemEvalRecorder),
 }
 
 DATASETS: List[str] = sorted(REGISTRY)

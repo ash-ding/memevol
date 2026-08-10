@@ -68,13 +68,13 @@ _OLD_SIZE_FIELDS = ("eval_n_samples", "eval_n_qa", "check_n_samples", "check_n_q
 
 
 def _benchmark_family(ds: str) -> str:
-    """Map a dataset name to its stage-schema family (longmemeval_s/m share one)."""
+    """Map a dataset name to its stage-schema family."""
     if ds.startswith("longmemeval"):
         return "longmemeval"
     if ds not in _FAMILY_FIELDS:
         raise ValueError(
             f"Unknown benchmark {ds!r} — no stage schema. Known families: "
-            f"{sorted(_FAMILY_FIELDS)} (longmemeval_s / longmemeval_m share 'longmemeval')."
+            f"{sorted(_FAMILY_FIELDS)} (longmemeval_s maps to the 'longmemeval' family)."
         )
     return ds
 

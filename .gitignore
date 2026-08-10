@@ -39,8 +39,6 @@ baselines/evolve/alma/memo_archive/locomo/*
 !baselines/evolve/alma/memo_archive/locomo/.gitkeep
 baselines/evolve/alma/memo_archive/longmemeval_s/*
 !baselines/evolve/alma/memo_archive/longmemeval_s/.gitkeep
-baselines/evolve/alma/memo_archive/longmemeval_m/*
-!baselines/evolve/alma/memo_archive/longmemeval_m/.gitkeep
 
 # Runtime staging for the eval subprocess (per-SHA to avoid concurrent-run races)
 baselines/evolve/alma/memo_test/memo_test_*.py

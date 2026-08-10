@@ -1,4 +1,4 @@
-"""LongMemEval workflow (s and m share the same subclass via `_variant`).
+"""LongMemEval workflow.
 
 Init data is a list of session dicts, so the BaseWorkflow's default
 list-oriented `_phase1_update` works without modification.
@@ -22,14 +22,12 @@ from benchmarks.longmemeval.prompts import (
 
 
 class LongMemEvalWorkflow(BaseWorkflow):
-    """Base class for LongMemEval variants. Subclasses set `_variant`."""
+    """LongMemEval-S — ~48 sessions/sample (~120k tokens)."""
 
     recorder_class: Type[Basic_Recorder] = LongMemEvalRecorder
     _phase1_item_label: str = "sessions"
     _default_qa_per_user_hint: int = 1
     judge_score_max: int = 1   # paper-aligned binary judge (Figure 10)
-
-    _variant: str = ""  # override in concrete subclasses: "s" or "m"
 
     # LongMemEval has exactly 1 QA per sample — the stage spec carries only
     # n_samples (question count); any n_qa is ignored. This keeps the
@@ -38,14 +36,14 @@ class LongMemEvalWorkflow(BaseWorkflow):
         return 1
 
     # ------------------------------------------------------------------
-    # Data loading — reads from the variant-specific JSON
+    # Data loading
     # ------------------------------------------------------------------
 
     async def load_user_data(
         self, user_dir: str, eval_n_qa: Optional[int], sample_seed: Optional[str] = None
     ) -> Tuple[List[Dict], List[Dict]]:
         sessions, _profile, qa_pairs = load_user_data(
-            user_dir, eval_n_qa, variant=self._variant, sample_seed=sample_seed
+            user_dir, eval_n_qa, sample_seed=sample_seed
         )
         return sessions, qa_pairs
 
@@ -154,13 +152,3 @@ class LongMemEvalWorkflow(BaseWorkflow):
         qtype = (qa_metadata or {}).get("question_type", "")
         judge = self._judge_by_type.get(qtype, self._judge_by_type["__other__"])
         return await judge.score(query, predicted, reference)
-
-
-class LongMemEvalSWorkflow(LongMemEvalWorkflow):
-    """Short variant — ~48 sessions/sample (~120k tokens)."""
-    _variant: str = "s"
-
-
-class LongMemEvalMWorkflow(LongMemEvalWorkflow):
-    """Medium variant — ~475 sessions/sample (~1.3M tokens)."""
-    _variant: str = "m"

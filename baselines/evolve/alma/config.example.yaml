@@ -17,7 +17,7 @@ steps: 10                       # outer-loop search iterations (--status search 
 max_memo_concurrent: 2          # parallel candidate memo evals per step
 result_dir: check               # subdir (under alma's results tree) where this run's artifacts land
 status: search                  # search (meta-learning loop) | test (held-out eval of one memo_SHA)
-dataset: dynamicmem              # which benchmark to evolve on: dynamicmem | locomo | longmemeval_s | longmemeval_m (one per run)
+dataset: dynamicmem              # which benchmark to evolve on: dynamicmem | locomo | longmemeval_s (one per run)
 memo_SHA: null                   # set for --status test: the specific evolved memo's SHA to evaluate
 history_ckpt_path: null          # resume the search loop from a prior checkpoint file; null = start fresh
 max_logs: null                   # cap ingested logs per user (dynamicmem); null = all logs visible at that checkpoint
