@@ -51,6 +51,7 @@ baselines/harness/lightmem/results/
 baselines/harness/lightmem/smoke_*.yaml
 baselines/harness/simplemem/results/
 baselines/harness/zep/results/
+baselines/harness/zep/smoke_*.yaml
 
 # --- Other baselines' runtime artifacts (evolve/<name>/ + harness/<name>/) ---
 baselines/*/*/outputs/

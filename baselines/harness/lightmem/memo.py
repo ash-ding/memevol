@@ -33,6 +33,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import sys
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -40,15 +41,67 @@ from typing import Dict, List
 
 from common.memo_class import MemoClass
 from baselines.harness.hipporag2.memo import app_log_to_passage
-from baselines.harness.lightmem._st_shim import (
-    ensure_sentence_transformers, install_embedding_cache, install_eager_attention,
-    import_lightmemory,
-)
 
-ensure_sentence_transformers()     # ST is imported eagerly by the vendored pipeline
-install_embedding_cache()          # share the embedder across per-user systems
-install_eager_attention()          # LLMlingua-2 segmenter needs eager output_attentions (transformers>=5)
-LightMemory = import_lightmemory()  # vendored, byte-identical
+# LightMem's absolute imports (`from lightmem.memory...`) must resolve to the
+# byte-identical vendored copy under src/, not any pip-installed lightmem.
+_SRC = Path(__file__).resolve().parent / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+
+_st_model_cache: dict = {}
+_embedding_cache_installed = False
+
+
+def install_embedding_cache() -> None:
+    """Monkeypatch ``sentence_transformers.SentenceTransformer`` with a memoizing
+    factory so the (heavy) embedding weights load once per process and are shared
+    across every per-user ``LightMemory``. Idempotent. Leaves LightMem's vendored
+    ``TextEmbedderHuggingface`` untouched — it just receives a cached model object
+    from the patched constructor.
+
+    A fresh MemoClass is built per user, so without this the weights reload for
+    every user in the split. Keyed on the resolved model path (first positional arg
+    or ``model_name_or_path`` kwarg), so different embedding models get distinct
+    cache slots. If construction fails it is NOT cached (a transient failure can be
+    retried).
+
+    WHY A MONKEYPATCH. The clean shape is a cached factory whose model is injected
+    (see the zep baseline, which can do that because Graphiti accepts an injected
+    embedder). LightMem has no injection point: ``TextEmbedderHuggingface.__init__``
+    does ``self.model = SentenceTransformer(config.model, **config.model_kwargs)``
+    (``src/lightmem/factory/text_embedder/huggingface.py``), with no parameter to
+    pass a pre-built model through. Editing that file would break the ``src/``
+    byte-identity the README's ``diff -r`` asserts, so memoizing the constructor is
+    the only remaining lever. Issue #26 adds a configurable-model layer with an
+    embedder injected from here; once that lands this becomes a plain cached
+    factory and the patch disappears.
+    """
+    global _embedding_cache_installed
+    if _embedding_cache_installed:
+        return
+    import sentence_transformers as _st
+
+    _real_ctor = _st.SentenceTransformer
+
+    def _cached(*args, **kwargs):
+        key = args[0] if args else kwargs.get("model_name_or_path")
+        cached = _st_model_cache.get(key)
+        if cached is not None:
+            return cached
+        model = _real_ctor(*args, **kwargs)
+        if key is not None:
+            _st_model_cache[key] = model
+        return model
+
+    # Preserve the original on the wrapper for anyone who needs the true class.
+    _cached._real_sentence_transformer = _real_ctor  # type: ignore[attr-defined]
+    _st.SentenceTransformer = _cached
+    _embedding_cache_installed = True
+
+
+install_embedding_cache()   # must precede the first LightMemory construction
+
+from lightmem.memory.lightmem import LightMemory  # noqa: E402  (vendored, byte-identical)
 
 # LightMem logs verbosely at INFO per add_memory/retrieve call; pin its logger to
 # WARNING + a NullHandler (console-only integration adaptation; the algorithm is

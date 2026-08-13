@@ -22,7 +22,7 @@ LightMem's text memory only. Verify the vendored files are unmodified:
 
 Nothing under `src/` is edited (unlike the simplemem baseline, LightMem's
 top-level `__init__.py` is empty, so no trimming is needed). All integration code
-lives in `memo.py` / `run.py` / `_st_shim.py`, never in `src/`. The vendored
+lives in `memo.py` / `run.py`, never in `src/`. The vendored
 `memory/graph.py` is a broken one-line upstream stub (`class GraphMem:` with no
 body); it is imported only when `graph_mem=True`, which this baseline never sets,
 so it is kept byte-identical and never loaded.
@@ -111,7 +111,7 @@ Turns are ingested in order; the per-user Qdrant index is instance-scoped
 |---|---|
 | Verbatim | whole `src/lightmem/{configs,factory,memory}` (pre-compression, topic segmentation, extraction, offline update, Qdrant backend, `retrieve`); `parse_locomo_timestamp`; per-turn `add_memory(force_segment/force_extract=is_last)` loop; LLMlingua-2 model + `compress_rate=0.6`; `extract_threshold=0.1`; internal `gpt-4o-mini`; `retrieve(limit=20)`; `offline_update_all_entries(0.9)` |
 | Design choices (recorded) | **retrieval** = `LightMemory.retrieve()` (LightMem's own LongMemEval-driver path, uniform across datasets) — NOT the LoCoMo experiment's separate `VectorRetriever`/per-speaker glue; **offline update** = config knob, default on (the LoCoMo-paper full pipeline); **answering** via the shared QA agent |
-| Integration adaptations (not algorithm) | longmemeval (per message pair) / dynamicmem (per app-log entry, hipporag2's text) ingestion mapping — LightMem only defined LoCoMo/LongMemEval; default extraction prompt (as the LongMemEval driver uses — the LoCoMo-specific `experiments/` prompt is not vendored); `_st_shim.py` (sentence-transformers vs memevol's `benchmarks/` shadow — same class of issue as amem/simplemem, imported once; + a process-wide embedder cache so the weights load once, not per user); LightMem's per-call `print`/INFO logging silenced (stdout redirect + logger pinned to WARNING); Qdrant path scoped per-uuid instance |
+| Integration adaptations (not algorithm) | longmemeval (per message pair) / dynamicmem (per app-log entry, hipporag2's text) ingestion mapping — LightMem only defined LoCoMo/LongMemEval; default extraction prompt (as the LongMemEval driver uses — the LoCoMo-specific `experiments/` prompt is not vendored); `install_embedding_cache` in `memo.py` (a process-wide embedder cache so the weights load once, not per user — LightMem builds a `SentenceTransformer` inside every `LightMemory`, with no injection point to pass a shared one, so the constructor is memoized; becomes a plain injected factory once #26 lands); `transformers>=4.36,<5` pinned in `pyproject.toml` (transformers 5.0 removed the automatic sdpa→eager fallback for `output_attentions=True`, so LightMem's topic segmenter — which reads `attentions[8..11]` — gets an empty tuple and raises `IndexError`; verified in-env: 4.57.6 returns 12 layers even with `attn_implementation="sdpa"`, 5.14.1 returns 0, so the last 4.x release is sufficient and the pin costs nothing. Run this baseline through its own env — `uv sync --project baselines/harness/lightmem` — since an unpinned environment fails with that `IndexError` from inside vendored code); LightMem's per-call `print`/INFO logging silenced (stdout redirect + logger pinned to WARNING); Qdrant path scoped per-uuid instance |
 | Cross-user note | `memory/lightmem.py` has module globals `GLOBAL_TOPIC_IDX` / `GLOBAL_LAST_SUMMARY_TIME` that never reset across instances. `GLOBAL_TOPIC_IDX` monotonically grows (topic ids don't restart at 0 per user), but retrieval never filters on `topic_id`, so this is inert for scoring; `GLOBAL_LAST_SUMMARY_TIME` is only touched by `summarize()`, which this baseline never calls |
 | Known consequences | LightMem compresses source turns into memory units that carry NO `app_log_id`, so DynamicMem evidence-citation scoring is disadvantaged (inherent to compression-first memory); for DynamicMem the offline-update phase runs at EACH checkpoint's build call (no single "final" build in the interleaved protocol), multiplying its cost |
 
@@ -128,7 +128,7 @@ Turns are ingested in order; the per-user Qdrant index is instance-scoped
 - The LLMlingua-2 pre-compressor (a BERT model) and the sentence-transformer
   embedder are local and benefit from a GPU (`llmlingua_device` / `embedding_device`,
   default `cuda`; set `cpu` to run without a GPU, slowly). The embedder is loaded
-  once per process and shared across users (`_st_shim`).
+  once per process and shared across users (`install_embedding_cache` in `memo.py`).
 - Build/retrieve are synchronous + blocking, so users don't overlap under
   `max_sample_concurrent` (a blocking hook body stalls the event loop) — the
   same profile as amem/simplemem.
