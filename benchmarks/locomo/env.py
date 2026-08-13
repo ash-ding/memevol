@@ -39,6 +39,11 @@ DATA_PATH: Path = (
 TRAIN_SAMPLES = 6
 EVAL_SAMPLES = 4
 
+# LoCoMo category ids -> the names the papers report per category. cat-5
+# (adversarial) is absent deliberately: it carries no gold answer and is
+# excluded at load time below — the papers exclude it too.
+CATEGORY = {1: "multi-hop", 2: "temporal", 3: "open-domain", 4: "single-hop"}
+
 
 # ---------------------------------------------------------------------------
 # Recorder
@@ -90,20 +95,29 @@ class LoCoMoRecorder(Basic_Recorder):
         qa_metadata: Dict = None,
         retrieved_memory: Dict = None,
         relevant_turns: List[Dict] = None,
+        token_f1: Optional[float] = None,
+        bleu1: Optional[float] = None,
     ) -> None:
+        step: Dict[str, Any] = {
+            "query": query,
+            "retrieved_memory": retrieved_memory or {},
+            "predicted": predicted,
+            "reference": reference,
+            "score": score,
+            "judge_reason": judge_reason,
+            "qa_metadata": qa_metadata or {},
+            "relevant_turns": relevant_turns or [],
+        }
+        # Lexical metrics (reporting only, alongside the judge). Omitted rather
+        # than stored as null when absent — aggregation treats a missing key as
+        # "recompute from predicted/reference", which is also how it reads
+        # traces written before these existed.
+        if token_f1 is not None:
+            step["token_f1"] = token_f1
+        if bleu1 is not None:
+            step["bleu1"] = bleu1
         async with self._lock:
-            self.steps.append(
-                {
-                    "query": query,
-                    "retrieved_memory": retrieved_memory or {},
-                    "predicted": predicted,
-                    "reference": reference,
-                    "score": score,
-                    "judge_reason": judge_reason,
-                    "qa_metadata": qa_metadata or {},
-                    "relevant_turns": relevant_turns or [],
-                }
-            )
+            self.steps.append(step)
 
     async def set_reward(self, reward: float) -> None:
         async with self._lock:

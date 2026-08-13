@@ -10,12 +10,12 @@ Currently implemented:
   scoring lives in benchmarks/dynamicmem/tce_prompts.py instead (structured
   per-field verdicts — it shares only the common.llm transport).
 
-Planned (stubs below, tracked in the "lexical metrics" GitHub issue):
-- `token_f1` / `bleu1` — the lexical metrics the LoCoMo paper actually
-  reports. A working offline implementation already exists in
-  baselines/harness/score_paper_metrics.py (used for the mem0/memoryos
-  paper-reproduction checks); consolidating it here would let LoCoMo emit
-  paper-comparable numbers inline instead of via a separate offline pass.
+- `token_f1` / `bleu1` — the lexical metrics the LoCoMo-derived memory papers
+  actually report. Pure functions, stdlib-only, no LLM call. LoCoMo computes
+  them per QA step (benchmarks/locomo/workflow.py::log_qa_step) and aggregates
+  them per category into score.json's `extra_metrics`. They are reported
+  ALONGSIDE the judge, never instead of it — the judge remains the promotion
+  signal.
 
 `Judge` requests share `common.llm`'s per-event-loop client, global
 concurrency gate, and unified retry kernel (429/5xx/timeout/empty-response
@@ -29,6 +29,9 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import string
+from collections import Counter
 from typing import Optional, Tuple
 
 # Module reference (not from-import) so the shared client/kernel stay
@@ -150,32 +153,48 @@ Output ONLY a JSON object:
 
 
 # ---------------------------------------------------------------------------
-# Lexical metrics — NOT YET INTEGRATED (stubs).
+# Lexical metrics — token-F1 / BLEU-1, the metrics the LoCoMo-derived memory
+# papers (Mem0 arXiv 2504.19413, MemoryOS arXiv 2506.06326) actually report.
 #
-# The LoCoMo paper's headline metrics are token-F1 / BLEU-1, not an LLM judge;
-# this repo currently only computes them OFFLINE via
-# baselines/harness/score_paper_metrics.py. These stubs reserve the canonical
-# home; see the "Integrate lexical metrics (token-F1 / BLEU-1) into
-# common/metric.py" GitHub issue for the consolidation plan.
+# Reported ALONGSIDE the LLM judge, never instead of it: the judge stays the
+# promotion signal (forge's `accuracy_locomo` axis). These are stdlib-only and
+# deterministic, so they cost nothing to compute inline per QA step.
+#
+# Ported verbatim from the former baselines/harness/score_paper_metrics.py (the
+# offline pass used for the mem0/memoryos reproduction checks, removed in the
+# same change that added these) — same formulas, differential-tested against it
+# before deletion, so the numbers those READMEs report stay valid.
 # ---------------------------------------------------------------------------
 
-def token_f1(prediction: str, reference: str) -> float:
+def _normalize(text: object) -> str:
+    """SQuAD-style: lowercase, drop punctuation and articles, collapse spaces."""
+    s = "".join(c for c in str(text).lower() if c not in set(string.punctuation))
+    return " ".join(re.sub(r"\b(a|an|the)\b", " ", s).split())
+
+
+def token_f1(prediction: object, reference: object) -> float:
     """Token-level F1 between prediction and reference (LoCoMo paper metric).
 
-    NOT IMPLEMENTED YET — use baselines/harness/score_paper_metrics.py for
-    offline scoring until the consolidation issue lands."""
-    raise NotImplementedError(
-        "token_f1 is a stub — see the lexical-metrics integration issue; "
-        "an offline implementation lives in baselines/harness/score_paper_metrics.py"
-    )
+    Returns a fraction in [0, 1] (callers that report percentages scale by 100).
+    Two empty strings score 1.0; one empty side scores 0.0."""
+    p, g = _normalize(prediction).split(), _normalize(reference).split()
+    if not p or not g:
+        return float(p == g)
+    hit = sum((Counter(p) & Counter(g)).values())
+    if not hit:
+        return 0.0
+    precision, recall = hit / len(p), hit / len(g)
+    return 2 * precision * recall / (precision + recall)
 
 
-def bleu1(prediction: str, reference: str) -> float:
+def bleu1(prediction: object, reference: object) -> float:
     """BLEU-1 between prediction and reference (LoCoMo paper metric).
 
-    NOT IMPLEMENTED YET — use baselines/harness/score_paper_metrics.py for
-    offline scoring until the consolidation issue lands."""
-    raise NotImplementedError(
-        "bleu1 is a stub — see the lexical-metrics integration issue; "
-        "an offline implementation lives in baselines/harness/score_paper_metrics.py"
-    )
+    Unigram precision WITHOUT the brevity penalty — deliberate, and NOT a bug to
+    "fix": it is what the LoCoMo evaluation scripts these papers build on
+    actually compute, so adding a brevity penalty would silently stop our
+    numbers being comparable to the published ones."""
+    p, g = _normalize(prediction).split(), _normalize(reference).split()
+    if not p or not g:
+        return float(p == g)
+    return sum((Counter(p) & Counter(g)).values()) / len(p)

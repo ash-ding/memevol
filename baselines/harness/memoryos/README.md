@@ -89,16 +89,26 @@ reports on; `config.example.yaml` keeps the repo's shared gpt-5-mini agent), wit
 the paper's `retrieval_queue_capacity: 10` and `mid_term_capacity: 200`.
 6/6 conversations, **3.5 hours**, **2,778 tokens/question**.
 
-Scored with `baselines/harness/score_paper_metrics.py`, which recomputes the
-papers' metrics — the shared judge is binary and is not what they report.
+Scored with token-F1, which the paper reports — the shared judge is binary and is
+not what they report. These numbers came from the offline
+`score_paper_metrics.py` pass; that script is gone (issue #18) and LoCoMo now
+emits the same metrics inline, per category, into `score.json` under
+`extra_metrics.locomo_lexical`. Same formulas — `common/metric.py`'s
+implementation was ported verbatim from it and differential-tested against it
+(6010 values, zero mismatches) — so the numbers below stand unchanged. Compare
+only against the **unweighted** mean: it is what the papers' "Avg." is.
 
-| category | our F1 | paper F1 | n |
-|---|---|---|---|
-| single-hop | **33.7** | **35.3** | 202 |
-| multi-hop | 22.2 | 41.1 | 65 |
-| temporal | 39.5 | 20.0 | 73 |
-| open-domain | 12.1 | 48.6 | 20 |
-| **unweighted mean** | **26.9** | **36.2** | |
+| category | our F1 | paper F1 | paper BLEU-1 | n |
+|---|---|---|---|---|
+| single-hop | **33.7** | **35.3** | 25.2 | 202 |
+| multi-hop | 22.2 | 41.1 | 30.8 | 65 |
+| temporal | 39.5 | 20.0 | 16.5 | 73 |
+| open-domain | 12.1 | 48.6 | 43.0 | 20 |
+| **unweighted mean** | **26.9** | **36.2** | **28.9** | |
+
+(The published BLEU-1 column is recorded here because it used to live only in
+`score_paper_metrics.py`'s `PAPER_B1` table, which went away with the script.
+Source: MemoryOS, arXiv 2506.06326, GPT-4o-mini.)
 
 **Verdict: the integration is correct, but two categories are not comparable.**
 

@@ -7,7 +7,12 @@ harness baselines call it directly)."""
 from __future__ import annotations
 
 import copy
+import logging
 from typing import Any, Dict, List, Optional, Tuple
+
+# Plain getLogger (not common.logger.get_logger): this module is imported
+# in-process by the baselines, and get_logger opens a log file on import.
+log = logging.getLogger("main")
 
 # ---------------------------------------------------------------------------
 # Staged evaluation — per-benchmark stage schema
@@ -530,6 +535,17 @@ async def evaluate_memo(
             )
             workflow.save_full_traces(records[:rlen])
             score = _build_score_json(records[:rlen])
+            # Benchmark-specific REPORTING metrics (LoCoMo's paper-comparable
+            # token-F1 / BLEU-1, ...). Deliberately merged here rather than
+            # inside _build_score_json, which stays benchmark-agnostic. Guarded:
+            # a reporting metric must never fail an otherwise-valid stage, and
+            # it never touches raw_score — the judge remains the promotion signal.
+            try:
+                extra = workflow.aggregate_extra_metrics(records[:rlen])
+                if extra:
+                    score["extra_metrics"] = extra
+            except Exception as exc:
+                log.warning(f"aggregate_extra_metrics failed (reporting only, ignored): {exc!r}")
             raw_score = float(score["benchmark_eval_score"]["benchmark_overall_eval_score"])
             stddev = _per_user_stddev(score)
             with (stage_dir / "score.json").open("w", encoding="utf-8") as f:
