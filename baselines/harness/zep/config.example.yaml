@@ -20,19 +20,27 @@ sampling_seed: 42              # seeds the sampled subset (both paths; a no-op a
 memory_cache: true             # cross-stage Phase-1 memory reuse (gauntlet only); --no-memory-cache to disable
 
 # --- Zep / Graphiti retrieval + models ---
-retrieve_k: 20                 # paper: top-20 edges (facts) + entity nodes (summaries) per query
+retrieve_k: 20                 # PAPER §4: "retrieve the 20 most relevant edges (facts) and entity nodes"
 embedder: bge-m3               # bge-m3 (paper-faithful, local sentence-transformers) | openai
-embedder_model: BAAI/bge-m3     # embedding model (bge-m3: 1024-dim, paper's choice)
+embedder_model: BAAI/bge-m3     # PAPER §4.1: "the BGE-m3 models from BAAI for both reranking and
+                               # embedding tasks". 1024-dim.
 reranker: bge                  # bge (paper-faithful cross-encoder rerank) | openai
-reranker_model: BAAI/bge-reranker-v2-m3   # graphiti's BGERerankerClient model
+reranker_model: BAAI/bge-reranker-v2-m3   # PAPER §4.1 names the BGE-m3 family for reranking without
+                               # pinning a checkpoint; this is that family's cross-encoder and
+                               # graphiti's own BGERerankerClient default.
 device: null                   # sentence-transformers device for BGE-m3 + reranker. null/"auto" => cuda if a
                                # GPU is visible, else cpu. Pin with "cpu" / "cuda" / "cuda:1" if needed.
 db_root: null                  # dir for the embedded FalkorDB Lite store; null => system temp (/tmp). MUST be a native POSIX FS
                                # (redislite binds a unix socket) — do NOT point at /mnt/c or another DrvFs/9p mount under WSL.
-graph_llm_model: gpt-4o-mini    # Graphiti graph-construction LLM (paper: gpt-4o-mini-2024-07-18). Graphiti already
-                               # drops temperature for the gpt-5 family but still sends max_tokens, which they reject;
-                               # baselines/harness/model_config.py renames it, so a gpt-5 model IS runnable here.
-graph_llm_small_model: null    # Graphiti "small" LLM for simpler prompts; null => same as graph_llm_model
+graph_llm_model: gpt-4o-mini-2024-07-18   # PAPER §4.1: "we utilize gpt-4o-mini-2024-07-18 for graph
+                               # construction". The DATED snapshot is the paper's, and is what this pins —
+                               # the undated `gpt-4o-mini` alias now resolves to a later snapshot, so it
+                               # would silently stop reproducing the paper. Graphiti already drops
+                               # temperature for the gpt-5 family but still sends max_tokens, which they
+                               # reject; baselines/harness/model_config.py renames it, so a gpt-5 model is
+                               # runnable here too (see config.unified.yaml).
+graph_llm_small_model: null    # Graphiti "small" LLM for simpler prompts; null => same as graph_llm_model.
+                               # The paper names no separate small model.
 
 # --- Shared eval knobs ---
 llm_model: gpt-5-mini           # shared QA agent model (answers using the retrieved FACTS/ENTITIES context)

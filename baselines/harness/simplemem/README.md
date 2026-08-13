@@ -103,8 +103,8 @@ Every model this baseline touches is a config parameter, so it runs in two arms:
 
 | | faithful arm (`config.example.yaml`) | unified arm (`config.unified.yaml`) |
 |---|---|---|
-| internal LLM (`simplemem_llm_model`) | `gpt-4.1-mini` — SimpleMem's own default | `gpt-5-mini` |
-| embedder (`embedding_model`) | `Qwen/Qwen3-Embedding-0.6B`, local, 1024-dim — the paper's | `text-embedding-3-small`, API, 1536-dim |
+| internal LLM (`simplemem_llm_model`) | `gpt-4.1-mini` — the paper's backbone (§3.1/§3.3) | `gpt-5-mini` |
+| embedder (`embedding_model`) | `Qwen/Qwen3-Embedding-0.6B`, local, 1024-dim — the paper's (§3.1) | `text-embedding-3-small`, API, 1536-dim |
 
 **The faithful arm is the default**, and it is what the faithfulness table
 below and every number in this README describe. The unified arm puts all seven
@@ -138,7 +138,8 @@ is invalid under the 1536-dim arm.
 
 | Category | Items |
 |---|---|
-| Verbatim | whole `src/simplemem/{core,text}` (compression, hybrid retrieval, planning, reflection, answer prompts, LanceDB backend); `WINDOW_SIZE=40` / `OVERLAP_SIZE=2`; `SEMANTIC/KEYWORD/STRUCTURED_TOP_K=25/5/5`; internal LLM `gpt-4.1-mini` (faithful arm); faithful `Qwen/Qwen3-Embedding-0.6B` embedder |
+| Verbatim | whole `src/simplemem/{core,text}` (compression, hybrid retrieval, planning, reflection, answer prompts, LanceDB backend); `OVERLAP_SIZE=2`; `SEMANTIC/KEYWORD/STRUCTURED_TOP_K=25/5/5`; internal LLM `gpt-4.1-mini` (paper §3.1/§3.3); `Qwen/Qwen3-Embedding-0.6B` embedder (paper §3.1, 1024-dim) |
+| Paper over code | `window_size: 20` — the paper (§3.1) states "a sliding window of size W = 20" while the vendored code ships `WINDOW_SIZE=40`. The paper's value is the default, matching how memoryos resolves the same kind of divergence. **Numbers collected at 40 are not comparable to numbers collected at 20.** |
 | Integration adaptations (not algorithm) | longmemeval (per message) / dynamicmem (per app-log entry, hipporag2's `app_log_to_passage` text) ingestion mapping — SimpleMem only defined LoCoMo; answering via the shared QA agent; the shared embedder factory from [`../model_config.py`](../model_config.py) (see **Model configuration** above — a process-wide cache so the 0.6B weights load once, not per user, and the seam the API-embedder arm is injected through); the vendored chain imported exactly once at `memo.py` module scope, avoiding a pyarrow re-registration crash; `src/simplemem/__init__.py` trimmed to keep multimodal/evolver off the import path; `use_streaming=false` (identical output, no console flood) |
 | Kept at SimpleMem defaults (faithful path) | `enable_parallel_processing`/`enable_parallel_retrieval=true` (SimpleMem's shipped defaults, and the path its LoCoMo eval uses) — NOTE the serial and parallel build paths are **not** equivalent: the serial path feeds each window the previous window's entries as dedup context, the parallel path processes windows independently, so the parallel output is the faithful one. It is also the only real build parallelism (the async build hook body is synchronous + blocking, so users don't overlap under `max_sample_concurrent` and there is no thread-count multiplication). Tune via `max_parallel_workers` (16) / `max_retrieval_workers` (8) |
 | Known consequences | SimpleMem compresses source turns into `MemoryEntry` units that carry NO `app_log_id`, so DynamicMem evidence-citation scoring is disadvantaged (inherent to compression-first memory); LoCoMo is SimpleMem's home benchmark and its tuned `WINDOW_SIZE` — other datasets use the same size unless overridden |

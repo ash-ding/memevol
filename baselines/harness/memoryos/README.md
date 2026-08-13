@@ -71,8 +71,14 @@ Every model this baseline touches is a config parameter, so it runs in two arms:
 
 | | faithful arm (`config.example.yaml`) | unified arm (`config.unified.yaml`) |
 |---|---|---|
-| internal LLM (`memoryos_llm_model`) | `gpt-4o-mini` — the paper's headline LoCoMo setting | `gpt-5-mini` |
-| embedder (`memoryos_embedding_model`) | `all-MiniLM-L6-v2`, local, 384-dim — the paper's | `text-embedding-3-small`, API, 1536-dim |
+| internal LLM (`memoryos_llm_model`) | `gpt-4o-mini` — the paper's headline backbone (Tables 1-2) | `gpt-5-mini` |
+| embedder (`memoryos_embedding_model`) | `all-MiniLM-L6-v2`, local, 384-dim — **the code's, not the paper's** | `text-embedding-3-small`, API, 1536-dim |
+
+**The paper names no embedding model.** §4.1's implementation details cover the
+hardware and every STM/MTM/LPM capacity but never state an embedder, so the
+default above comes from the vendored code (`utils.get_embedding`'s default
+argument) — the only evidence there is. Recorded here so the value is not
+mistaken for a paper claim.
 
 **The faithful arm is the default** (and `config.paper.yaml` additionally pins
 the paper's gpt-4o-mini answerer). The unified arm puts all seven baselines on

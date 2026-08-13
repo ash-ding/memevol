@@ -289,6 +289,38 @@ baseline into a variant its authors never published. Choosing an arm is a
 config decision, and the two are directly comparable because everything else is
 held fixed.
 
+**Every faithful-arm model is traceable to a paper section**, cited inline in
+each `config.example.yaml`:
+
+| baseline | internal LLM | embedder | source |
+|---|---|---|---|
+| amem | gpt-4o-mini | all-MiniLM-L6-v2 | arXiv 2502.12110 §4.2 + Table 1 |
+| hipporag2 | gpt-4o-mini ⚠️ | text-embedding-3-small ⚠️ | arXiv 2502.14802 §4.4 — **see below** |
+| lightmem | gpt-4o-mini | all-MiniLM-L6-v2 | ICLR 2026 Table 5 (+ LLMlingua-2 compressor) |
+| mem0 | gpt-4o-mini | text-embedding-3-small | arXiv 2504.19413 §2, §3.3 |
+| memoryos | gpt-4o-mini | all-MiniLM-L6-v2 ⚠️ | arXiv 2506.06326 Tables 1-2; **paper states no embedder** |
+| simplemem | gpt-4.1-mini | Qwen/Qwen3-Embedding-0.6B | arXiv (SimpleMem) §3.1 |
+| zep | gpt-4o-mini-2024-07-18 | BAAI/bge-m3 | arXiv 2501.13956 §4.1 (+ bge-reranker-v2-m3) |
+
+Three entries carry a caveat, each recorded in its own README rather than left
+implicit:
+
+- **zep** pins the **dated** `gpt-4o-mini-2024-07-18` because that is what §4.1
+  names. The undated alias now resolves to a later snapshot, so leaving it
+  undated would silently stop reproducing the paper.
+- **memoryos**'s embedder comes from the vendored code, not the paper — §4.1
+  gives every capacity and threshold but never names an embedding model.
+- **hipporag2 is the one baseline whose default arm is not its paper's setup.**
+  §4.4 specifies Llama-3.3-70B-Instruct (NER/OpenIE/triple filtering) and
+  nvidia/NV-Embed-v2 (retriever) — a 70B model and a 7B embedder, both local and
+  GPU-bound, which this API-based harness cannot run. The defaults are runnable
+  API equivalents; the paper's models are named in the config and the README.
+
+Where a paper and its shipped code disagree, **the paper wins** and the code's
+value is named in the comment — memoryos (`short_term_capacity` 7 vs code 10,
+`mid_term_capacity` 200 vs code 2000) and simplemem (`window_size` 20 vs code
+40) both do this. Numbers collected under the other value are not comparable.
+
 Two things stay local in BOTH arms because they have no API equivalent:
 lightmem's **LLMlingua-2** prompt compressor (a BERT token classifier, produces
 no vectors) and zep's **bge-reranker-v2-m3** (a cross-encoder scoring

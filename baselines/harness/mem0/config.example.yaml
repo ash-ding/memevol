@@ -19,10 +19,13 @@ sampling_seed: 42              # seeds the sampled subset (both paths; a no-op a
 memory_cache: true             # cross-stage Phase-1 memory reuse (gauntlet only); --no-memory-cache to disable
 
 # --- Mem0 internal knobs (its own defaults) ---------------------------------
-mem0_llm_model: gpt-4o-mini    # Mem0's extractor/updater LLM: reads each batch of messages, extracts
-                               # standalone facts, and decides ADD / UPDATE / DELETE against what is
-                               # already stored. This IS the method — not just a summariser.
-embedding_model: text-embedding-3-small   # Mem0's embedder (OpenAI provider)
+mem0_llm_model: gpt-4o-mini    # PAPER (arXiv 2504.19413) §2: "LLM-based extractors and update module
+                               # leverage GPT-4o-mini with function calling". Reads each batch of messages,
+                               # extracts standalone facts, and decides ADD / UPDATE / DELETE against what
+                               # is already stored. This IS the method — not just a summariser.
+embedding_model: text-embedding-3-small   # PAPER §3.3 names text-embedding-3-small (written there as
+                               # "text-embedding-small-3") as the embedding model across its evaluation
+                               # stack; it is also Mem0's own library default. OpenAI provider, 1536-dim.
 base_url: null                 # OpenAI-compatible base URL for Mem0's internal LLM (null = OpenAI default)
 add_batch_size: 20             # messages per Memory.add() extraction call. Mem0 reads a whole message
                                # list at once; batching is its intended usage and keeps the build to

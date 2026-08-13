@@ -316,14 +316,56 @@ def _baseline_dirs():
                   if d.is_dir() and (d / "run.py").exists())
 
 
+def _config_files(d: Path):
+    """Every config a human is told to pass to this baseline's run.py."""
+    return sorted(list(d.glob("config.*.yaml")) + list(d.glob("smoke_*.yaml")))
+
+
 def test_every_baseline_config_matches_its_required_keys():
     # Guards the whole surface at once: a new model key added to run.py but
-    # forgotten in any config.*.yaml (or vice versa) fails here.
+    # forgotten in any config (or vice versa) fails here.
+    #
+    # The smoke_*.yaml files are included deliberately. They were written against
+    # the old `strict_config: false` + DEFAULT_CONFIG layering, and when exact
+    # config replaced it they silently became unloadable — every one of them
+    # aborted before running anything, while three READMEs still told you to run
+    # them. Nothing caught it because nothing validated them.
     for d in _baseline_dirs():
         keys = _required_keys(d / "run.py")
-        for cfg in sorted(d.glob("config.*.yaml")):
+        for cfg in _config_files(d):
             validate_exact_config(load_config_file(cfg) or {}, keys,
                                   context=f"{cfg.parent.name}/{cfg.name}")
+
+
+def test_no_config_carries_the_removed_strict_config_knob():
+    # `strict_config` was removed when completeness became unconditional; a
+    # config still carrying it is one that predates the change.
+    for d in _baseline_dirs():
+        for cfg in _config_files(d):
+            assert "strict_config" not in (load_config_file(cfg) or {}), cfg.name
+
+
+def test_every_config_a_readme_points_at_exists():
+    """A README naming a config that isn't there is a broken instruction —
+    simplemem's README documented `smoke_locomo.yaml` before the file existed."""
+    import re
+
+    missing = []
+    for d in _baseline_dirs():
+        readme = d / "README.md"
+        if not readme.exists():
+            continue
+        text = readme.read_text(encoding="utf-8", errors="ignore")
+        for name in set(re.findall(r"--config (\S+\.yaml)", text)):
+            base = Path(name).name
+            # Only SHIPPED configs are checked. A README may also walk you
+            # through creating your own (hipporag2's `my_hr.yaml`), and those
+            # are supposed to be absent.
+            if not (base.startswith("config.") or base.startswith("smoke_")):
+                continue
+            if not (d / base).exists():
+                missing.append(f"{d.name}/README.md -> {name}")
+    assert not missing, f"README points at configs that do not exist: {missing}"
 
 
 def test_every_baseline_ships_a_unified_preset():

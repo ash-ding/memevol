@@ -21,23 +21,29 @@ memory_cache: true             # cross-stage Phase-1 memory reuse (gauntlet only
 # --- LightMem internal knobs (its own experiment defaults @ 34410f4) ---------
 pre_compress: true             # LLMlingua-2 token pre-compression (a core LightMem stage; needs the llmlingua model + a GPU)
 topic_segment: true            # attention-based topic segmentation. REQUIRES pre_compress (shares the LLMlingua-2 model)
-llmlingua_model: microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank   # HF hub id (downloads once) or a local path
+llmlingua_model: microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank   # PAPER Table 5: LLMlingua-2
+                               # is the token-compression AND topic-segmentation model (both, shared).
+                               # HF hub id (downloads once) or a local path.
 llmlingua_device: null         # device_map for the LLMlingua-2 model. null/"auto" => cuda if a GPU is
                                # visible, else cpu (slow). Pin with "cpu" / "cuda" / "cuda:1" if needed.
 compress_rate: 0.6             # LLMlingua-2 target compression rate (LoCoMo experiment value; library default is 0.8)
 messages_use: user_only        # which turns feed extraction: user_only | assistant_only | hybrid
 extract_threshold: 0.1         # segmentation/extraction trigger threshold (LoCoMo experiment value)
 extraction_mode: flat          # flat (factual entries only) | event (factual + relational, temporally bound)
-lightmem_llm_model: gpt-4o-mini   # LightMem's internal extraction + offline-update LLM. It sends
-                                  # temperature + max_tokens, which the gpt-5 family rejects —
+lightmem_llm_model: gpt-4o-mini   # PAPER Table 5: GPT-4o-mini is the system backbone for BOTH
+                                  # f_sum/extract() and f_update() (the paper also reports
+                                  # Qwen3-30B-A3B-Instruct-2507 and GLM-4.6). It sends temperature +
+                                  # max_tokens, which the gpt-5 family rejects —
                                   # baselines/harness/model_config.py normalises those away at the
                                   # OpenAI-SDK boundary, so a gpt-5 model IS runnable here.
 manager_max_tokens: 16000      # max_tokens for the internal LLM (LoCoMo experiment value)
 base_url: null                 # OpenAI-compatible base URL for LightMem's internal LLM AND, on the API
                                # embedder arm, for its embedding calls (null = OpenAI default)
-embedding_model: all-MiniLM-L6-v2   # LightMem's embedder (LongMemEval default; HF sentence-transformer,
-                               # 384-dim). A `text-embedding-*` name switches LightMem's OWN vendored
-                               # TextEmbedderOpenAI arm — a real code path, not an adapter.
+embedding_model: all-MiniLM-L6-v2   # PAPER Table 5: f_index() embedding model = all-MiniLM-L6-v2 (a
+                               # black-font entry there, i.e. shared by LightMem AND its baselines).
+                               # 384-dim, local HF sentence-transformer. A `text-embedding-*` name switches
+                               # LightMem's OWN vendored TextEmbedderOpenAI arm — a real code path, not an
+                               # adapter.
 embedding_dims: 384            # embedding dimension. MUST match the embedder: it sizes the Qdrant
                                # collection AND is sent as the API `dimensions` parameter, so a mismatch
                                # fails hard. text-embedding-3-small => 1536. Changing this invalidates

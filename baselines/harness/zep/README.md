@@ -78,9 +78,16 @@ Every model this baseline touches is a config parameter, so it runs in two arms:
 
 | | faithful arm (`config.example.yaml`) | unified arm (`config.unified.yaml`) |
 |---|---|---|
-| graph LLM (`graph_llm_model`) | `gpt-4o-mini` — paper: gpt-4o-mini-2024-07-18 | `gpt-5-mini` |
-| embedder (`embedder` / `embedder_model`) | `BAAI/bge-m3`, local, 1024-dim — the paper's | `text-embedding-3-small`, API, 1536-dim |
-| reranker (`reranker` / `reranker_model`) | `BAAI/bge-reranker-v2-m3` cross-encoder — the paper's | **unchanged** — no API equivalent |
+| graph LLM (`graph_llm_model`) | `gpt-4o-mini-2024-07-18` — the paper's exact pin (§4.1) | `gpt-5-mini` |
+| embedder (`embedder` / `embedder_model`) | `BAAI/bge-m3`, local, 1024-dim — the paper's (§4.1) | `text-embedding-3-small`, API, 1536-dim |
+| reranker (`reranker` / `reranker_model`) | `BAAI/bge-reranker-v2-m3` cross-encoder — the paper's family (§4.1) | **unchanged** — no API equivalent |
+
+The graph LLM pins the **dated** snapshot, quoting §4.1: *"we utilize
+gpt-4o-mini-2024-07-18 for graph construction"*. The undated `gpt-4o-mini` alias
+now resolves to a later snapshot, so leaving it undated would have silently
+stopped reproducing the paper. §4.1 names "the BGE-m3 models from BAAI for both
+reranking and embedding tasks" without pinning a reranker checkpoint;
+`bge-reranker-v2-m3` is that family's cross-encoder and graphiti's own default.
 
 **The faithful arm is the default**, and it is what the faithfulness table
 below and every number in this README describe. The unified arm puts all seven
@@ -117,7 +124,7 @@ invalid.
 
 | Category | Items |
 |---|---|
-| Verbatim | whole `graphiti_core` (@ 4f62cfe); Graphiti's construction pipeline (entity/fact/temporal/community extraction, resolution, edge invalidation); BGE reranker (`BAAI/bge-reranker-v2-m3`); `COMBINED_HYBRID_SEARCH_CROSS_ENCODER` recipe; retrieve_k=20; internal graph LLM gpt-4o-mini (faithful arm); paper's FACTS/ENTITIES context template (§3) |
+| Verbatim | whole `graphiti_core` (@ 4f62cfe); Graphiti's construction pipeline (entity/fact/temporal/community extraction, resolution, edge invalidation); BGE reranker (`BAAI/bge-reranker-v2-m3`); `COMBINED_HYBRID_SEARCH_CROSS_ENCODER` recipe; retrieve_k=20 (§4); internal graph LLM `gpt-4o-mini-2024-07-18`, the paper's dated pin (faithful arm); paper's FACTS/ENTITIES context template (§3) |
 | Integration adaptations (not algorithm) | **FalkorDB Lite** backend instead of the paper's Neo4j — full-text search is RediSearch, not Neo4j Lucene BM25 (a retrieval-backend difference; graph construction is backend-agnostic and identical); **BGE-m3 embedder** supplied via Graphiti's public `EmbedderClient` extension point (`BGEM3Embedder` in `memo.py`) since graphiti_core ships no local embedder — the paper used BGE-m3, which is not in the OSS embedder list; longmemeval (per message) / dynamicmem (per app-log entry, hipporag2's `app_log_to_passage` text) episode mappings — the paper only ran LoCoMo/LongMemEval conversations; answering via the shared QA agent; a process-wide model cache in `memo.py` so the BGE-m3 and reranker weights load once per process rather than once per user (a plain cached factory — Graphiti accepts injected clients, so nothing is monkeypatched); context compose replicated here (a Zep-service feature, not in OSS Graphiti) |
 | Upstream quirks preserved | Graphiti's last-n-message context window (paper n=4) and all prompts/thresholds untouched; episode `source=message` auto-extracts the speaker as an entity |
 

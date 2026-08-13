@@ -145,21 +145,28 @@ baselines/harness/hipporag2/
 
 Every model this baseline touches is a config parameter, so it runs in two arms:
 
-| | faithful arm (`config.example.yaml`) | unified arm (`config.unified.yaml`) |
-|---|---|---|
-| internal LLM (`hipporag2_llm_model`) | `null` → falls back to `llm_model` | `gpt-5-mini`, stated explicitly |
-| embedder (`embedding`) | `text-embedding-3-small`, API, 1536-dim | **unchanged** |
+| | paper (arXiv 2502.14802 §4.4) | default arm (`config.example.yaml`) | unified arm (`config.unified.yaml`) |
+|---|---|---|---|
+| internal LLM (`hipporag2_llm_model`) | **Llama-3.3-70B-Instruct** | `gpt-4o-mini` | `gpt-5-mini` |
+| embedder (`embedding`) | **nvidia/NV-Embed-v2** (7B) | `text-embedding-3-small` | **unchanged** |
+| QA passages (`top_k`) | top-5 | 5 | 5 |
 
-hipporag2 is the baseline that changes least between arms — it is one of only
-two already on an API embedder (with mem0), and it was already building its
-graph with `gpt-5-mini`. **That last part was an accident, not a choice:** it
-had no internal-LLM key and read the frame's `llm_model` — the SHARED QA-agent
-model — which is why it was the only baseline building memory with `gpt-5-mini`
-while the other six used `gpt-4o-mini`.
+**hipporag2 is the one baseline whose default arm is NOT its paper's setup, and
+that is deliberate.** §4.4 specifies Llama-3.3-70B-Instruct for NER/OpenIE and
+triple filtering, and nvidia/NV-Embed-v2 as the retriever — a 70B instruct model
+and a 7B embedder, both local, both needing GPU infrastructure this repo's
+API-based harness does not have. The defaults are the runnable API equivalents
+instead. `gpt-4o-mini` is defensible as a stand-in: the paper itself uses it as
+the alternative QA reader (§4.4, Appendix C Table 8), and it is what the other
+six baselines build memory with, so the fleet stays comparable. Point the two
+keys at the paper's models if you have the hardware — `llm_name` and
+`embedding_model_name` reach HippoRAG unchanged.
 
-`hipporag2_llm_model` fixes that. A `null` value preserves the historical
-fallback so old configs keep reproducing; the unified arm states the model
-explicitly, so "which arm was this run?" stays answerable after the fact.
+A second thing `hipporag2_llm_model` fixes: the key did not exist before, so
+HippoRAG read the frame's `llm_model` — the SHARED QA-agent model. That is why
+hipporag2 was the only baseline building memory with `gpt-5-mini` while the
+other six used `gpt-4o-mini`. It was an accident of plumbing, not a choice. A
+`null` value still reproduces that old behaviour for archived configs.
 
 HippoRAG already passes `temperature=1` — the only value the gpt-5 family
 accepts — so this is the one baseline that could always run a gpt-5 model. The

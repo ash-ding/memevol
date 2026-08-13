@@ -33,6 +33,7 @@ llm_model: gpt-5-mini           # shared QA agent model (answers using the retri
 judge_model: gpt-5-mini        # LLM-as-judge model scoring predicted vs reference answers
 embedding_batch_size: null      # null = HippoRAG2 internal default (16 for an API embedder)
 embedding_dtype: null           # null = HippoRAG2 internal default ("auto" for an API embedder)
+top_k: 5                        # PAPER §4.4: top-5 retrieved passages as QA context
 max_sample_concurrent: 3       # asyncio concurrency across users/samples
 
 # --- Sizing (config-file only). BOTH keys must be present; the inactive one
