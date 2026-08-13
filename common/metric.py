@@ -160,9 +160,10 @@ Output ONLY a JSON object:
 # promotion signal (forge's `accuracy_locomo` axis). These are stdlib-only and
 # deterministic, so they cost nothing to compute inline per QA step.
 #
-# Ported verbatim from baselines/harness/score_paper_metrics.py (the offline
-# pass used for the mem0/memoryos reproduction checks) — same formulas, so the
-# numbers those READMEs already report stay valid.
+# Ported verbatim from the former baselines/harness/score_paper_metrics.py (the
+# offline pass used for the mem0/memoryos reproduction checks, removed in the
+# same change that added these) — same formulas, differential-tested against it
+# before deletion, so the numbers those READMEs report stay valid.
 # ---------------------------------------------------------------------------
 
 def _normalize(text: object) -> str:
