@@ -28,22 +28,77 @@ from __future__ import annotations
 
 import contextlib
 import os
+import sys
 import uuid
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from common.memo_class import MemoClass
 from baselines.harness.hipporag2.memo import app_log_to_passage
-from baselines.harness.simplemem._st_shim import (
-    ensure_sentence_transformers, install_embedding_cache, import_simplemem_system,
-)
 
-ensure_sentence_transformers()     # embedding.py imports ST eagerly
-install_embedding_cache()          # share the ~0.6B Qwen3 embedder across per-user systems
-# Import the vendored simplemem chain (which pulls in lancedb) with HF `datasets`
-# active, so lancedb's import-time `from datasets import Dataset` resolves to the
-# HF library, not memevol's `benchmarks/` package.
-SimpleMemSystem, Dialogue, MemoryEntry = import_simplemem_system()   # vendored, byte-identical
+# SimpleMem's absolute imports (`from simplemem.core...`) must resolve to the
+# byte-identical vendored copy under src/, not any pip-installed simplemem.
+_SRC = Path(__file__).resolve().parent / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
+
+_st_model_cache: dict = {}
+_embedding_cache_installed = False
+
+
+def install_embedding_cache() -> None:
+    """Monkeypatch ``sentence_transformers.SentenceTransformer`` with a memoizing
+    factory so the (heavy) embedding weights load once per process and are shared
+    across every per-user ``SimpleMemSystem``. Idempotent. Leaves SimpleMem's
+    vendored ``EmbeddingModel`` untouched — it just receives a cached model object
+    from the patched constructor.
+
+    A fresh MemoClass is built per user, so without this the ~0.6B Qwen3 weights
+    reload for every user in the split. Keyed on the resolved model path (first
+    positional arg or ``model_name_or_path`` kwarg), so different embedding models
+    (e.g. a MiniLM fallback) get distinct cache slots. If construction fails it is
+    NOT cached (a transient failure can be retried).
+
+    WHY A MONKEYPATCH. The clean shape is a cached factory whose model is injected
+    (see the zep baseline, which can do that because Graphiti accepts an injected
+    embedder). SimpleMem has no injection point: ``EmbeddingModel.__init__``
+    dispatches on ``model_name.startswith("qwen3")`` and constructs the
+    SentenceTransformer itself (``src/simplemem/core/utils/embedding.py``), with no
+    parameter to pass a pre-built model through. Editing that file would break the
+    ``src/`` byte-identity the README's ``diff -r`` asserts, so memoizing the
+    constructor is the only remaining lever. Issue #26 adds a configurable-model
+    layer with an embedder injected from here; once that lands this becomes a plain
+    cached factory and the patch disappears.
+    """
+    global _embedding_cache_installed
+    if _embedding_cache_installed:
+        return
+    import sentence_transformers as _st
+
+    _real_ctor = _st.SentenceTransformer
+
+    def _cached(*args, **kwargs):
+        key = args[0] if args else kwargs.get("model_name_or_path")
+        cached = _st_model_cache.get(key)
+        if cached is not None:
+            return cached
+        model = _real_ctor(*args, **kwargs)
+        if key is not None:
+            _st_model_cache[key] = model
+        return model
+
+    # Preserve the original on the wrapper for anyone who needs the true class.
+    _cached._real_sentence_transformer = _real_ctor  # type: ignore[attr-defined]
+    _st.SentenceTransformer = _cached
+    _embedding_cache_installed = True
+
+
+# Share the embedder across per-user systems. Must precede the first
+# SimpleMemSystem construction.
+install_embedding_cache()
+
+from simplemem.text.system import SimpleMemSystem  # noqa: E402  (vendored, byte-identical)
+from simplemem.core.models.memory_entry import Dialogue, MemoryEntry  # noqa: E402
 
 OUTPUTS_DIR = Path(__file__).resolve().parent / "outputs"
 
