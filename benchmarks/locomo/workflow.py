@@ -14,9 +14,11 @@ from typing import Dict, List, Optional, Tuple, Type
 
 from common.memo_class import MemoClass
 from common.logger import get_logger
+from common.metric import bleu1, token_f1
 from common.recorder import Basic_Recorder
 from common.workflow import BaseWorkflow
 from benchmarks.locomo.env import (
+    CATEGORY as LOCOMO_CATEGORY,
     LoCoMoRecorder,
     extract_sessions,
     load_user_data,
@@ -131,6 +133,9 @@ class LoCoMoWorkflow(BaseWorkflow):
         retrieved_memory: Dict,
         relevant_context: List[Dict],
     ) -> None:
+        # Lexical metrics alongside the judge score. Computed here (not at
+        # aggregation time) so every trace carries them per step and stays
+        # re-aggregatable without re-running the eval. Pure stdlib, no LLM call.
         await recorder.log_step(
             query=query,
             predicted=predicted,
@@ -140,7 +145,83 @@ class LoCoMoWorkflow(BaseWorkflow):
             qa_metadata=qa_metadata,
             retrieved_memory=retrieved_memory,
             relevant_turns=relevant_context,
+            token_f1=token_f1(predicted, reference),
+            bleu1=bleu1(predicted, reference),
         )
+
+    # ------------------------------------------------------------------
+    # Paper-comparable lexical aggregates (REPORTING ONLY)
+    # ------------------------------------------------------------------
+
+    def aggregate_extra_metrics(self, recorder_list: List) -> Dict:
+        """Per-category token-F1 / BLEU-1, plus both means, into score.json's
+        `extra_metrics`. Never feeds the promotion signal — `accuracy_locomo`
+        keeps coming from the LLM judge.
+
+        BOTH means are emitted, explicitly named, on purpose. The papers' "Avg."
+        is the UNWEIGHTED mean over the four categories; LoCoMo's own mix is
+        ~55% single-hop / ~6% open-domain, so the question-weighted mean is a
+        materially different number. A bare `token_f1` key would invite someone
+        to compare our weighted number against a paper's unweighted one and
+        silently misread it, so no such key is emitted.
+        """
+        per_cat: Dict[str, List[Dict]] = {}
+        for rec in recorder_list:
+            if isinstance(rec, Exception):
+                continue
+            for step in getattr(rec, "steps", []) or []:
+                cat = LOCOMO_CATEGORY.get(
+                    (step.get("qa_metadata") or {}).get("category"), "other"
+                )
+                per_cat.setdefault(cat, []).append(step)
+
+        if not per_cat:
+            return {}
+
+        def _mean(rows: List[Dict], key: str) -> float:
+            # Recompute if a step predates per-step metrics (older traces).
+            vals = [
+                float(s[key]) if key in s
+                else (token_f1 if key == "token_f1" else bleu1)(
+                    s.get("predicted", ""), s.get("reference", "")
+                )
+                for s in rows
+            ]
+            return sum(vals) / len(vals)
+
+        stats = {
+            cat: {
+                "token_f1": 100 * _mean(rows, "token_f1"),
+                "bleu1": 100 * _mean(rows, "bleu1"),
+                "judge": sum(float(s.get("score", 0.0)) for s in rows) / len(rows),
+                "n": len(rows),
+            }
+            for cat, rows in per_cat.items()
+        }
+
+        # Unweighted = the papers' "Avg.", over the four KNOWN categories only
+        # (an "other" bucket would mean unmapped category ids — never let it
+        # into the number we compare against published results).
+        known = [c for c in LOCOMO_CATEGORY.values() if c in stats]
+        total = sum(s["n"] for s in stats.values())
+        out: Dict = {
+            "per_category": stats,
+            "n_questions": total,
+            "note": (
+                "Reported alongside the LLM judge, never instead of it. "
+                "bleu1 is unigram precision without brevity penalty (matches "
+                "the LoCoMo-derived scripts the papers build on). Papers' "
+                "'Avg.' == the *_unweighted means."
+            ),
+        }
+        for key in ("token_f1", "bleu1"):
+            if known:
+                out[f"{key}_mean_unweighted"] = sum(stats[c][key] for c in known) / len(known)
+            if total:
+                out[f"{key}_mean_weighted"] = (
+                    sum(s[key] * s["n"] for s in stats.values()) / total
+                )
+        return {"locomo_lexical": out}
 
     # ------------------------------------------------------------------
     # Judge — LoCoMo paper-aligned prompt (binary 0/1)
