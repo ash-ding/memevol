@@ -324,7 +324,12 @@ def _baseline_dirs():
 
 
 def _config_files(d: Path):
-    """Every config a human is told to pass to this baseline's run.py."""
+    """Every config that can be passed to this baseline's run.py.
+
+    `smoke_*.yaml` are LOCAL scratch files by repo convention — `.gitignore`
+    excludes them per baseline — so they are validated opportunistically when
+    present in a working tree and simply absent in a fresh clone.
+    """
     return sorted(list(d.glob("config.*.yaml")) + list(d.glob("smoke_*.yaml")))
 
 
@@ -352,9 +357,14 @@ def test_no_config_carries_the_removed_strict_config_knob():
             assert "strict_config" not in (load_config_file(cfg) or {}), cfg.name
 
 
-def test_every_config_a_readme_points_at_exists():
-    """A README naming a config that isn't there is a broken instruction —
-    simplemem's README documented `smoke_locomo.yaml` before the file existed."""
+def test_every_shipped_config_a_readme_points_at_exists():
+    """A README naming a SHIPPED config that isn't there is a broken instruction.
+
+    Only `config.*.yaml` is checked. A README may also walk you through creating
+    your own local file — hipporag2's `my_hr.yaml`, or the `smoke_*.yaml`
+    scratch configs `.gitignore` deliberately keeps out of the repo — and those
+    are supposed to be absent from a fresh clone.
+    """
     import re
 
     missing = []
@@ -365,10 +375,7 @@ def test_every_config_a_readme_points_at_exists():
         text = readme.read_text(encoding="utf-8", errors="ignore")
         for name in set(re.findall(r"--config (\S+\.yaml)", text)):
             base = Path(name).name
-            # Only SHIPPED configs are checked. A README may also walk you
-            # through creating your own (hipporag2's `my_hr.yaml`), and those
-            # are supposed to be absent.
-            if not (base.startswith("config.") or base.startswith("smoke_")):
+            if not base.startswith("config."):
                 continue
             if not (d / base).exists():
                 missing.append(f"{d.name}/README.md -> {name}")

@@ -50,6 +50,7 @@ baselines/harness/amem/results/
 baselines/harness/lightmem/results/
 baselines/harness/lightmem/smoke_*.yaml
 baselines/harness/simplemem/results/
+baselines/harness/simplemem/smoke_*.yaml
 baselines/harness/zep/results/
 baselines/harness/zep/smoke_*.yaml
 

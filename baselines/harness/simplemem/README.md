@@ -172,6 +172,12 @@ end-to-end** here (this baseline's own venv + a GPU for the Qwen3 embedder + an
 OpenAI key are only available on the eval server). To smoke each ingestion branch
 cheaply on the search split (mirrors amem's per-branch check):
 
+Smoke configs are LOCAL scratch files — `.gitignore` keeps
+`baselines/harness/simplemem/smoke_*.yaml` out of the repo (same as lightmem and
+zep), so create them yourself. Each is a full copy of `config.example.yaml` with
+only `dataset` / `split` / `single_stage` changed; exact config is
+unconditional, so a partial override file will abort before running.
+
     # locomo (conversation branch) — 1 conv, 3 QAs
     #   smoke_locomo.yaml: dataset: locomo, split: search,
     #   single_stage: {n_conversations: 1, n_qa: 3}
