@@ -169,8 +169,6 @@ def _install_fake_sentence_transformers():
     _FakeST.instances = 0
     mc._model_cache.clear()
     mc._factory_installed = False
-    mc._real_ctor = None
-    mc.set_embedder_policy(None, None)
     return module
 
 
@@ -216,16 +214,23 @@ def test_factory_returns_an_api_embedder_for_an_api_model_name():
     assert got.get_config_dict() == {"model_name": "text-embedding-3-small"}
 
 
-def test_policy_override_wins_over_the_requested_name():
-    # memoryos NEEDS this: its vendored get_embedding() carries
-    # `all-MiniLM-L6-v2` as a DEFAULT ARGUMENT, so the requested name is never
-    # the configured one.
-    module = _install_fake_sentence_transformers()
+def test_get_embedder_does_not_recurse_through_the_installed_factory():
+    """`get_embedder` must resolve the GENUINE class even after the constructor
+    has been replaced by the factory that calls it — otherwise the two bounce
+    off each other forever."""
+    _install_fake_sentence_transformers()
     mc.install_embedder_factory()
-    mc.set_embedder_policy("text-embedding-3-small")
-    got = module.SentenceTransformer("all-MiniLM-L6-v2")   # what memoryos asks for
-    assert isinstance(got, mc.APIEmbedder)
-    assert got.model_name == "text-embedding-3-small"
+    got = mc.get_embedder("all-MiniLM-L6-v2")
+    assert isinstance(got, _FakeST)
+    assert _FakeST.instances == 1
+
+
+def test_get_embedder_works_without_the_factory_installed():
+    """memoryos calls get_embedder() directly and never installs the patch."""
+    _install_fake_sentence_transformers()
+    assert not mc._factory_installed
+    assert isinstance(mc.get_embedder("all-MiniLM-L6-v2"), _FakeST)
+    assert isinstance(mc.get_embedder("text-embedding-3-small"), mc.APIEmbedder)
 
 
 def test_factory_forwards_the_callers_constructor_kwargs():
@@ -268,12 +273,14 @@ def test_async_patch_stays_a_coroutine_function():
     assert inspect.iscoroutinefunction(AsyncCompletions.create)
 
 
-def test_policy_device_overrides_what_the_vendored_code_passes():
+def test_factory_forwards_the_callers_device():
+    # lightmem routes its resolved device here via `model_kwargs: {"device": ...}`.
     module = _install_fake_sentence_transformers()
     mc.install_embedder_factory()
-    mc.set_embedder_policy("all-MiniLM-L6-v2", device="cpu")
-    got = module.SentenceTransformer("all-MiniLM-L6-v2", device="cuda")
+    got = module.SentenceTransformer("all-MiniLM-L6-v2", device="cpu")
     assert got.device == "cpu"
+    # device is part of the cache key — a different device is a different model
+    assert module.SentenceTransformer("all-MiniLM-L6-v2", device="cuda") is not got
 
 
 def test_api_embedder_encode_shapes(monkeypatched_embedding=None):

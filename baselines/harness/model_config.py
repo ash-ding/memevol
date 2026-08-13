@@ -1,32 +1,33 @@
 """Shared model-configuration layer for the harness baselines (issue #26).
 
-Every model a baseline touches — internal LLM, embedder, reranker, compressor —
-must be a *configurable parameter*, so the fleet can be run in two arms:
+Every model a harness baseline touches — internal LLM, embedder, reranker,
+compressor — must be a *configurable parameter*, so the fleet can be run in two
+arms:
 
-  faithful arm — each method's own models (the defaults; what the READMEs make
-                 faithfulness claims about);
+  faithful arm — each method's own published models (the defaults; what the
+                 READMEs make faithfulness claims about);
   unified arm  — one GPT LLM + one API embedder everywhere, which is the arm
                  that is comparable, like-for-like, against the main method.
 
 **WRAP, DO NOT REWRITE.** Each baseline's method source under ``src/`` is
-vendored byte-identical and every README asserts it with a ``diff -r``. So both
-levers here act at a *boundary* the vendored code already goes through, from
-integration code (``memo.py``), with zero edits under ``src/``:
+vendored byte-identical and every README asserts it. So both levers here act at
+a *boundary* the vendored code already goes through, from integration code
+(``memo.py``), with zero edits under ``src/``:
 
-  1. ``install_embedder_factory`` patches the ``sentence_transformers``
-     constructor. Three baselines (amem, memoryos, simplemem) build their
-     sentence-transformer internally with no injection point; the patched
-     factory memoizes local models AND transparently hands back an
-     :class:`APIEmbedder` when an API embedding model is configured.
-  2. ``install_openai_param_normalisation`` patches the OpenAI SDK's
+  1. :func:`get_embedder` — one cached factory that returns either a real
+     sentence-transformer or an API-backed stand-in with the same interface.
+     Baselines whose vendored code constructs its own embedder reach it through
+     :func:`install_embedder_factory`, which patches the
+     ``sentence_transformers`` constructor they all funnel through.
+  2. :func:`install_openai_param_normalisation` patches the OpenAI SDK's
      ``chat.completions.create`` so requests that hardcode sampling params the
      gpt-5 family rejects (``temperature``, ``max_tokens``) still work. Without
-     it, amem / lightmem / simplemem cannot run a gpt-5 model AT ALL — their
+     it, five of the seven baselines cannot run a gpt-5 model AT ALL — their
      vendored clients send those params unconditionally.
 
-Both are process-global and idempotent. They must be installed BEFORE the
-vendored package is imported, because the vendored modules bind
-``SentenceTransformer`` at their own import time.
+Both patches are process-global and idempotent, and must be installed BEFORE the
+vendored package is imported, because the vendored modules bind their names at
+their own import time.
 
 Issue #25 (unified LLM accounting) intercepts at the same
 ``chat.completions.create`` seam; that is deliberate — one interception point
@@ -35,7 +36,7 @@ gets both the param normalisation and the token accounting.
 from __future__ import annotations
 
 import threading
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional
 
 # --------------------------------------------------------------------------
 # Device resolution
@@ -90,8 +91,8 @@ def is_api_embedding_model(model_name: Optional[str]) -> bool:
     Used to decide, per baseline, whether the embedder is a local
     sentence-transformer or an :class:`APIEmbedder`. Note the DIMENSION
     COUPLING this implies: `text-embedding-3-small` is 1536-dim where the local
-    defaults are 384 (MiniLM) / 1024 (bge-m3), so any switch must carry the
-    baseline's dimension knob with it, and invalidates vector indexes and
+    defaults are 384 (MiniLM) / 1024 (bge-m3, Qwen3), so any switch must carry
+    the baseline's dimension knob with it, and invalidates vector indexes and
     memory-cache snapshots built at the old width.
     """
     return str(model_name or "").startswith(_API_EMBEDDING_PREFIX)
@@ -105,15 +106,10 @@ class APIEmbedder:
     ``.encode(...)`` on it, so the only way to give them an API embedder
     without editing ``src/`` is to hand them an object of the same shape.
 
-    Embedding requests go through :class:`common.llm.Embedding`, which brings
-    the repo's retry kernel, the global concurrency gate, request chunking
-    (item + token budgets) and TokenTracker reporting — so unlike the local
-    embedders, an API embedder's cost IS visible in the token accounting.
-
-    ``__call__``-compatible surface, matching what the vendored callers use:
-    ``encode`` (list or single string; ``convert_to_numpy`` /
-    ``convert_to_tensor`` / ``normalize_embeddings`` honoured),
-    ``get_sentence_embedding_dimension``, ``get_config_dict``.
+    Requests go through :class:`common.llm.Embedding`, which brings the repo's
+    retry kernel, the global concurrency gate, request chunking (item + token
+    budgets) and TokenTracker reporting — so unlike the local embedders, an API
+    embedder's cost IS visible in the token accounting.
     """
 
     def __init__(self, model_name: str = "text-embedding-3-small"):
@@ -122,8 +118,6 @@ class APIEmbedder:
         self.model_name = model_name
         self._embedding = Embedding(model=model_name)
         self._dim: Optional[int] = _API_EMBEDDING_DIMS.get(model_name)
-
-    # -- sentence-transformers surface ------------------------------------
 
     def get_sentence_embedding_dimension(self) -> int:
         """Native output width. Probes with a one-token request only for models
@@ -141,123 +135,80 @@ class APIEmbedder:
         self,
         sentences,
         *,
-        convert_to_numpy: bool = True,
-        convert_to_tensor: bool = False,
         normalize_embeddings: bool = False,
         **_ignored: Any,
     ):
-        """Embed one string or a list of strings.
+        """Embed one string or a list of strings, returning a numpy array.
 
-        Mirrors sentence-transformers' return convention: a single string in
+        Mirrors sentence-transformers' shape convention: a single string in
         gives a 1-D vector, a list gives a 2-D (N, D) array. Keyword arguments
         the API has no equivalent for (``show_progress_bar``, ``batch_size``,
-        ``prompt_name``, ``device``, ...) are accepted and ignored — the caller
-        is vendored code we cannot change.
+        ``prompt_name``, ``convert_to_numpy``, ``device``, ...) are accepted and
+        ignored — the caller is vendored code we cannot change.
+
+        `normalize_embeddings` is honoured but is normally a no-op: OpenAI's
+        `text-embedding-3-*` already return unit-length vectors.
         """
+        import numpy as np
+
         single = isinstance(sentences, str)
         texts: List[str] = [sentences] if single else [str(s) for s in sentences]
         if not texts:
-            return _as_array([], convert_to_numpy, convert_to_tensor)
+            return np.zeros((0, 0), dtype="float32")
 
-        vectors = self._embedding(texts)
+        out = np.asarray(self._embedding(texts), dtype="float32")
         if normalize_embeddings:
-            # OpenAI already returns unit-length vectors, so this is normally a
-            # no-op; applied anyway because the caller asked and it is cheap.
-            vectors = [_l2_normalize(v) for v in vectors]
-
-        out = _as_array(vectors, convert_to_numpy, convert_to_tensor)
+            norms = np.linalg.norm(out, axis=1, keepdims=True)
+            out = np.divide(out, norms, out=np.zeros_like(out), where=norms != 0)
         return out[0] if single else out
 
 
-def _l2_normalize(vec: Sequence[float]) -> List[float]:
-    norm = sum(x * x for x in vec) ** 0.5
-    return [x / norm for x in vec] if norm else list(vec)
-
-
-def _as_array(vectors, convert_to_numpy: bool, convert_to_tensor: bool):
-    """Render a list of vectors as the array type the caller asked for.
-
-    `convert_to_tensor` wins over `convert_to_numpy`, matching
-    sentence-transformers; falling back to numpy if torch is unavailable. A
-    numpy array is the floor either way — the vendored callers index it, vstack
-    it and feed it to `cosine_similarity`, none of which work on a plain list.
-    """
-    if convert_to_tensor:
-        try:
-            import torch
-
-            return torch.tensor(vectors)
-        except Exception:
-            pass
-    import numpy as np
-
-    return np.asarray(vectors, dtype="float32")
-
-
 # --------------------------------------------------------------------------
-# The embedder factory patch
+# The embedder factory
 # --------------------------------------------------------------------------
 #
-# WHY A MONKEYPATCH. The clean shape is a factory whose model is injected — see
-# the zep baseline, which does exactly that because Graphiti accepts an
-# injected EmbedderClient. The other three have no injection point:
+# A fresh MemoClass is built PER USER, so without memoization the weights (up to
+# ~0.6B for simplemem's Qwen3) reload for every user in the split.
+#
+# Three baselines cannot be handed an embedder directly — their vendored code
+# constructs one itself, with no injection point:
 #
 #   amem      SimpleEmbeddingRetriever.__init__ does `SentenceTransformer(model_name)`
-#   memoryos  utils.get_embedding() does `SentenceTransformer(model_name)` behind a
-#             process-global cache, with the model name a DEFAULT ARGUMENT
 #   simplemem EmbeddingModel.__init__ dispatches on `model_name.startswith("qwen3")`
 #             and constructs the SentenceTransformer itself
+#   lightmem  TextEmbedderHuggingface.__init__ does
+#             `SentenceTransformer(config.model, **config.model_kwargs)`
 #
-# Editing any of those breaks the `src/` byte-identity the READMEs assert, so
-# patching the constructor they all funnel through is the remaining lever. It
-# does two jobs at once:
+# For all three the CONFIGURED name is also the name the vendored code requests,
+# so patching that shared constructor (`install_embedder_factory`) is enough:
+# the factory dispatches on the requested name.
 #
-#   caching   a fresh MemoClass is built PER USER, so without memoization the
-#             weights (up to ~0.6B for simplemem's Qwen3) reload for every user
-#             in the split;
-#   dispatch  an API embedding model resolves to an APIEmbedder instead.
+# memoryos is the exception — its `get_embedding()` carries the model name as a
+# DEFAULT ARGUMENT, so the requested name is never the configured one. Rather
+# than give this module a process-wide override mechanism for one baseline,
+# memoryos calls `get_embedder()` directly and seeds its own vendored model
+# cache (see memoryos/memo.py). It needs no constructor patch at all.
+#
+# zep needs none of this: Graphiti accepts an injected EmbedderClient.
 
 _model_cache: Dict[Any, Any] = {}
 _cache_lock = threading.Lock()
 _factory_installed = False
 
-# Set by set_embedder_policy(); read by the patched factory at CONSTRUCTION
-# time (not import time), so memo.py can install the patch early and decide the
-# model later from per-instance config.
-_policy: Dict[str, Any] = {"model": None, "device": None}
-
-
-def set_embedder_policy(model: Optional[str] = None, device: Optional[str] = None) -> None:
-    """Declare what the patched factory should hand back.
-
-    `model=None` honours whatever name the vendored code asks for (pure
-    memoization — the pre-#26 behaviour). A non-None `model` OVERRIDES the
-    requested name, which is what memoryos needs: its `get_embedding()` carries
-    `all-MiniLM-L6-v2` as a default argument, so the requested name is never
-    the configured one.
-
-    Process-global by design (one embedder shared across every user in the
-    run). Changing it mid-process would leave already-built indexes at the old
-    model — call it once, before the first system is constructed.
-    """
-    _policy["model"] = model
-    _policy["device"] = device
-
 
 def get_embedder(model_name: str, device: Optional[str] = None, *args: Any, **kwargs: Any):
-    """The cached, dispatching embedder factory.
+    """Cached, dispatching embedder factory — the one entry point.
 
     API model name → a shared :class:`APIEmbedder`. Anything else → a real
     SentenceTransformer, constructed once per (name, device) with the caller's
-    remaining constructor arguments forwarded intact — simplemem's Qwen3 path
-    passes ``trust_remote_code`` / ``model_kwargs`` / ``tokenizer_kwargs`` and
-    lightmem passes ``model_kwargs``, and dropping those would silently change
-    how the model loads. A failed construction is NOT cached, so a transient
-    failure can be retried.
+    remaining constructor arguments forwarded intact (simplemem's Qwen3 path
+    passes ``trust_remote_code`` / ``model_kwargs`` / ``tokenizer_kwargs``;
+    dropping those would silently change how the model loads).
 
-    The cache key deliberately ignores those extra arguments (as the
-    per-baseline caches this replaces did): two callers asking for the same
-    model on the same device get the same object, which is the whole point.
+    The cache key deliberately ignores those extra arguments: two callers asking
+    for the same model on the same device get the same object, which is the
+    point. A failed construction is NOT cached, so a transient failure can be
+    retried.
     """
     key = (model_name, device)
     with _cache_lock:
@@ -269,7 +220,14 @@ def get_embedder(model_name: str, device: Optional[str] = None, *args: Any, **kw
         # Local-loading arguments have no meaning for an API embedder.
         model = APIEmbedder(model_name)
     else:
-        model = _real_sentence_transformer()(model_name, *args, device=device, **kwargs)
+        import sentence_transformers as _st
+
+        # Resolve the GENUINE class: `install_embedder_factory` may have already
+        # replaced the attribute with the factory that called us, and building
+        # through that would recurse forever.
+        real = getattr(_st.SentenceTransformer, "_real_sentence_transformer",
+                       _st.SentenceTransformer)
+        model = real(model_name, *args, device=device, **kwargs)
 
     with _cache_lock:
         # Another thread may have won the race; keep whichever landed first so
@@ -277,30 +235,13 @@ def get_embedder(model_name: str, device: Optional[str] = None, *args: Any, **kw
         return _model_cache.setdefault(key, model)
 
 
-_real_ctor: Any = None
-
-
-def _real_sentence_transformer():
-    """The genuine SentenceTransformer class, even after the patch."""
-    global _real_ctor
-    if _real_ctor is None:
-        import sentence_transformers as _st
-
-        _real_ctor = getattr(_st.SentenceTransformer, "_real_sentence_transformer",
-                             _st.SentenceTransformer)
-    return _real_ctor
-
-
 def install_embedder_factory() -> None:
-    """Patch ``sentence_transformers.SentenceTransformer`` with the factory above.
+    """Route ``sentence_transformers.SentenceTransformer(...)`` through
+    :func:`get_embedder`.
 
     Idempotent. **Must run before the vendored package is imported** — the
     vendored modules do `from sentence_transformers import SentenceTransformer`
     at their own import time, which binds the name once and for all.
-
-    The device the vendored code passes is overridden by the policy's when one
-    is set, since the policy is the only place that knows whether this box has a
-    GPU. Every OTHER constructor argument is forwarded untouched.
     """
     global _factory_installed
     if _factory_installed:
@@ -315,14 +256,13 @@ def install_embedder_factory() -> None:
             requested, rest = args[0], args[1:]
         else:
             requested, rest = kwargs.pop("model_name_or_path", None), ()
-        caller_device = kwargs.pop("device", None)
-        device = _policy["device"] if _policy["device"] is not None else caller_device
-        model_name = _policy["model"] or requested
-        if model_name is None:            # nothing to key on — build it raw
+        if requested is None:          # nothing to key on — build it raw
             return real(*args, **kwargs)
-        return get_embedder(str(model_name), device, *rest, **kwargs)
+        device = kwargs.pop("device", None)
+        return get_embedder(str(requested), device, *rest, **kwargs)
 
-    # Keep the original reachable for anyone who needs the true class.
+    # Keep the original reachable — get_embedder reads it back to avoid
+    # recursing through this factory.
     _factory._real_sentence_transformer = real  # type: ignore[attr-defined]
     _st.SentenceTransformer = _factory
     _factory_installed = True
@@ -332,16 +272,17 @@ def install_embedder_factory() -> None:
 # OpenAI sampling-param normalisation
 # --------------------------------------------------------------------------
 #
-# amem, lightmem and simplemem hardcode sampling params in their vendored
-# clients:
+# Five baselines hardcode sampling params their vendored clients always send:
 #   amem       temperature=0.7 AND max_tokens=1000  (OpenAIController)
 #   lightmem   temperature + max_tokens from its manager config
 #   simplemem  temperature=0.1..0.3                 (LLMClient)
+#   memoryos   temperature + max_tokens             (utils.chat_completion)
+#   zep        max_tokens (graphiti already drops temperature for gpt-5)
 #
-# The gpt-5 family rejects all of them (temperature must be the default; the
-# cap is `max_completion_tokens`), so "point every baseline at one GPT model"
-# fails on 3/7 no matter how many config keys exist. Normalising at the SDK
-# boundary fixes that without touching src/.
+# The gpt-5 family rejects all of them (temperature must be the default; the cap
+# is `max_completion_tokens`), so "point every baseline at one GPT model" fails
+# on 5/7 no matter how many config keys exist. Normalising at the SDK boundary
+# fixes that without touching src/.
 
 # Mirrors common/llm.py::_REASONING_MODEL_PREFIXES — keep the two in step.
 _RESTRICTED_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")

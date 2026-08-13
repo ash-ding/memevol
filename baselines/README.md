@@ -331,15 +331,22 @@ no vectors) and zep's **bge-reranker-v2-m3** (a cross-encoder scoring
 vendored code already passes through, so every README's `diff -r` byte-identity
 check still passes:
 
-- **the embedder factory** patches the `sentence_transformers` constructor.
-  amem, memoryos and simplemem build their embedder internally with no
-  injection point; the factory memoizes local weights across users (a fresh
-  MemoClass is built per user) and returns an `.encode()`-compatible API
-  adapter for a `text-embedding-*` name. memoryos needs the *override* form —
-  its `get_embedding()` carries the model name as a default argument, so the
-  requested name is never the configured one. zep needs none of this (Graphiti
-  accepts an injected `EmbedderClient`) and lightmem needs none either (its
-  vendored factory already ships `TextEmbedderOpenAI`).
+- **`get_embedder`**, one cached factory returning either a real
+  sentence-transformer or an `.encode()`-compatible API adapter. It memoizes
+  across users, which matters because a fresh MemoClass is built per user (up
+  to ~0.6B of weights would otherwise reload per conversation). How each
+  baseline reaches it differs:
+  - **amem, simplemem, lightmem** build their embedder internally with no
+    injection point, so `install_embedder_factory()` patches the
+    `sentence_transformers` constructor they all funnel through. The
+    *configured* name is also the name they request, so the factory just
+    dispatches on it.
+  - **memoryos** is the exception: its `get_embedding()` carries the model name
+    as a default argument, so the requested name is never the configured one.
+    It calls `get_embedder()` directly and seeds its own vendored model cache
+    under the requested name — one dict entry, no global constructor patch.
+  - **zep** needs none of it: Graphiti accepts an injected `EmbedderClient`.
+    lightmem's API arm likewise uses its own vendored `TextEmbedderOpenAI`.
 - **the OpenAI param normalisation** patches `chat.completions.create` to drop
   `temperature`/`top_p`/the penalties and rename `max_tokens` →
   `max_completion_tokens` for reasoning models. **Five of the seven baselines

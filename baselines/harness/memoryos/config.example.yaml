@@ -33,12 +33,12 @@ memoryos_embedding_model: all-MiniLM-L6-v2   # THE PAPER NAMES NO EMBEDDER â€” Â
                                   # details cover hardware and the STM/MTM/LPM capacities but never
                                   # state an embedding model. This is therefore the VENDORED CODE's
                                   # value (utils.get_embedding's default argument), which is the only
-                                  # evidence available. 384-dim, local. The key is applied by
-                                  # overriding the shared embedder factory, since that default
-                                  # argument means the requested name is never the configured one.
-                                  # A `text-embedding-*` name switches to the OpenAI API embedder;
-                                  # no dimension knob is needed (MemoryOS sizes its FAISS indexes
-                                  # from the embedding array itself).
+                                  # evidence available. 384-dim, local. Because that default argument
+                                  # means the requested name is never the configured one, the key is
+                                  # applied by seeding MemoryOS's own model cache under the requested
+                                  # name (memo.py::_seed_embedder). A `text-embedding-*` name switches
+                                  # to the OpenAI API embedder; no dimension knob is needed (MemoryOS
+                                  # sizes its FAISS indexes from the embedding array itself).
 base_url: null                 # OpenAI-compatible base URL for MemoryOS's internal LLM (null = OpenAI default)
 short_term_capacity: 7         # STM dialogue-page queue length. Paper: 7 (vendored default is 10)
 mid_term_capacity: 200         # max MTM segments before LFU eviction. PAPER: 200. The vendored

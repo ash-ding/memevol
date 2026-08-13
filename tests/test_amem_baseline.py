@@ -139,11 +139,11 @@ def test_retrieve_empty_store_returns_empty_dict():
 
 # ---- configurable embedder (issue #26) ----
 
-def test_embedder_key_reaches_the_system_and_the_shared_factory():
-    """A-mem's embedder IS a constructor parameter, so the config key alone
-    covers the local arm; the policy additionally covers the API arm, where the
-    name has to reach the patched SentenceTransformer factory."""
-    from baselines.harness import model_config as mc
+def test_embedder_key_reaches_the_system():
+    """A-mem's embedder IS a constructor parameter (AgenticMemorySystem's
+    `model_name`), so the config key needs no extra plumbing: the name flows to
+    SimpleEmbeddingRetriever, which calls the patched SentenceTransformer
+    factory, which dispatches local-vs-API on that same name."""
     from baselines.harness.amem import memo as amem_memo
 
     built = {}
@@ -160,7 +160,6 @@ def test_embedder_key_reaches_the_system_and_the_shared_factory():
                                        "amem_embedding_model": "text-embedding-3-small"})
         m._ensure_system()
         assert built == {"model_name": "text-embedding-3-small", "llm_model": "gpt-5-mini"}
-        assert mc._policy["model"] == "text-embedding-3-small"
 
         # absent key keeps A-mem's published embedder
         built.clear()
@@ -169,7 +168,6 @@ def test_embedder_key_reaches_the_system_and_the_shared_factory():
         assert built["model_name"] == "all-MiniLM-L6-v2"
     finally:
         amem_memo.AgenticMemorySystem, amem_memo.LLMController = real_system, real_llm
-        mc.set_embedder_policy(None, None)
 
 
 # NOTE: the `hf_datasets_active()` tests that used to live here were deleted with

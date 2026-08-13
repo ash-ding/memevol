@@ -33,7 +33,7 @@ from typing import Dict, List, Tuple
 from common.memo_class import MemoClass
 from baselines.harness.hipporag2.memo import app_log_to_passage
 from baselines.harness.model_config import (
-    install_embedder_factory, install_openai_param_normalisation, set_embedder_policy,
+    install_embedder_factory, install_openai_param_normalisation,
 )
 
 # Both patches MUST precede the vendored import (see model_config's docstring):
@@ -106,16 +106,13 @@ class AMemMemo(MemoClass):
             return
         model = self.config.get("amem_llm_model", "gpt-4o-mini")
         # A-mem's embedder IS a constructor parameter (AgenticMemorySystem's
-        # `model_name`), so the config key alone covers the local arm. The
-        # policy below additionally covers the API arm: the name reaches
-        # SimpleEmbeddingRetriever, which calls the patched SentenceTransformer
-        # factory, which returns an APIEmbedder for a `text-embedding-*` name.
-        # Process-global and identical for every user, so re-setting it per
-        # instance is a no-op — and it also shares ONE embedder across users
-        # (a fresh MemoClass is built per user; without the cache the weights
-        # would reload for every conversation in the split).
+        # `model_name`), so the config key needs no special plumbing: the name
+        # flows to SimpleEmbeddingRetriever, which calls the patched
+        # SentenceTransformer factory installed above. That factory both shares
+        # ONE embedder across users (a fresh MemoClass is built per user, so
+        # otherwise the weights reload per conversation) and returns an
+        # APIEmbedder when the name is a `text-embedding-*` model.
         embedder = self.config.get("amem_embedding_model") or "all-MiniLM-L6-v2"
-        set_embedder_policy(embedder)
         # Mirrors test_advanced.py::advancedMemAgent.__init__ (openai backend):
         # one AgenticMemorySystem + a separate retriever_llm, same model.
         self._system = AgenticMemorySystem(

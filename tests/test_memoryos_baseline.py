@@ -111,32 +111,52 @@ def test_run_config_keys_match_constructor():
     assert "embedding_model_name" not in params, "vendored build unexpectedly gained this knob"
 
 
-def test_embedder_key_is_applied_by_overriding_the_shared_factory():
+def test_embedder_key_is_applied_by_seeding_the_vendored_model_cache():
     """MemoryOS has NO embedder constructor argument (asserted just above): its
     vendored `get_embedding()` carries `all-MiniLM-L6-v2` as a DEFAULT ARGUMENT,
     so the name the vendored code requests is never the configured one. The key
-    is therefore applied by OVERRIDING the shared embedder factory."""
-    from baselines.harness import model_config as mc
+    is applied by seeding MemoryOS's OWN model cache under that requested name,
+    which needs no global constructor patch — one dict entry instead."""
+    from baselines.harness.model_config import APIEmbedder
     from baselines.harness.memoryos import memo as memoryos_memo
     from baselines.harness.memoryos.run import REQUIRED_KEYS
 
     assert "memoryos_embedding_model" in REQUIRED_KEYS
 
-    real = memoryos_memo.Memoryos
+    cache = memoryos_memo._mos_utils._model_cache
+    key = memoryos_memo._VENDORED_EMBEDDER_KEY
+    real, saved = memoryos_memo.Memoryos, cache.pop(key, None)
     memoryos_memo.Memoryos = lambda **kw: object()
     try:
         m = memoryos_memo.MemoryOSMemo(
             config={"memoryos_embedding_model": "text-embedding-3-small"})
         m._ensure_system()
-        assert mc._policy["model"] == "text-embedding-3-small"
-
-        m2 = memoryos_memo.MemoryOSMemo(config={})
-        m2._memo = None
-        m2._ensure_system()
-        assert mc._policy["model"] == "all-MiniLM-L6-v2"   # the paper's embedder
+        # Seeded under the name the VENDORED code asks for, not the configured one.
+        assert isinstance(cache[key], APIEmbedder)
+        assert cache[key].model_name == "text-embedding-3-small"
     finally:
         memoryos_memo.Memoryos = real
-        mc.set_embedder_policy(None, None)
+        cache.pop(key, None)
+        if saved is not None:
+            cache[key] = saved
+
+
+def test_seeding_is_idempotent_so_users_share_one_embedder():
+    """`_ensure_system` runs per user; the seed must not rebuild the embedder."""
+    from baselines.harness.memoryos import memo as memoryos_memo
+
+    cache = memoryos_memo._mos_utils._model_cache
+    key = memoryos_memo._VENDORED_EMBEDDER_KEY
+    saved = cache.pop(key, None)
+    try:
+        memoryos_memo._seed_embedder("text-embedding-3-small")
+        first = cache[key]
+        memoryos_memo._seed_embedder("text-embedding-3-small")
+        assert cache[key] is first
+    finally:
+        cache.pop(key, None)
+        if saved is not None:
+            cache[key] = saved
 
 
 def test_memo_implements_the_three_hook_contract():

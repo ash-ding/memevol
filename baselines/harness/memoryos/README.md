@@ -93,9 +93,11 @@ possible:
 - **the embedder.** MemoryOS has no embedder constructor argument in this
   build: `utils.get_embedding` carries `all-MiniLM-L6-v2` as a DEFAULT
   ARGUMENT, behind a process-global cache. So the name the vendored code
-  requests is never the configured one, and the key is applied by **overriding**
-  the shared SentenceTransformer factory rather than dispatching on the
-  requested name (the way amem and simplemem work). No dimension knob is needed
+  requests is never the configured one, and dispatching on it (the way amem and
+  simplemem work) cannot help. Instead `memo.py::_seed_embedder` pre-fills that
+  cache under the requested name with whatever `get_embedder()` returns — so
+  MemoryOS is the one baseline that needs **no** global constructor patch, just
+  one dict entry. No dimension knob is needed
   — MemoryOS sizes its FAISS indexes from the embedding array itself
   (`dim = embeddings_np.shape[1]`), so a 1536-dim API embedder drops straight
   in. A `memory_cache: true` snapshot built at 384-dim is still invalid.
