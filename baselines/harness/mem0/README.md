@@ -37,6 +37,30 @@ longmemeval: one message per message, roles preserved. dynamicmem: one message
 per log entry using hipporag2's `app_log_to_passage` text, so passage content is
 identical across baselines.
 
+## Model configuration (two arms)
+
+Every model this baseline touches is a config parameter, so it runs in two arms:
+
+| | faithful arm (`config.example.yaml`) | unified arm (`config.unified.yaml`) |
+|---|---|---|
+| internal LLM (`mem0_llm_model`) | `gpt-4o-mini` — Mem0's own default | `gpt-5-mini` |
+| embedder (`embedding_model`) | `text-embedding-3-small`, API, 1536-dim | **unchanged** |
+
+Mem0 is one of only two baselines (with hipporag2) already on an API embedder,
+so its embedder does not change between arms and no adapter is involved. **The
+faithful arm is the default**, and `config.paper.yaml` additionally pins the
+paper's gpt-4o-mini answerer. The unified arm puts all seven baselines on one
+LLM and one embedder so the comparison against the main method is like-for-like
+— a deliberate deviation from the paper, whose numbers must not be quoted as
+Mem0's published result.
+
+Mem0's OpenAI provider sends `temperature` and `max_tokens`, which the gpt-5
+family rejects; the shim in [`../model_config.py`](../model_config.py) drops the
+rejected params and renames `max_tokens` → `max_completion_tokens` at the
+OpenAI-SDK boundary. `mem0ai` is a pinned PyPI package rather than vendored
+source, so there is no `src/` byte-identity claim to preserve here — but the
+same wrap-don't-rewrite technique is used, so the pin stays honest.
+
 ## Dependencies
 
 `mem0ai` is PINNED in `pyproject.toml` rather than vendored: it is a maintained

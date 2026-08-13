@@ -32,6 +32,7 @@ REQUIRED_KEYS = frozenset({
     "stages",
     "memory_cache",
     "amem_llm_model",
+    "amem_embedding_model",
     "retrieve_k",
     "llm_model",
     "judge_model",
@@ -50,7 +51,9 @@ def main():
                                 REQUIRED_KEYS, context="amem config")
 
     memo_config = dict(
-        amem_llm_model=cfg["amem_llm_model"], retrieve_k=cfg["retrieve_k"],
+        amem_llm_model=cfg["amem_llm_model"],
+        amem_embedding_model=cfg["amem_embedding_model"],
+        retrieve_k=cfg["retrieve_k"],
     )
     out_dir = Path(__file__).resolve().parent / "results" / cfg["dataset"] / cfg["split"]
     result = asyncio.run(run_baseline(

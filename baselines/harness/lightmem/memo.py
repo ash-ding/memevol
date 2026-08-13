@@ -41,6 +41,10 @@ from typing import Dict, List
 
 from common.memo_class import MemoClass
 from baselines.harness.hipporag2.memo import app_log_to_passage
+from baselines.harness.model_config import (
+    install_embedder_factory, install_openai_param_normalisation,
+    is_api_embedding_model, resolve_device,
+)
 
 # LightMem's absolute imports (`from lightmem.memory...`) must resolve to the
 # byte-identical vendored copy under src/, not any pip-installed lightmem.
@@ -48,58 +52,25 @@ _SRC = Path(__file__).resolve().parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-_st_model_cache: dict = {}
-_embedding_cache_installed = False
-
-
-def install_embedding_cache() -> None:
-    """Monkeypatch ``sentence_transformers.SentenceTransformer`` with a memoizing
-    factory so the (heavy) embedding weights load once per process and are shared
-    across every per-user ``LightMemory``. Idempotent. Leaves LightMem's vendored
-    ``TextEmbedderHuggingface`` untouched — it just receives a cached model object
-    from the patched constructor.
-
-    A fresh MemoClass is built per user, so without this the weights reload for
-    every user in the split. Keyed on the resolved model path (first positional arg
-    or ``model_name_or_path`` kwarg), so different embedding models get distinct
-    cache slots. If construction fails it is NOT cached (a transient failure can be
-    retried).
-
-    WHY A MONKEYPATCH. The clean shape is a cached factory whose model is injected
-    (see the zep baseline, which can do that because Graphiti accepts an injected
-    embedder). LightMem has no injection point: ``TextEmbedderHuggingface.__init__``
-    does ``self.model = SentenceTransformer(config.model, **config.model_kwargs)``
-    (``src/lightmem/factory/text_embedder/huggingface.py``), with no parameter to
-    pass a pre-built model through. Editing that file would break the ``src/``
-    byte-identity the README's ``diff -r`` asserts, so memoizing the constructor is
-    the only remaining lever. Issue #26 adds a configurable-model layer with an
-    embedder injected from here; once that lands this becomes a plain cached
-    factory and the patch disappears.
-    """
-    global _embedding_cache_installed
-    if _embedding_cache_installed:
-        return
-    import sentence_transformers as _st
-
-    _real_ctor = _st.SentenceTransformer
-
-    def _cached(*args, **kwargs):
-        key = args[0] if args else kwargs.get("model_name_or_path")
-        cached = _st_model_cache.get(key)
-        if cached is not None:
-            return cached
-        model = _real_ctor(*args, **kwargs)
-        if key is not None:
-            _st_model_cache[key] = model
-        return model
-
-    # Preserve the original on the wrapper for anyone who needs the true class.
-    _cached._real_sentence_transformer = _real_ctor  # type: ignore[attr-defined]
-    _st.SentenceTransformer = _cached
-    _embedding_cache_installed = True
-
-
-install_embedding_cache()   # must precede the first LightMemory construction
+# The shared embedder factory (baselines/harness/model_config.py) memoizes the
+# heavy weights across per-user systems: a fresh MemoClass is built per user, and
+# ``TextEmbedderHuggingface.__init__`` does
+# ``self.model = SentenceTransformer(config.model, **config.model_kwargs)`` with
+# no way to pass a pre-built model through, so patching that constructor is the
+# only lever that leaves ``src/`` byte-identical.
+#
+# LightMem is the one baseline that does NOT need the factory's API-embedder
+# dispatch: its vendored factory already ships a real OpenAI arm
+# (``src/lightmem/factory/text_embedder/openai.py::TextEmbedderOpenAI``), so the
+# API arm is a `text_embedder.model_name` flip in _build_config below — a genuine
+# vendored code path rather than an adapter. The patch stays for the HF arm.
+#
+# The param-normalisation patch is needed because LightMem's memory manager sends
+# temperature + max_tokens on every call, which the gpt-5 family rejects.
+#
+# Both must precede the vendored import (they bind their names at import time).
+install_embedder_factory()
+install_openai_param_normalisation()
 
 from lightmem.memory.lightmem import LightMemory  # noqa: E402  (vendored, byte-identical)
 
@@ -218,6 +189,10 @@ class LightMemMemo(MemoClass):
             raise ValueError("lightmem: topic_segment requires pre_compress "
                              "(they share the LLMlingua-2 model).")
         save_dir = str(OUTPUTS_DIR / self._instance_id)
+        # Both device knobs used to default to a hardcoded "cuda" and crashed
+        # outright on a CPU-only box. They now default to null → auto-detect.
+        llmlingua_device = resolve_device(cfg["llmlingua_device"])
+        embedding_device = resolve_device(cfg["embedding_device"])
         config: Dict = {
             "pre_compress": cfg["pre_compress"],
             "pre_compressor": ({
@@ -225,7 +200,7 @@ class LightMemMemo(MemoClass):
                 "configs": {
                     "llmlingua_config": {
                         "model_name": cfg["llmlingua_model"],
-                        "device_map": cfg["llmlingua_device"],
+                        "device_map": llmlingua_device,
                         "use_llmlingua2": True,
                     },
                     "compress_config": {
@@ -252,14 +227,32 @@ class LightMemMemo(MemoClass):
             },
             "extract_threshold": cfg["extract_threshold"],
             "index_strategy": "embedding",
-            "text_embedder": {
+            # Embedder arm, chosen by the SHAPE of `embedding_model`:
+            #   text-embedding-* → LightMem's own vendored TextEmbedderOpenAI
+            #   anything else    → its TextEmbedderHuggingface (paper-faithful)
+            # Both are real vendored code paths (TextEmbedderFactory dispatches
+            # on `model_name`), so the API arm needs no adapter here — unlike
+            # amem/memoryos/simplemem, which have no OpenAI embedder at all.
+            #
+            # `embedding_dims` MUST move with the embedder: it sizes the Qdrant
+            # collection below AND is sent as the API `dimensions` parameter, so
+            # a mismatch is a hard failure rather than a silent degradation.
+            "text_embedder": ({
+                "model_name": "openai",
+                "configs": {
+                    "model": cfg["embedding_model"],
+                    "embedding_dims": cfg["embedding_dims"],
+                    "api_key": os.environ.get("OPENAI_API_KEY"),
+                    "openai_base_url": cfg["base_url"] or None,
+                },
+            } if is_api_embedding_model(cfg["embedding_model"]) else {
                 "model_name": "huggingface",
                 "configs": {
                     "model": cfg["embedding_model"],
                     "embedding_dims": cfg["embedding_dims"],
-                    "model_kwargs": {"device": cfg["embedding_device"]},
+                    "model_kwargs": {"device": embedding_device},
                 },
-            },
+            }),
             "retrieve_strategy": "embedding",
             "embedding_retriever": {
                 "model_name": "qdrant",

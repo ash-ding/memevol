@@ -32,10 +32,12 @@ REQUIRED_KEYS = frozenset({
     "stages",
     "memory_cache",
     "embedding",
+    "hipporag2_llm_model",
     "llm_model",
     "judge_model",
     "embedding_batch_size",
     "embedding_dtype",
+    "top_k",
     "max_sample_concurrent",
 })
 
@@ -51,9 +53,10 @@ def main():
                                 REQUIRED_KEYS, context="hipporag2 config")
 
     memo_config = dict(
-        embedding=cfg["embedding"], llm_model=cfg["llm_model"],
+        embedding=cfg["embedding"],
+        hipporag2_llm_model=cfg["hipporag2_llm_model"], llm_model=cfg["llm_model"],
         judge_model=cfg["judge_model"], embedding_batch_size=cfg["embedding_batch_size"],
-        embedding_dtype=cfg["embedding_dtype"],
+        embedding_dtype=cfg["embedding_dtype"], top_k=cfg["top_k"],
     )
     out_dir = Path(__file__).resolve().parent / "results" / cfg["dataset"] / cfg["split"]
     result = asyncio.run(run_baseline(

@@ -32,6 +32,7 @@ REQUIRED_KEYS = frozenset({
     "stages",
     "memory_cache",
     "memoryos_llm_model",
+    "memoryos_embedding_model",
     "base_url",
     "short_term_capacity",
     "mid_term_capacity",
@@ -56,7 +57,9 @@ def main():
                                 REQUIRED_KEYS, context="memoryos config")
 
     memo_config = dict(
-        memoryos_llm_model=cfg["memoryos_llm_model"], base_url=cfg["base_url"],
+        memoryos_llm_model=cfg["memoryos_llm_model"],
+        memoryos_embedding_model=cfg["memoryos_embedding_model"],
+        base_url=cfg["base_url"],
         short_term_capacity=cfg["short_term_capacity"],
         mid_term_capacity=cfg["mid_term_capacity"],
         mid_term_heat_threshold=cfg["mid_term_heat_threshold"],

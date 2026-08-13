@@ -56,6 +56,48 @@ def test_hipporag_memo_retrieve_returns_passages(monkeypatch=None):
     assert "passages" in out and out["passages"]
 
 
+def test_internal_llm_key_is_separate_from_the_shared_qa_model():
+    """hipporag2 used to build its graph with the frame's `llm_model` — the
+    SHARED QA-agent model — which is why it was the only baseline building
+    memory with gpt-5-mini while the other six used gpt-4o-mini. It now has its
+    own key, falling back to the old behaviour when null."""
+    from baselines.harness.hipporag2.memo import HippoRAGMemo
+
+    seen = {}
+
+    class _FakeBaseConfig:
+        def __init__(self, **kw): seen.update(kw)
+
+    def _build(cfg):
+        seen.clear()
+        memo = HippoRAGMemo(config=cfg)
+        # Stand in for the `from hipporag import ...` block without needing the
+        # (externally-installed) package.
+        import types
+        fake = types.ModuleType("hipporag")
+        fake_utils = types.ModuleType("hipporag.utils")
+        fake_cfg = types.ModuleType("hipporag.utils.config_utils")
+        fake_cfg.BaseConfig = _FakeBaseConfig
+        fake.HippoRAG = lambda global_config=None: object()
+        sys.modules.update({"hipporag": fake, "hipporag.utils": fake_utils,
+                            "hipporag.utils.config_utils": fake_cfg})
+        try:
+            memo._ensure_hippo()
+        finally:
+            for m in ("hipporag", "hipporag.utils", "hipporag.utils.config_utils"):
+                sys.modules.pop(m, None)
+        return dict(seen)
+
+    base = dict(embedding="text-embedding-3-small", llm_model="gpt-5-mini",
+                embedding_batch_size=None, embedding_dtype=None)
+
+    # explicit key wins
+    assert _build({**base, "hipporag2_llm_model": "gpt-4o-mini"})["llm_name"] == "gpt-4o-mini"
+    # null / absent falls back to the frame model (historical behaviour)
+    assert _build({**base, "hipporag2_llm_model": None})["llm_name"] == "gpt-5-mini"
+    assert _build(base)["llm_name"] == "gpt-5-mini"
+
+
 # -------------------- runner --------------------
 
 def main():

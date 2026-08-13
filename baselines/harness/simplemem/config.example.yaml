@@ -19,12 +19,28 @@ sampling_seed: 42              # seeds the sampled subset (both paths; a no-op a
 memory_cache: true             # cross-stage Phase-1 memory reuse (gauntlet only); --no-memory-cache to disable
 
 # --- SimpleMem internal knobs (its own defaults @ db80b6a) -------------------
-simplemem_llm_model: gpt-4.1-mini   # SimpleMem's compression + retrieval-planning LLM. 4-series ONLY —
-                                    # its LLMClient sends temperature=0.1..0.3, which the gpt-5 family rejects.
-embedding_model: Qwen/Qwen3-Embedding-0.6B   # faithful local sentence-transformer; all-MiniLM-L6-v2 = light fallback
+simplemem_llm_model: gpt-4.1-mini   # PAPER §3.1/§3.3: GPT-4.1-mini is the backbone the headline LoCoMo and
+                                    # LongMemEval-S tables and the full ablation are run on (the paper also
+                                    # reports GPT-4o, Qwen-Plus, Qwen2.5-1.5B/3B, Qwen3-1.7B/8B). Its
+                                    # LLMClient sends temperature=0.1..0.3, which the gpt-5 family rejects —
+                                    # baselines/harness/model_config.py normalises that away at the
+                                    # OpenAI-SDK boundary, so a gpt-5 model IS runnable here.
+embedding_model: Qwen/Qwen3-Embedding-0.6B   # PAPER §3.1: "Qwen3-embedding-0.6b (1024 dimensions) for dense
+                                    # semantic embeddings". Local sentence-transformer; all-MiniLM-L6-v2 is a
+                                    # light fallback. A `text-embedding-*` name switches to the OpenAI API
+                                    # embedder. No dimension knob: SimpleMem sizes its LanceDB table from the
+                                    # embedder itself.
 base_url: null                 # OpenAI-compatible base URL for SimpleMem's internal LLM (null = OpenAI default)
-window_size: 40                # dialogues per compression window (SimpleMem WINDOW_SIZE; tuned for LoCoMo)
-overlap_size: 2                # window overlap for context continuity (SimpleMem OVERLAP_SIZE)
+window_size: 20                # PAPER §3.1: "we use a sliding window of size W = 20". The VENDORED code
+                               # ships WINDOW_SIZE=40; the paper's value wins here, matching how memoryos
+                               # prefers its paper's values over the shipped defaults. Numbers collected at
+                               # 40 are NOT comparable to numbers collected at 20.
+overlap_size: 2                # window overlap for context continuity (SimpleMem OVERLAP_SIZE; the paper
+                               # states the window size but not the overlap, so this is the code's value)
+# The next three are per-view CAPS in the vendored code. The paper does not fix a top-k: §3.1 says the
+# retrieval depth is "dynamically adjusted based on estimated query complexity, ranging from k_min = 3 to
+# k_max = 20 for complex reasoning queries" — that adaptive planner runs inside the vendored code, under
+# these caps. Left at the code's values.
 semantic_top_k: 25             # max vector-similarity hits per query (SimpleMem SEMANTIC_TOP_K)
 keyword_top_k: 5               # max keyword/BM25 hits per query (SimpleMem KEYWORD_TOP_K)
 structured_top_k: 5            # max structured-metadata hits per query (SimpleMem STRUCTURED_TOP_K)

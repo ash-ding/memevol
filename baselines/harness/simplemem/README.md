@@ -97,12 +97,50 @@ true` sizes from a `stages` block. See `config.example.yaml`.
 DynamicMem's per-checkpoint deltas accumulate correctly (each BUILD windows only
 the new segment; `finalize` flushes its remainder).
 
+## Model configuration (two arms)
+
+Every model this baseline touches is a config parameter, so it runs in two arms:
+
+| | faithful arm (`config.example.yaml`) | unified arm (`config.unified.yaml`) |
+|---|---|---|
+| internal LLM (`simplemem_llm_model`) | `gpt-4.1-mini` — the paper's backbone (§3.1/§3.3) | `gpt-5-mini` |
+| embedder (`embedding_model`) | `Qwen/Qwen3-Embedding-0.6B`, local, 1024-dim — the paper's (§3.1) | `text-embedding-3-small`, API, 1536-dim |
+
+**The faithful arm is the default**, and it is what the faithfulness table
+below and every number in this README describe. The unified arm puts all seven
+baselines on one LLM and one embedder so the comparison against the main method
+is like-for-like — it is a deliberate deviation from the paper, and its numbers
+must not be quoted as SimpleMem's published result.
+
+Both arms leave `src/` **byte-identical** — the `diff -r` above still passes.
+Two boundary levers in [`../model_config.py`](../model_config.py) make that
+possible:
+
+- **the embedder.** `EmbeddingModel.__init__` dispatches on
+  `model_name.startswith("qwen3")` and builds its own SentenceTransformer, with
+  no injection point, so the shared factory patches that constructor. It
+  memoizes local weights across users (a fresh MemoClass is built per user, and
+  the Qwen3 weights are ~0.6B) and returns an API-backed `.encode()`-compatible
+  adapter for a `text-embedding-*` name. The configured value reaches SimpleMem
+  through its `EMBEDDING_MODEL` env setting, so the name the vendored code
+  requests IS the configured one and the factory dispatches on it directly.
+- **the LLM.** SimpleMem's `LLMClient` sends `temperature=0.1..0.3`, which the
+  gpt-5 family rejects — so before this, SimpleMem could not run a gpt-5 model
+  at all. The shim drops the rejected params and renames `max_tokens` →
+  `max_completion_tokens` at the OpenAI-SDK boundary.
+
+No dimension knob has to move with the embedder: SimpleMem sizes its LanceDB
+table from `embedding_model.dimension`. The per-user store is rebuilt with
+`clear_db=True`, but a `memory_cache: true` gauntlet snapshot taken at 1024-dim
+is invalid under the 1536-dim arm.
+
 ## Faithfulness boundary
 
 | Category | Items |
 |---|---|
-| Verbatim | whole `src/simplemem/{core,text}` (compression, hybrid retrieval, planning, reflection, answer prompts, LanceDB backend); `WINDOW_SIZE=40` / `OVERLAP_SIZE=2`; `SEMANTIC/KEYWORD/STRUCTURED_TOP_K=25/5/5`; internal LLM `gpt-4.1-mini`; faithful `Qwen/Qwen3-Embedding-0.6B` embedder |
-| Integration adaptations (not algorithm) | longmemeval (per message) / dynamicmem (per app-log entry, hipporag2's `app_log_to_passage` text) ingestion mapping — SimpleMem only defined LoCoMo; answering via the shared QA agent; `install_embedding_cache` in `memo.py` (a process-wide embedder cache so the 0.6B weights load once, not per user — SimpleMem builds its `EmbeddingModel` inside every `SimpleMemSystem`, with no injection point to pass a shared one, so the constructor is memoized; becomes a plain injected factory once #26 lands); the vendored chain imported exactly once at `memo.py` module scope, avoiding a pyarrow re-registration crash; `src/simplemem/__init__.py` trimmed to keep multimodal/evolver off the import path; `use_streaming=false` (identical output, no console flood) |
+| Verbatim | whole `src/simplemem/{core,text}` (compression, hybrid retrieval, planning, reflection, answer prompts, LanceDB backend); `OVERLAP_SIZE=2`; `SEMANTIC/KEYWORD/STRUCTURED_TOP_K=25/5/5`; internal LLM `gpt-4.1-mini` (paper §3.1/§3.3); `Qwen/Qwen3-Embedding-0.6B` embedder (paper §3.1, 1024-dim) |
+| Paper over code | `window_size: 20` — the paper (§3.1) states "a sliding window of size W = 20" while the vendored code ships `WINDOW_SIZE=40`. The paper's value is the default, matching how memoryos resolves the same kind of divergence. **Numbers collected at 40 are not comparable to numbers collected at 20.** |
+| Integration adaptations (not algorithm) | longmemeval (per message) / dynamicmem (per app-log entry, hipporag2's `app_log_to_passage` text) ingestion mapping — SimpleMem only defined LoCoMo; answering via the shared QA agent; the shared embedder factory from [`../model_config.py`](../model_config.py) (see **Model configuration** above — a process-wide cache so the 0.6B weights load once, not per user, and the seam the API-embedder arm is injected through); the vendored chain imported exactly once at `memo.py` module scope, avoiding a pyarrow re-registration crash; `src/simplemem/__init__.py` trimmed to keep multimodal/evolver off the import path; `use_streaming=false` (identical output, no console flood) |
 | Kept at SimpleMem defaults (faithful path) | `enable_parallel_processing`/`enable_parallel_retrieval=true` (SimpleMem's shipped defaults, and the path its LoCoMo eval uses) — NOTE the serial and parallel build paths are **not** equivalent: the serial path feeds each window the previous window's entries as dedup context, the parallel path processes windows independently, so the parallel output is the faithful one. It is also the only real build parallelism (the async build hook body is synchronous + blocking, so users don't overlap under `max_sample_concurrent` and there is no thread-count multiplication). Tune via `max_parallel_workers` (16) / `max_retrieval_workers` (8) |
 | Known consequences | SimpleMem compresses source turns into `MemoryEntry` units that carry NO `app_log_id`, so DynamicMem evidence-citation scoring is disadvantaged (inherent to compression-first memory); LoCoMo is SimpleMem's home benchmark and its tuned `WINDOW_SIZE` — other datasets use the same size unless overridden |
 
@@ -117,7 +155,7 @@ the new segment; `finalize` flushes its remainder).
   side appears in `token_usage.json`.
 - The faithful embedder (`Qwen/Qwen3-Embedding-0.6B`) is a ~0.6B local model:
   it benefits from a GPU and downloads once from HuggingFace.
-  `install_embedding_cache` in `memo.py` loads it once per process and shares it
+  The shared embedder factory loads it once per process and shares it
   across users.
 - Build/retrieve are synchronous + blocking, so users don't overlap under
   `max_sample_concurrent` (a blocking hook body stalls the event loop). The
@@ -133,6 +171,12 @@ Written against the vendored code and the 3-hook contract; **not yet run
 end-to-end** here (this baseline's own venv + a GPU for the Qwen3 embedder + an
 OpenAI key are only available on the eval server). To smoke each ingestion branch
 cheaply on the search split (mirrors amem's per-branch check):
+
+Smoke configs are LOCAL scratch files — `.gitignore` keeps
+`baselines/harness/simplemem/smoke_*.yaml` out of the repo (same as lightmem and
+zep), so create them yourself. Each is a full copy of `config.example.yaml` with
+only `dataset` / `split` / `single_stage` changed; exact config is
+unconditional, so a partial override file will abort before running.
 
     # locomo (conversation branch) — 1 conv, 3 QAs
     #   smoke_locomo.yaml: dataset: locomo, split: search,

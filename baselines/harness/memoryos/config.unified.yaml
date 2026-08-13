@@ -1,0 +1,64 @@
+# =============================================================================
+# memoryos — THE UNIFIED ARM.
+# Launch: uv run --project baselines/harness/memoryos python baselines/harness/memoryos/run.py \
+#             --config baselines/harness/memoryos/config.unified.yaml
+#
+# The fleet runs in two arms. The FAITHFUL arm (config.example.yaml) gives each
+# method its own published models — and config.paper.yaml additionally pins the
+# paper's gpt-4o-mini ANSWERER. The UNIFIED arm below puts every baseline on ONE
+# LLM (gpt-5-mini) and ONE embedder (text-embedding-3-small) so the comparison
+# against the main method is like-for-like.
+#
+# DEVIATION FROM THE PAPER (this file only): MemoryOS publishes its headline
+# LoCoMo numbers on gpt-4o-mini with a local all-MiniLM-L6-v2 index. Both are
+# changed here. Do not quote numbers from this arm as MemoryOS's published result.
+#
+# HOW IT RUNS AT ALL: MemoryOS's vendored chat_completion hardcodes temperature
+# and max_tokens, which the gpt-5 family rejects.
+# baselines/harness/model_config.py normalises both away at the OpenAI-SDK
+# boundary — no edit under src/, so byte-identity holds.
+#
+# EXACT CONFIG (always on): the YAML must list EVERY key below — and ONLY
+# those keys (a null value counts as listed). A missing key OR an unknown
+# key aborts the run, naming the problem; sizing (single_stage/stages) is
+# checked to the leaf. Validated by common.config.validate_exact_config.
+# =============================================================================
+
+
+dataset: locomo                # which benchmark: dynamicmem | locomo | longmemeval_s
+split: test                    # test | search (search = the training split used during evolution)
+progressive: false             # false = ONE single pass (sized by single_stage); true = staged stage1->2->3 gauntlet
+sampling_seed: 42              # seeds the sampled subset (both paths; a no-op at whole-split)
+memory_cache: true             # cross-stage Phase-1 memory reuse (gauntlet only)
+
+# --- UNIFIED models ---------------------------------------------------------
+memoryos_llm_model: gpt-5-mini    # UNIFIED (paper: gpt-4o-mini) — page/segment summarisation, keyword
+                                  # extraction, persona + knowledge distillation
+memoryos_embedding_model: text-embedding-3-small   # UNIFIED (code default: all-MiniLM-L6-v2, local,
+                                  # 384-dim; the paper names no embedder). Applied by seeding
+                                  # MemoryOS's own model cache: the vendored get_embedding() carries
+                                  # the MiniLM name as a default argument, so the requested name is
+                                  # never the configured one. No dimension knob is needed — MemoryOS
+                                  # sizes its FAISS indexes from the embedding array itself. Any
+                                  # `memory_cache` snapshot at 384-dim is invalid here.
+base_url: null                 # OpenAI-compatible base URL for MemoryOS's internal LLM (null = OpenAI default)
+
+# --- MemoryOS internal knobs (unchanged from the faithful arm) ---------------
+short_term_capacity: 7         # STM dialogue-page queue length. Paper: 7
+mid_term_capacity: 200         # max MTM segments before LFU eviction. PAPER: 200
+mid_term_heat_threshold: 5.0   # tau above which a segment is distilled into the LPM. Paper: 5
+mid_term_similarity_threshold: 0.6   # theta for merging a page into a segment. Paper: 0.6
+retrieval_queue_capacity: 10   # MTM pages returned per query. PAPER: 10 on LoCoMo
+long_term_knowledge_capacity: 100    # FIFO capacity of User KB / Assistant Traits. Paper: 100
+
+# --- shared eval (baseline convention) --------------------------------------
+llm_model: gpt-5-mini          # shared QA agent — answers using MemoryOS's retrieved memory units
+judge_model: gpt-5-mini        # LLM-as-judge model scoring predicted vs reference answers
+max_sample_concurrent: 3       # asyncio concurrency across users/samples
+
+# --- Sizing (config-file only). BOTH keys must be present; the inactive one
+#     is null. Every leaf field in the active block must be listed. ---
+single_stage:
+  n_conversations: null        # locomo: null = all conversations in the split
+  n_qa: null                   # null = all QA per conversation
+stages: null

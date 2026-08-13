@@ -1,0 +1,66 @@
+# =============================================================================
+# simplemem — THE UNIFIED ARM.
+# Launch: cd baselines/harness/simplemem && uv run python run.py \
+#             --config config.unified.yaml
+#
+# The fleet runs in two arms. The FAITHFUL arm (config.example.yaml) gives each
+# method its own published models; the UNIFIED arm below puts every baseline on
+# ONE LLM (gpt-5-mini) and ONE embedder (text-embedding-3-small) so the
+# comparison against the main method is like-for-like.
+#
+# DEVIATION FROM THE PAPER (this file only): SimpleMem publishes on gpt-4.1-mini
+# with a local Qwen3-Embedding-0.6B (1024-dim) index. Both are changed here. Do
+# not quote numbers from this arm as SimpleMem's published result.
+#
+# HOW IT RUNS AT ALL: SimpleMem's vendored LLMClient sends temperature=0.1..0.3,
+# which the gpt-5 family rejects. baselines/harness/model_config.py normalises it
+# away at the OpenAI-SDK boundary — no edit under src/, so byte-identity holds.
+#
+# EXACT CONFIG (always on): the YAML must list EVERY key below — and ONLY
+# those keys (a null value counts as listed). A missing key OR an unknown
+# key aborts the run, naming the problem; sizing (single_stage/stages) is
+# checked to the leaf. Validated by common.config.validate_exact_config.
+# =============================================================================
+
+
+dataset: locomo                 # which benchmark: dynamicmem | locomo | longmemeval_s
+split: test                    # test | search (search = the training split used during evolution)
+progressive: false             # false = ONE single pass (sized by single_stage); true = staged stage1->2->3 gauntlet
+sampling_seed: 42              # seeds the sampled subset (both paths; a no-op at whole-split)
+memory_cache: true             # cross-stage Phase-1 memory reuse (gauntlet only)
+
+# --- UNIFIED models ---------------------------------------------------------
+simplemem_llm_model: gpt-5-mini     # UNIFIED (paper: gpt-4.1-mini) — compression + retrieval-planning LLM
+embedding_model: text-embedding-3-small   # UNIFIED (paper: Qwen/Qwen3-Embedding-0.6B, local, 1024-dim).
+                                    # 1536-dim; no dimension knob has to move with it because SimpleMem
+                                    # sizes its LanceDB table from the embedder itself. The per-user store
+                                    # is rebuilt with clear_db=True, but a `memory_cache` snapshot taken
+                                    # at 1024-dim is invalid here.
+base_url: null                 # OpenAI-compatible base URL for SimpleMem's internal LLM (null = OpenAI default)
+
+# --- SimpleMem internal knobs (unchanged from the faithful arm) --------------
+window_size: 20                # the paper's W=20 (§3.1); the vendored code ships 40. Identical to the
+                               # faithful arm ON PURPOSE — the two arms must differ ONLY in models.
+overlap_size: 2                # window overlap for context continuity (SimpleMem OVERLAP_SIZE)
+semantic_top_k: 25             # max vector-similarity hits per query (SEMANTIC_TOP_K)
+keyword_top_k: 5               # max keyword/BM25 hits per query (KEYWORD_TOP_K)
+structured_top_k: 5            # max structured-metadata hits per query (STRUCTURED_TOP_K)
+enable_planning: true          # intent-aware multi-query retrieval planning
+enable_reflection: true        # reflection-based additional retrieval rounds
+max_reflection_rounds: 2       # number of reflection rounds when enabled
+enable_parallel_processing: true   # SimpleMem default — parallel window compression (the FAITHFUL path)
+max_parallel_workers: 16       # threads for parallel build (MAX_PARALLEL_WORKERS)
+enable_parallel_retrieval: true    # SimpleMem default — parallel multi-view retrieval
+max_retrieval_workers: 8       # threads for parallel retrieval (MAX_RETRIEVAL_WORKERS)
+
+# --- shared eval (baseline convention) --------------------------------------
+llm_model: gpt-5-mini           # shared QA agent — answers using SimpleMem's retrieved memory units
+judge_model: gpt-5-mini        # LLM-as-judge model scoring predicted vs reference answers
+max_sample_concurrent: 3       # asyncio concurrency across users/samples
+
+# --- Sizing (config-file only). BOTH keys must be present; the inactive one
+#     is null. Every leaf field in the active block must be listed. ---
+single_stage:
+  n_conversations: null        # locomo: null = all conversations in the split
+  n_qa: null                   # null = all QA per conversation
+stages: null

@@ -29,6 +29,13 @@ from pathlib import Path
 from typing import Dict, List
 
 from common.memo_class import MemoClass
+from baselines.harness.model_config import install_openai_param_normalisation
+
+# HippoRAG already passes temperature=1 (the only value the gpt-5 family
+# accepts), so this baseline is the one that could always run a gpt-5 model.
+# The shim is installed anyway for the `max_tokens` → `max_completion_tokens`
+# rename, and so all seven baselines normalise identically.
+install_openai_param_normalisation()
 
 OUTPUTS_DIR = Path(__file__).resolve().parent / "outputs"
 
@@ -98,8 +105,14 @@ class HippoRAGMemo(MemoClass):
         from hipporag import HippoRAG
         from hipporag.utils.config_utils import BaseConfig
         is_local = "text-embedding" not in embedding
+        # HippoRAG's INTERNAL LLM (NER, triple extraction, graph construction)
+        # has its own key. It used to read the frame's `llm_model` — the shared
+        # QA-agent model — which is why hipporag2 was the only baseline building
+        # its memory with gpt-5-mini while the other six used gpt-4o-mini. The
+        # fallback keeps that historical behaviour when the key is null.
         conf = BaseConfig(
-            llm_name=cfg["llm_model"], embedding_model_name=embedding,
+            llm_name=cfg.get("hipporag2_llm_model") or cfg["llm_model"],
+            embedding_model_name=embedding,
             save_dir=save_dir, response_format=None, temperature=1, seed=None,
             embedding_batch_size=cfg.get("embedding_batch_size") or (4 if is_local else 16),
             embedding_model_dtype=cfg.get("embedding_dtype") or ("float16" if is_local else "auto"),
