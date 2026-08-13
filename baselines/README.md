@@ -33,7 +33,7 @@ baselines/
 └── harness/             # READY-MADE MEMORY SYSTEMS — compared against forge's
     ├── eval_utility.py   #   EVOLVED HARNESSES. Shared runner: run_baseline()
     ├── hipporag2/       #   HippoRAG2 graph-RAG pipeline as retrieval memory
-    │                    #     (+ editable install of the external HippoRAG repo)
+    │                    #     (vendored src/hipporag/ @ c617143)
     ├── amem/            #   A-mem agentic-notes memory as retrieval memory
     ├── lightmem/        #   LightMem compression + offline-update memory
     ├── simplemem/       #   SimpleMem semantic-compression memory as retrieval memory
@@ -90,10 +90,10 @@ its directory and running `uv sync`, which creates
 cd baselines/harness/amem && uv sync
 ```
 
-hipporag2 needs one extra step — an editable install of the external
-[HippoRAG](https://github.com/OSU-NLP-Group/HippoRAG) repo (`hipporag` is not
-vendored or listed in any `pyproject.toml`); see its own
-[harness/hipporag2/README.md](harness/hipporag2/README.md) for the exact commands.
+`uv sync` is the whole setup for every baseline — none of them needs a second
+step. (hipporag2 used to need an editable install of an external HippoRAG
+checkout; its source is vendored under `src/` as of 2026-08, like every other
+harness baseline.)
 
 There is **no shared baselines dev/test venv** — the shared contract tests
 (`tests/test_baselines_multidataset.py`, `test_config.py`, `test_sampling_plan.py`,

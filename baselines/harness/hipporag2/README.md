@@ -3,7 +3,35 @@
 `HippoRAGMemo` (`memo.py`) wraps [HippoRAG2](https://github.com/OSU-NLP-Group/HippoRAG)'s
 pipeline (OpenIE → NER + triples → knowledge graph + entity embeddings →
 personalized PageRank retrieval) as a `MemoClass` — a fixed,
-non-evolved memory architecture:
+non-evolved memory architecture. The baseline vendors and drives `hipporag`
+directly.
+
+**Provenance**: `src/hipporag/` is vendored VERBATIM (byte-identical, all 61
+files, no exclusions inside the package) from
+<https://github.com/OSU-NLP-Group/HippoRAG> @
+`c617143f01477243992a63b2e2151cc003dd3b21` (`main`, version `2.0.0-alpha.4` —
+the version the integration was written against), excluding only the upstream
+repo's non-package content (`examples/`, `reproduce/`, `tests/`, `main.py`,
+`images/`, `outputs/`, `setup.py`, `requirements.txt`). No file under
+`src/hipporag/` is edited — provenance lives here, not in per-file headers, to
+preserve byte-identity:
+
+    git -C <hipporag-clone> archive c617143 src/hipporag | tar -x -C /tmp/hr
+    diff -r /tmp/hr/src/hipporag src/hipporag        # 0 diffs
+
+Nothing inside the package is pruned because upstream's
+`embedding_model/__init__.py` and `llm/__init__.py` eagerly import every backend,
+so pruning would mean editing vendored files; the whole package is 524K.
+
+**This replaces an editable install of an external checkout.** Until 2026-08 the
+`hipporag` package came from `uv pip install -e <path-to-a-HippoRAG-clone>` — not
+in `pyproject.toml`, not in `uv.lock`, so `uv sync` produced a broken env, no
+commit was pinned to any recorded number, and the checkout could be edited
+underneath a run. (By the time this was vendored that path no longer existed on
+the machine, which is the failure mode itself.) Whoever needs the old behaviour
+should note that the vendored commit is `main` at vendoring time, not a recovered
+copy of that checkout — an unrecorded local edit to it, if there was one, is not
+reproduced here.
 
 - **Phase 1 (`build_memory_from_data`)**: converts the ingested unit's data into
   text passages (dynamicmem: app_logs; locomo: conversation turns;
@@ -36,23 +64,38 @@ calls.
 ## Setup
 
 hipporag2 is its own uv project (`pyproject.toml` + `.python-version` +
-committed `uv.lock`, plus HippoRAG's runtime deps — chromadb,
-langchain-chroma, finch-clust, networkx, nltk, rank_bm25,
-sentence-transformers):
+committed `uv.lock`), and `uv sync` alone is the whole setup — no editable
+install, no external checkout:
 
 ```bash
-cd baselines/harness/hipporag2
-uv sync
-# hipporag2 ALSO needs the external HippoRAG package as an EDITABLE install
-# (memo.py: `from hipporag import HippoRAG`) — `hipporag` is NOT vendored and
-# NOT a pyproject.toml dependency, so `uv sync` alone does not install it:
-uv pip install -e /export/scratch_large/ding/code/HippoRAG   # point at your HippoRAG checkout
+cd baselines/harness/hipporag2 && uv sync
 ```
-
-This is the ONLY baseline whose setup needs a second step beyond `uv sync`.
 
 This creates `baselines/harness/hipporag2/.venv/`. The repo-root
 `.venv/` is dev/test only and cannot run hipporag2.
+
+`pyproject.toml` carries the deps the vendored package actually imports, pinned
+as upstream's own `setup.py` pins them (torch 2.5.1, transformers 4.45.2, litellm
+1.73.1, gritlm 1.0.2, python_igraph 0.11.8, pydantic 2.10.4, tenacity 8.5.0,
+tiktoken 0.7.0) plus sentence-transformers, boto3, pandas/pyarrow, filelock,
+packaging, requests, tqdm. Two deliberate departures from upstream's list, both
+noted inline in `pyproject.toml`:
+
+- **`vllm` / `outlines` are not installed.** Only `llm/vllm_offline.py`,
+  `llm/transformers_offline.py` and `information_extraction/openie_vllm_offline.py`
+  import them, and none is on the import path of the OpenAI-backed config this
+  baseline runs. Those offline backends are therefore vendored but unavailable —
+  selecting one raises `ModuleNotFoundError`. `vllm` also hard-pins torch and is a
+  multi-GB install.
+- **`networkx`, `scipy`, `einops`, `nest_asyncio` are dropped**: declared by
+  upstream's `setup.py` but imported nowhere in `src/hipporag` (they serve
+  upstream's `reproduce/` scripts). scipy/numpy/openai/httpx are already in the
+  shared-core block.
+
+`gritlm`, `boto3` and `litellm` are needed only because upstream's
+`embedding_model/__init__.py` / `llm/__init__.py` import every backend eagerly —
+not because the exercised path uses GritLM, Bedrock or LiteLLM. The env is ~6GB,
+dominated by torch + gritlm's own transitive deps (mteb, wandb).
 
 ## Usage
 
@@ -140,6 +183,15 @@ baselines/harness/hipporag2/
     ├── token_usage.json     # per-model token totals (common.tokens.TokenTracker)
     └── traces/<user_id>.json   # full per-user QA trajectory (no sampling)
 ```
+
+## Faithfulness boundary
+
+| Category | Items |
+|---|---|
+| Verbatim | the whole `hipporag` package (@ c617143, 61 files, 0 diffs): OpenIE (NER + triple extraction), knowledge-graph construction, synonym/entity linking, personalized-PageRank retrieval, fact reranking, all prompts and thresholds, the parquet embedding store's dedup-by-hash upsert |
+| Integration adaptations (not algorithm) | `src/` prepended to `sys.path` in `memo.py` so `import hipporag` resolves to the vendored copy; retrieval via `HippoRAG.retrieve()` only — HippoRAG's own `rag_qa` reader is NOT used, the shared QA agent answers from the returned passages (fair "HippoRAG-as-memory" comparison); per-dataset passage mappings (`_init_to_passages`: app_logs / conversation turns / session messages) — upstream ran QA corpora, not conversational memory benchmarks; one graph per `MemoClass` instance under `outputs/<instance_id>_<embedding>/`, keyed on an instance-scoped id rather than `recorder.user_id` (which is always `""` in practice — see the note in `memo.py`); incremental `index()` per build call, relying on upstream's additive dedup-by-hash behaviour |
+| Not installed, so unavailable | the vLLM / offline-transformers LLM + OpenIE backends (vendored but `vllm`/`outlines` are not deps — see Setup); the chroma / milvus / qdrant vector-store backends (lazy imports, un-installed; the default parquet store is what runs) |
+| Upstream quirks preserved | `embedding_model/__init__.py` and `llm/__init__.py` import every backend eagerly (hence gritlm/boto3/litellm in the deps); internal OpenIE LLM cost is not tracked by `common.tokens` (same caveat as amem/zep/simplemem/lightmem) |
 
 ## Notes
 

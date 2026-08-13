@@ -30,12 +30,22 @@ from __future__ import annotations
 
 import os
 import shutil
+import sys
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from common.memo_class import MemoClass
 from baselines.harness.hipporag2.memo import app_log_to_passage
+
+# `import mem0` must resolve to the byte-identical vendored copy under src/, not
+# to any pip-installed mem0ai (there is none in this baseline's env — mem0ai was
+# dropped from pyproject.toml when the source was vendored). Prepended, so the
+# vendored copy wins even if one is installed in an ambient env.
+# (zep/memoryos pattern; no _st_shim.py needed — nothing here imports HF datasets.)
+_SRC = str(Path(__file__).resolve().parent / "src")
+if _SRC not in sys.path:
+    sys.path.insert(0, _SRC)
 
 # Must be set BEFORE importing mem0: the flag is read at module import time
 # (mem0/memory/telemetry.py), and with it on, every Memory() additionally opens a
