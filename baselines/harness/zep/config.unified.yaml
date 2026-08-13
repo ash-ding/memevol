@@ -1,0 +1,67 @@
+# =============================================================================
+# zep — THE UNIFIED ARM. Backend: embedded FalkorDB Lite (no server needed).
+# Launch: cd baselines/harness/zep && uv run python run.py \
+#             --config config.unified.yaml
+#
+# The fleet runs in two arms. The FAITHFUL arm (config.example.yaml) gives each
+# method its own published models; the UNIFIED arm below puts every baseline on
+# ONE LLM (gpt-5-mini) and ONE embedder (text-embedding-3-small) so the
+# comparison against the main method is like-for-like.
+#
+# DEVIATION FROM THE PAPER (this file only): the Zep paper (§4.1) uses BGE-m3
+# for BOTH embedding and reranking, with gpt-4o-mini-2024-07-18 for graph
+# construction. The LLM and the embedder are changed here.
+#
+# WHAT STAYS LOCAL: the reranker. bge-reranker-v2-m3 is a CROSS-ENCODER — it
+# scores (query, doc) pairs, so it has no API equivalent and cannot fold into
+# the one-API-model plan. Graphiti does ship an OpenAIRerankerClient, but that
+# is an LLM-scoring reranker, a materially different retrieval algorithm; the
+# unified arm keeps the paper's cross-encoder so the change stays confined to
+# the LLM and the embedder. The reranker remains the heaviest local cost in the
+# fleet (~570M params, k forward passes per query) in BOTH arms.
+#
+# HOW IT RUNS AT ALL: Graphiti already drops `temperature` for the gpt-5 family
+# and routes structured output through `responses.parse`, but its plain-JSON
+# path still sends `max_tokens`, which those models reject.
+# baselines/harness/model_config.py renames it to `max_completion_tokens` at the
+# OpenAI-SDK boundary — no edit under src/, so byte-identity holds.
+#
+# EXACT CONFIG (always on): the YAML must list EVERY key below — and ONLY
+# those keys (a null value counts as listed). A missing key OR an unknown
+# key aborts the run, naming the problem; sizing (single_stage/stages) is
+# checked to the leaf. Validated by common.config.validate_exact_config.
+# =============================================================================
+
+
+dataset: locomo                 # which benchmark: dynamicmem | locomo | longmemeval_s
+split: test                    # test | search (search = the training split used during evolution)
+progressive: false             # false = ONE single pass (sized by single_stage); true = staged stage1->2->3 gauntlet
+sampling_seed: 42              # seeds the sampled subset (both paths; a no-op at whole-split)
+memory_cache: true             # cross-stage Phase-1 memory reuse (gauntlet only)
+
+# --- Zep / Graphiti retrieval + UNIFIED models ---
+retrieve_k: 20                 # paper: top-20 edges (facts) + entity nodes (summaries) per query
+embedder: openai               # UNIFIED (paper: bge-m3, local). Graphiti's own OpenAIEmbedder — an
+                               # injected EmbedderClient, so no adapter is involved.
+embedder_model: text-embedding-3-small   # UNIFIED (paper: BAAI/bge-m3, 1024-dim). 1536-dim here: any
+                               # FalkorDB store or `memory_cache` snapshot built at 1024-dim is invalid.
+reranker: bge                  # UNCHANGED — paper-faithful cross-encoder, no API equivalent (see header)
+reranker_model: BAAI/bge-reranker-v2-m3   # graphiti's BGERerankerClient model
+device: null                   # null/"auto" => cuda if a GPU is visible, else cpu. Still used by the
+                               # reranker even though the embedder is now an API model.
+db_root: null                  # dir for the embedded FalkorDB Lite store; null => system temp (/tmp).
+                               # MUST be a native POSIX FS — not /mnt/c or another DrvFs/9p mount under WSL.
+graph_llm_model: gpt-5-mini     # UNIFIED (paper: gpt-4o-mini-2024-07-18) — graph-construction LLM
+graph_llm_small_model: null    # Graphiti "small" LLM for simpler prompts; null => same as graph_llm_model
+
+# --- Shared eval knobs ---
+llm_model: gpt-5-mini           # shared QA agent model (answers using the retrieved FACTS/ENTITIES context)
+judge_model: gpt-5-mini        # LLM-as-judge model scoring predicted vs reference answers
+max_sample_concurrent: 3       # asyncio concurrency across users/samples
+
+# --- Sizing (config-file only). BOTH keys must be present; the inactive one
+#     is null. Every leaf field in the active block must be listed. ---
+single_stage:
+  n_conversations: null        # locomo: null = all conversations in the split
+  n_qa: null                   # null = all QA per conversation
+stages: null

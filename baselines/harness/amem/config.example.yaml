@@ -17,8 +17,12 @@ split: test                    # test | search (search = the training split used
 progressive: false             # false = ONE single pass (sized by single_stage); true = staged stage1->2->3 gauntlet (sized by stages)
 sampling_seed: 42              # seeds the sampled subset (both paths; a no-op at whole-split)
 memory_cache: true             # cross-stage Phase-1 memory reuse (gauntlet only); --no-memory-cache to disable
-amem_llm_model: gpt-4o-mini     # A-mem's internal LLM (note analysis/evolution/keyword rewrite); 4-series ONLY — A-mem's
-                                # OpenAIController hardcodes temperature+max_tokens, which the gpt-5 family rejects
+amem_llm_model: gpt-4o-mini     # A-mem's internal LLM (note analysis/evolution/keyword rewrite). A-mem's
+                                # OpenAIController hardcodes temperature+max_tokens, which the gpt-5 family
+                                # rejects — baselines/harness/model_config.py normalises those away at the
+                                # OpenAI-SDK boundary, so a gpt-5 model IS runnable here (see config.unified.yaml)
+amem_embedding_model: all-MiniLM-L6-v2   # A-mem's note-index embedder (the paper's choice, 384-dim, local).
+                                # A `text-embedding-*` name switches to the OpenAI API embedder instead.
 retrieve_k: 10                 # top-k notes (+ linked neighbors) returned per query
 llm_model: gpt-5-mini           # shared QA agent model (answers using the retrieved A-mem notes)
 judge_model: gpt-5-mini        # LLM-as-judge model scoring predicted vs reference answers

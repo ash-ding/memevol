@@ -241,9 +241,10 @@ method's own knobs, and the shared model/judge/concurrency keys):
   was removed entirely from every harness `config.example.yaml` /
   `config.paper.yaml`.
 - **`config.example.yaml`** — each harness directory ships one, documenting
-  every required key inline; two (`mem0`, `memoryos`) also ship a
-  `config.paper.yaml` reproducing the original paper's LoCoMo setup. Copy
-  one to start a real run instead of hand-assembling a config from scratch:
+  every required key inline; every one also ships a `config.unified.yaml`
+  (see **Two model arms** below), and two (`mem0`, `memoryos`) additionally
+  ship a `config.paper.yaml` reproducing the original paper's LoCoMo setup.
+  Copy one to start a real run instead of hand-assembling a config from scratch:
   [`harness/hipporag2/config.example.yaml`](harness/hipporag2/config.example.yaml),
   [`harness/amem/config.example.yaml`](harness/amem/config.example.yaml),
   [`harness/lightmem/config.example.yaml`](harness/lightmem/config.example.yaml),
@@ -269,6 +270,56 @@ cp baselines/harness/hipporag2/config.example.yaml baselines/harness/hipporag2/m
 $EDITOR baselines/harness/hipporag2/my_hr.yaml   # e.g. change dataset:, sampling_seed:
 cd baselines/harness/hipporag2 && uv run python run.py --config my_hr.yaml
 ```
+
+### Two model arms — faithful vs unified
+
+Every model a harness baseline touches — internal LLM, embedder, reranker,
+compressor — is a config parameter. That makes two arms expressible, and each
+baseline ships a config for both:
+
+| arm | file | what it is |
+|---|---|---|
+| **faithful** | `config.example.yaml` | each method's own published models. **The default.** What every README's faithfulness table describes |
+| **unified** | `config.unified.yaml` | one LLM (`gpt-5-mini`) + one embedder (`text-embedding-3-small`) everywhere. The arm to compare against the main method |
+
+The faithful defaults are deliberately NOT replaced: the local embedders are
+paper choices (zep's bge-m3, simplemem's Qwen3) and the READMEs make
+faithfulness claims about them. Silently switching them would turn every
+baseline into a variant its authors never published. Choosing an arm is a
+config decision, and the two are directly comparable because everything else is
+held fixed.
+
+Two things stay local in BOTH arms because they have no API equivalent:
+lightmem's **LLMlingua-2** prompt compressor (a BERT token classifier, produces
+no vectors) and zep's **bge-reranker-v2-m3** (a cross-encoder scoring
+`(query, doc)` pairs). They remain a real, untracked local compute cost.
+
+**How the unified arm is possible without touching `src/`.** Both levers live in
+[`harness/model_config.py`](harness/model_config.py) and act at boundaries the
+vendored code already passes through, so every README's `diff -r` byte-identity
+check still passes:
+
+- **the embedder factory** patches the `sentence_transformers` constructor.
+  amem, memoryos and simplemem build their embedder internally with no
+  injection point; the factory memoizes local weights across users (a fresh
+  MemoClass is built per user) and returns an `.encode()`-compatible API
+  adapter for a `text-embedding-*` name. memoryos needs the *override* form —
+  its `get_embedding()` carries the model name as a default argument, so the
+  requested name is never the configured one. zep needs none of this (Graphiti
+  accepts an injected `EmbedderClient`) and lightmem needs none either (its
+  vendored factory already ships `TextEmbedderOpenAI`).
+- **the OpenAI param normalisation** patches `chat.completions.create` to drop
+  `temperature`/`top_p`/the penalties and rename `max_tokens` →
+  `max_completion_tokens` for reasoning models. **Five of the seven baselines
+  could not run a gpt-5 model at all without it** — amem, lightmem, simplemem
+  and memoryos hardcode `temperature` + `max_tokens`, and zep's graphiti still
+  sends `max_tokens` even though it already drops `temperature`.
+
+**Dimension coupling.** The API embedder is 1536-dim against local defaults of
+384 (MiniLM) / 1024 (bge-m3, Qwen3). Only lightmem carries an explicit
+`embedding_dims` knob that must move with it; the others size their index from
+the embedder itself. In every case, switching arms invalidates vector stores and
+`memory_cache: true` gauntlet snapshots built at the other width.
 
 ## Existing baselines
 

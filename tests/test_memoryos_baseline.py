@@ -111,6 +111,34 @@ def test_run_config_keys_match_constructor():
     assert "embedding_model_name" not in params, "vendored build unexpectedly gained this knob"
 
 
+def test_embedder_key_is_applied_by_overriding_the_shared_factory():
+    """MemoryOS has NO embedder constructor argument (asserted just above): its
+    vendored `get_embedding()` carries `all-MiniLM-L6-v2` as a DEFAULT ARGUMENT,
+    so the name the vendored code requests is never the configured one. The key
+    is therefore applied by OVERRIDING the shared embedder factory."""
+    from baselines.harness import model_config as mc
+    from baselines.harness.memoryos import memo as memoryos_memo
+    from baselines.harness.memoryos.run import REQUIRED_KEYS
+
+    assert "memoryos_embedding_model" in REQUIRED_KEYS
+
+    real = memoryos_memo.Memoryos
+    memoryos_memo.Memoryos = lambda **kw: object()
+    try:
+        m = memoryos_memo.MemoryOSMemo(
+            config={"memoryos_embedding_model": "text-embedding-3-small"})
+        m._ensure_system()
+        assert mc._policy["model"] == "text-embedding-3-small"
+
+        m2 = memoryos_memo.MemoryOSMemo(config={})
+        m2._memo = None
+        m2._ensure_system()
+        assert mc._policy["model"] == "all-MiniLM-L6-v2"   # the paper's embedder
+    finally:
+        memoryos_memo.Memoryos = real
+        mc.set_embedder_policy(None, None)
+
+
 def test_memo_implements_the_three_hook_contract():
     from common.memo_class import MemoClass
     from baselines.harness.memoryos.memo import MemoryOSMemo

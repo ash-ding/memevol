@@ -19,9 +19,14 @@ sampling_seed: 42              # seeds the sampled subset (both paths; a no-op a
 memory_cache: true             # cross-stage Phase-1 memory reuse (gauntlet only); --no-memory-cache to disable
 
 # --- SimpleMem internal knobs (its own defaults @ db80b6a) -------------------
-simplemem_llm_model: gpt-4.1-mini   # SimpleMem's compression + retrieval-planning LLM. 4-series ONLY —
-                                    # its LLMClient sends temperature=0.1..0.3, which the gpt-5 family rejects.
-embedding_model: Qwen/Qwen3-Embedding-0.6B   # faithful local sentence-transformer; all-MiniLM-L6-v2 = light fallback
+simplemem_llm_model: gpt-4.1-mini   # SimpleMem's compression + retrieval-planning LLM. Its LLMClient sends
+                                    # temperature=0.1..0.3, which the gpt-5 family rejects —
+                                    # baselines/harness/model_config.py normalises that away at the
+                                    # OpenAI-SDK boundary, so a gpt-5 model IS runnable here.
+embedding_model: Qwen/Qwen3-Embedding-0.6B   # faithful local sentence-transformer (1024-dim); all-MiniLM-L6-v2
+                                    # = light fallback. A `text-embedding-*` name switches to the OpenAI API
+                                    # embedder. No dimension knob: SimpleMem sizes its LanceDB table from the
+                                    # embedder itself.
 base_url: null                 # OpenAI-compatible base URL for SimpleMem's internal LLM (null = OpenAI default)
 window_size: 40                # dialogues per compression window (SimpleMem WINDOW_SIZE; tuned for LoCoMo)
 overlap_size: 2                # window overlap for context continuity (SimpleMem OVERLAP_SIZE)

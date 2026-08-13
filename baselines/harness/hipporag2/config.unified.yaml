@@ -1,0 +1,45 @@
+# =============================================================================
+# hipporag2 — THE UNIFIED ARM.
+# Launch: cd baselines/harness/hipporag2 && uv run python run.py \
+#             --config config.unified.yaml
+#
+# The fleet runs in two arms. The FAITHFUL arm (config.example.yaml) gives each
+# method its own published models; the UNIFIED arm below puts every baseline on
+# ONE LLM (gpt-5-mini) and ONE embedder (text-embedding-3-small) so the
+# comparison against the main method is like-for-like.
+#
+# DEVIATION: almost none. hipporag2 is the ONE baseline already on an API
+# embedder, and already building its graph with gpt-5-mini — because it had no
+# internal-LLM key and read the frame's `llm_model`. The only change here is
+# that the internal model is now stated EXPLICITLY (`hipporag2_llm_model`)
+# rather than inherited, so "which arm was this run?" stays answerable.
+#
+# EXACT CONFIG (always on): the YAML must list EVERY key below — and ONLY
+# those keys (a null value counts as listed). A missing key OR an unknown
+# key aborts the run, naming the problem; sizing (single_stage/stages) is
+# checked to the leaf. Validated by common.config.validate_exact_config.
+# =============================================================================
+
+
+dataset: dynamicmem            # which benchmark: dynamicmem | locomo | longmemeval_s
+split: test                    # test | search (search = the training split used during evolution)
+progressive: false             # false = ONE single pass (sized by single_stage); true = staged stage1->2->3 gauntlet
+sampling_seed: 42              # seeds the sampled subset (both paths; a no-op at whole-split)
+memory_cache: true             # cross-stage Phase-1 memory reuse (gauntlet only)
+embedding: text-embedding-3-small   # UNIFIED — already HippoRAG2's default (API, 1536-dim)
+hipporag2_llm_model: gpt-5-mini # UNIFIED — HippoRAG2's internal LLM (NER, triple extraction, graph
+                                # construction), stated explicitly instead of inherited from llm_model
+llm_model: gpt-5-mini           # shared QA agent model (answers using the retrieved passages)
+judge_model: gpt-5-mini        # LLM-as-judge model scoring predicted vs reference answers
+embedding_batch_size: null      # null = HippoRAG2 internal default (16 for an API embedder)
+embedding_dtype: null           # null = HippoRAG2 internal default ("auto" for an API embedder)
+max_sample_concurrent: 3       # asyncio concurrency across users/samples
+
+# --- Sizing (config-file only). BOTH keys must be present; the inactive one
+#     is null. Every leaf field in the active block must be listed. ---
+single_stage:
+  n_users: null                # dynamicmem: null = all users in the split
+  n_checkpoints: null          # null = all checkpoints per user
+  n_task_a: null               # null = all Task A items per checkpoint
+  n_task_c: null               # null = all Task C items per checkpoint
+stages: null

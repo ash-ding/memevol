@@ -32,6 +32,17 @@ from typing import Dict, List, Tuple
 
 from common.memo_class import MemoClass
 from baselines.harness.hipporag2.memo import app_log_to_passage
+from baselines.harness.model_config import (
+    install_embedder_factory, install_openai_param_normalisation, set_embedder_policy,
+)
+
+# Both patches MUST precede the vendored import (see model_config's docstring):
+# memory_layer binds `SentenceTransformer` at ITS import time, and its
+# OpenAIController hardcodes temperature=0.7 + max_tokens=1000 on every call,
+# which the gpt-5 family rejects.
+install_embedder_factory()
+install_openai_param_normalisation()
+
 # NOTE: sentence-transformers eagerly imports HuggingFace `datasets`. That used
 # to collide with memevol's own top-level `datasets/` package and needed a
 # sys.modules shim (_st_shim.py); the package was renamed to `benchmarks/`
@@ -94,10 +105,21 @@ class AMemMemo(MemoClass):
         if self._system is not None:
             return
         model = self.config.get("amem_llm_model", "gpt-4o-mini")
+        # A-mem's embedder IS a constructor parameter (AgenticMemorySystem's
+        # `model_name`), so the config key alone covers the local arm. The
+        # policy below additionally covers the API arm: the name reaches
+        # SimpleEmbeddingRetriever, which calls the patched SentenceTransformer
+        # factory, which returns an APIEmbedder for a `text-embedding-*` name.
+        # Process-global and identical for every user, so re-setting it per
+        # instance is a no-op — and it also shares ONE embedder across users
+        # (a fresh MemoClass is built per user; without the cache the weights
+        # would reload for every conversation in the split).
+        embedder = self.config.get("amem_embedding_model") or "all-MiniLM-L6-v2"
+        set_embedder_policy(embedder)
         # Mirrors test_advanced.py::advancedMemAgent.__init__ (openai backend):
         # one AgenticMemorySystem + a separate retriever_llm, same model.
         self._system = AgenticMemorySystem(
-            model_name="all-MiniLM-L6-v2", llm_backend="openai", llm_model=model,
+            model_name=embedder, llm_backend="openai", llm_model=model,
         )
         self._retriever_llm = LLMController(backend="openai", model=model, api_key=None)
 

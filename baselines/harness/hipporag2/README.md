@@ -141,6 +141,32 @@ baselines/harness/hipporag2/
     └── traces/<user_id>.json   # full per-user QA trajectory (no sampling)
 ```
 
+## Model configuration (two arms)
+
+Every model this baseline touches is a config parameter, so it runs in two arms:
+
+| | faithful arm (`config.example.yaml`) | unified arm (`config.unified.yaml`) |
+|---|---|---|
+| internal LLM (`hipporag2_llm_model`) | `null` → falls back to `llm_model` | `gpt-5-mini`, stated explicitly |
+| embedder (`embedding`) | `text-embedding-3-small`, API, 1536-dim | **unchanged** |
+
+hipporag2 is the baseline that changes least between arms — it is one of only
+two already on an API embedder (with mem0), and it was already building its
+graph with `gpt-5-mini`. **That last part was an accident, not a choice:** it
+had no internal-LLM key and read the frame's `llm_model` — the SHARED QA-agent
+model — which is why it was the only baseline building memory with `gpt-5-mini`
+while the other six used `gpt-4o-mini`.
+
+`hipporag2_llm_model` fixes that. A `null` value preserves the historical
+fallback so old configs keep reproducing; the unified arm states the model
+explicitly, so "which arm was this run?" stays answerable after the fact.
+
+HippoRAG already passes `temperature=1` — the only value the gpt-5 family
+accepts — so this is the one baseline that could always run a gpt-5 model. The
+shim in [`../model_config.py`](../model_config.py) is installed anyway, for the
+`max_tokens` → `max_completion_tokens` rename and so all seven baselines
+normalise identically.
+
 ## Notes
 
 - `HippoRAGMemo` runs on all four datasets via dispatch on `recorder.init`

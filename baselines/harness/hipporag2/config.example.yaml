@@ -18,7 +18,12 @@ progressive: false             # false = ONE single pass (sized by single_stage)
 sampling_seed: 42              # seeds the sampled subset (both paths; a no-op at whole-split)
 memory_cache: true             # cross-stage Phase-1 memory reuse (gauntlet only); --no-memory-cache to disable
 embedding: text-embedding-3-small   # OpenAI embedding model HippoRAG2 uses for its graph/vector index
-llm_model: gpt-5-mini           # shared QA agent AND HippoRAG2's internal LLM (NER, triple extraction, etc.)
+hipporag2_llm_model: null       # HippoRAG2's INTERNAL LLM (NER, triple extraction, graph construction).
+                                # null => fall back to `llm_model`, the historical behaviour — which is
+                                # why hipporag2 was the only baseline building memory with gpt-5-mini
+                                # while the other six used gpt-4o-mini. Set it explicitly to compare
+                                # like-for-like against them.
+llm_model: gpt-5-mini           # shared QA agent model (answers using the retrieved HippoRAG2 passages)
 judge_model: gpt-5-mini        # LLM-as-judge model scoring predicted vs reference answers
 embedding_batch_size: null      # batch size for embedding calls; null = HippoRAG2 internal default
 embedding_dtype: null           # embedding tensor dtype (e.g. bfloat16); null = HippoRAG2 internal default

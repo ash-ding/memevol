@@ -44,10 +44,20 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from common.memo_class import MemoClass
 from baselines.harness.hipporag2.memo import app_log_to_passage
+from baselines.harness.model_config import (
+    install_embedder_factory, install_openai_param_normalisation, set_embedder_policy,
+)
 # NOTE: the vendored utils.py imports sentence-transformers, which eagerly
 # imports HuggingFace `datasets`. That used to collide with memevol's own
 # top-level `datasets/` package and needed a sys.modules shim; the package was
 # renamed to `benchmarks/` (2026-08-07), so plain imports are correct now.
+
+# Both patches MUST precede the vendored import (see model_config's docstring):
+# utils.py binds `SentenceTransformer` at ITS import time, and its
+# `chat_completion` hardcodes temperature + max_tokens on every call, which the
+# gpt-5 family rejects.
+install_embedder_factory()
+install_openai_param_normalisation()
 
 _SRC = Path(__file__).resolve().parent / "src"
 # The vendored modules import each other ABSOLUTELY (`from long_term import ...`,
@@ -147,6 +157,18 @@ class MemoryOSMemo(MemoClass):
         if self._memo is not None:
             return
         cfg = self.config
+        # The embedder is NOT a constructor argument in this version: utils.py's
+        # get_embedding() carries `all-MiniLM-L6-v2` as a DEFAULT ARGUMENT and
+        # every call site takes the default, so the requested name is never the
+        # configured one. Hence the OVERRIDE form of the policy — the patched
+        # SentenceTransformer factory ignores what the vendored code asks for
+        # and hands back the configured model (an APIEmbedder for a
+        # `text-embedding-*` name). Process-global and identical for every user,
+        # so re-setting it per instance is a no-op; it also shares ONE embedder
+        # across users instead of reloading the weights per conversation.
+        # (`get_embedding`'s own embedding cache keys on the default name, which
+        # stays correct because one process only ever has one embedder.)
+        set_embedder_policy(cfg.get("memoryos_embedding_model") or "all-MiniLM-L6-v2")
         save_dir = OUTPUTS_DIR / self._instance_id
         if save_dir.exists():
             shutil.rmtree(save_dir, ignore_errors=True)
@@ -167,10 +189,9 @@ class MemoryOSMemo(MemoClass):
                 retrieval_queue_capacity=cfg.get("retrieval_queue_capacity"),
                 long_term_knowledge_capacity=cfg.get("long_term_knowledge_capacity"),
             )
-        # The embedder is NOT a constructor argument in this version: utils.py's
-        # get_embedding() hardcodes `all-MiniLM-L6-v2` behind a process-global
-        # cache. Recorded here so the config cannot imply a knob that does not
-        # exist (the README's `embedding_model_name` belongs to a later build).
+        # No dimension knob is needed: MemoryOS sizes its FAISS indexes from the
+        # embedding array itself (`dim = embeddings_np.shape[1]`, long_term.py
+        # and mid_term.py), so a 1536-dim API embedder drops straight in.
 
     async def build_memory_from_data(self, recorder) -> None:
         self._ensure_system()

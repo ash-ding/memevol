@@ -25,10 +25,13 @@ embedder: bge-m3               # bge-m3 (paper-faithful, local sentence-transfor
 embedder_model: BAAI/bge-m3     # embedding model (bge-m3: 1024-dim, paper's choice)
 reranker: bge                  # bge (paper-faithful cross-encoder rerank) | openai
 reranker_model: BAAI/bge-reranker-v2-m3   # graphiti's BGERerankerClient model
-device: cuda                   # sentence-transformers device for BGE-m3 + reranker: cuda | cpu | null (auto). Use cpu on CPU-only boxes.
+device: null                   # sentence-transformers device for BGE-m3 + reranker. null/"auto" => cuda if a
+                               # GPU is visible, else cpu. Pin with "cpu" / "cuda" / "cuda:1" if needed.
 db_root: null                  # dir for the embedded FalkorDB Lite store; null => system temp (/tmp). MUST be a native POSIX FS
                                # (redislite binds a unix socket) — do NOT point at /mnt/c or another DrvFs/9p mount under WSL.
-graph_llm_model: gpt-4o-mini    # Graphiti graph-construction LLM (paper: gpt-4o-mini-2024-07-18; keep a 4-series model)
+graph_llm_model: gpt-4o-mini    # Graphiti graph-construction LLM (paper: gpt-4o-mini-2024-07-18). Graphiti already
+                               # drops temperature for the gpt-5 family but still sends max_tokens, which they reject;
+                               # baselines/harness/model_config.py renames it, so a gpt-5 model IS runnable here.
 graph_llm_small_model: null    # Graphiti "small" LLM for simpler prompts; null => same as graph_llm_model
 
 # --- Shared eval knobs ---
