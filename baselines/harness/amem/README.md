@@ -81,9 +81,9 @@ baselines on one LLM and one embedder so the comparison against the main method
 is like-for-like — it is a deliberate deviation from the paper, and its numbers
 must not be quoted as A-mem's published result.
 
-Both arms leave `src/` **byte-identical** — the `diff -r` above still passes.
-Two boundary levers in [`../model_config.py`](../model_config.py) make that
-possible:
+Both arms leave `src/` **byte-identical** — the provenance `diff` above still
+passes, because nothing under `src/` is edited. Two boundary levers in
+[`../model_config.py`](../model_config.py) make that possible:
 
 - **the embedder.** A-mem builds its own SentenceTransformer inside
   `SimpleEmbeddingRetriever` with no injection point, so the shared factory
