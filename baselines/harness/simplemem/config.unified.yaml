@@ -39,7 +39,8 @@ embedding_model: text-embedding-3-small   # UNIFIED (paper: Qwen/Qwen3-Embedding
 base_url: null                 # OpenAI-compatible base URL for SimpleMem's internal LLM (null = OpenAI default)
 
 # --- SimpleMem internal knobs (unchanged from the faithful arm) --------------
-window_size: 40                # dialogues per compression window (SimpleMem WINDOW_SIZE)
+window_size: 20                # the paper's W=20 (§3.1); the vendored code ships 40. Identical to the
+                               # faithful arm ON PURPOSE — the two arms must differ ONLY in models.
 overlap_size: 2                # window overlap for context continuity (SimpleMem OVERLAP_SIZE)
 semantic_top_k: 25             # max vector-similarity hits per query (SEMANTIC_TOP_K)
 keyword_top_k: 5               # max keyword/BM25 hits per query (KEYWORD_TOP_K)

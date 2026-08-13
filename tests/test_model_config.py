@@ -396,6 +396,40 @@ def test_unified_arm_is_one_llm_and_one_embedder_everywhere():
             assert cfg[key] == "text-embedding-3-small", f"{d.name}: {key}={cfg[key]!r}"
 
 
+def test_the_two_arms_differ_only_in_models():
+    """The invariant the whole comparison rests on: switching arms must change
+    the MODELS and nothing else. If a method knob drifts between the two, a
+    score difference stops being attributable to the model swap.
+
+    (This caught `window_size` drifting to 40 in simplemem's unified arm after
+    the faithful arm moved to the paper's 20.)
+    """
+    model_keys = {
+        "amem_llm_model", "amem_embedding_model", "hipporag2_llm_model",
+        "lightmem_llm_model", "mem0_llm_model", "memoryos_llm_model",
+        "memoryos_embedding_model", "simplemem_llm_model", "graph_llm_model",
+        "graph_llm_small_model", "embedding_model", "embedder", "embedder_model",
+        "embedding", "embedding_dims", "llm_model", "judge_model",
+        # not models, but legitimately arm-independent choices
+        "dataset", "split", "embedding_device",
+    }
+    drift = {}
+    for d in _baseline_dirs():
+        unified = d / "config.unified.yaml"
+        if not unified.exists():
+            continue
+        faithful = load_config_file(d / "config.example.yaml") or {}
+        other = load_config_file(unified) or {}
+        differing = {
+            k: (faithful.get(k), other.get(k))
+            for k in set(faithful) | set(other)
+            if faithful.get(k) != other.get(k) and k not in model_keys
+        }
+        if differing:
+            drift[d.name] = differing
+    assert not drift, f"non-model drift between the arms: {drift}"
+
+
 def test_unified_lightmem_moves_its_dimension_with_the_embedder():
     # lightmem is the one baseline carrying an explicit dims knob: it sizes the
     # Qdrant collection AND is sent as the API `dimensions` parameter, so a

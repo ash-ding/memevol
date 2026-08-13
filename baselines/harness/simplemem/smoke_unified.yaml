@@ -1,0 +1,63 @@
+# =============================================================================
+# SMOKE: the UNIFIED ARM — locomo, 1 conversation, 3 QAs, search split.
+# Launch: cd baselines/harness/simplemem && uv run python run.py \
+#             --config smoke_unified.yaml
+#
+# This is the cheapest end-to-end proof that the unified arm actually works. It
+# is `config.unified.yaml` with a smoke-sized `single_stage`, so it exercises
+# BOTH levers of the configurable-model layer in one short run:
+#
+#   1. THE API EMBEDDER. `embedding_model: text-embedding-3-small` makes the
+#      patched SentenceTransformer factory hand SimpleMem's vendored
+#      `EmbeddingModel` an `APIEmbedder` instead of a local sentence-transformer.
+#      If the `.encode()` contract is wrong, the build fails in LanceDB
+#      indexing. Also confirms the 1536-dim table is sized from the embedder.
+#
+#   2. THE PARAM SHIM. `simplemem_llm_model: gpt-5-mini` against SimpleMem's
+#      vendored LLMClient, which sends `temperature=0.1..0.3`. Without the
+#      normalisation this 400s on the first compression call — so reaching
+#      Phase 2 at all proves the shim works on a live request.
+#
+# No local weights download here: the Qwen3 embedder is not used on this arm.
+#
+# EXACT CONFIG: every key below must be listed and no others. Everything except
+# the two model keys and the sizing matches config.example.yaml — the arms
+# differ ONLY in models, which is what makes their scores comparable.
+# =============================================================================
+
+
+dataset: locomo
+split: search                  # the training split — iterate here, not on test
+progressive: false
+sampling_seed: 42
+memory_cache: true
+
+# --- UNIFIED models (the two keys under test) --------------------------------
+simplemem_llm_model: gpt-5-mini            # paper: gpt-4.1-mini
+embedding_model: text-embedding-3-small    # paper: Qwen/Qwen3-Embedding-0.6B (local, 1024-dim)
+base_url: null
+
+# --- SimpleMem internal knobs (identical to config.example.yaml) -------------
+window_size: 20                # the paper's W=20 (the vendored code ships 40)
+overlap_size: 2
+semantic_top_k: 25
+keyword_top_k: 5
+structured_top_k: 5
+enable_planning: true
+enable_reflection: true
+max_reflection_rounds: 2
+enable_parallel_processing: true
+max_parallel_workers: 16
+enable_parallel_retrieval: true
+max_retrieval_workers: 8
+
+# --- shared eval -------------------------------------------------------------
+llm_model: gpt-5-mini
+judge_model: gpt-5-mini
+max_sample_concurrent: 3
+
+# --- Sizing: the smoke slice -------------------------------------------------
+single_stage:
+  n_conversations: 1
+  n_qa: 3
+stages: null
