@@ -140,6 +140,84 @@ Artifacts: `memo_archive/<dataset>/theta_<stamp>.json` +
 `evolution_summary_<stamp>.json` (per-round scores, accept/revert decisions, applied
 changes), and `results/<dataset>/<split>/` for scored runs.
 
+## Reproduction check (2026-08-14)
+
+Paper settings as far as our protocol allows: `weak` (BM25-only) start, gpt-4o,
+`max_rounds: 7`, whole **search** split — 6 conversations, 885 QA, 156 sessions.
+Internal token-F1, i.e. the metric the loop optimises (Eq. 3), not our judge.
+
+| round | ours | paper | our guard |
+|---|---|---|---|
+| R0 | **33.5** | 30.5 | start (BM25-only, k=5, B_ctx=8 — same θ₀) |
+| R1 | 32.9 | 35.8 | REJECT −0.006 → revert |
+| R2 | 37.2 | 34.8 | accept +0.037 (`fusion_mode → rrf`, semantic view on) |
+| R3 | 40.2 | 37.2 | accept +0.030 |
+| R4 | **40.6** | 38.5 | accept +0.004 — **best**, returned |
+| R5 | 40.3 | 38.1 | REJECT −0.003 |
+| R6 | 39.9 | 45.4 | REJECT −0.007 |
+| R7 | not run | **54.3** | — |
+
+**Verdict: the mechanism reproduces; the headline number does not, and most of the
+difference is contract, not method.**
+
+What reproduced: the starting point (33.5 vs 30.5 from an identical θ₀ — the
+cleanest anchor available, and it says extraction → retrieval → answer → token-F1
+line up end to end); the trajectory shape (a rejected round, then a climb); all
+three guard branches firing as Algorithm 1 specifies; and targeted re-extraction
+(Algorithm 1 lines 13–14) adding ~350 memories across rounds. R2–R5 ran above the
+paper's curve at the same round index.
+
+What did not: the paper's late jump (R6 45.4 → R7 54.3). Ours peaked at R4 and was
+rejected twice after. Diagnosis proposed the right *kind* of change — per-category
+overrides at R4/R5, a temporal-format flag at R6 — but they did not pay off here.
+
+### Read this before comparing per-category numbers: the taxonomies disagree
+
+**The paper's Table 2 column names do not follow LoCoMo's official category
+numbering.** Its appendix calls raw category 4 "open-domain aggregation" (its
+case-study probe `conv-26-95`, which is raw cat 4 in `locomo10.json`), while the
+official taxonomy — and this repo, and the mem0 / MemoryOS reproduction tables —
+call raw cat 4 **single-hop**. The data settles it: raw cat 4 is 54.6% of
+non-adversarial questions, matching LoCoMo's documented ~55% single-hop share.
+
+Weighting the paper's own columns by the true per-category counts confirms which
+mapping its table uses: **its mapping reproduces its reported Overall (0.544 vs
+0.543); the official mapping gives 0.480.** So pair by category id, never by name:
+
+| raw cat | this repo's name | paper's column | ours (R4) | paper | Δ | n (our split) |
+|---|---|---|---|---|---|---|
+| 1 | multi-hop | SingleHop | 33.4 | 32.9 | **+0.5** | 172 |
+| 2 | temporal | Temporal | 38.1 | 38.4 | −0.3 | 180 |
+| 3 | open-domain | MultiHop | 25.5 | 31.6 | −6.1 | 53 |
+| 4 | single-hop | OpenDomain | 45.8 | 49.6 | −3.8 | 480 |
+| 5 | adversarial | Adversarial | — excluded — | 93.6 | — | 0 |
+| | | **weighted, cats 1–4** | **40.6** | **43.1** | **−2.5** | 885 |
+
+So on the four categories both sides score, the gap is **2.5 points**, not 14. The
+headline difference is dominated by **Adversarial at 93.6**, the paper's highest
+cell, which this repo excludes entirely: 444 of 446 cat-5 items carry no `answer`
+key — only `adversarial_answer`, the trap option — so before `7235255`
+(2026-07-08) every one was judged against an empty gold, ~22% of LoCoMo scoring as
+noise. Upstream instead reads `qa.get("answer") or qa.get("adversarial_answer")`
+and evolves cat-5-specific machinery for it (the paper's R3 is "entity-swap for
+Cat. 5"). **That cell is unreachable without changing the shared eval contract**,
+which would invalidate every historical LoCoMo number in this repo.
+
+The paper publishes exactly one per-category trajectory (Appendix C.1, raw cat 4):
+41.0% at R0 → 49.6% at R7. Ours on the same category: 40.0% at R0 → 45.8% at R4.
+
+### Remaining, fixable differences
+
+- **Embedder.** Paper: `BAAI/bge-base-en-v1.5` (768-dim). This run: the config
+  default `all-MiniLM-L6-v2` (384-dim). The semantic view is what R2 switches on.
+- **One round short.** The paper's R_max=7 means R0–R7 (8 evaluations); our
+  `max_rounds: 7` produced R0–R6, so we never ran the round carrying its largest
+  single gain (+8.9).
+- **Scale.** 6 of 10 conversations, 885 vs 1,986 QA — the test split is off-limits
+  without manager authorization, so a full-benchmark number is not ours to take.
+
+Charts and the full write-up: dashboard page **baselines #1**.
+
 ## Faithfulness boundary
 
 | Category | Items |
@@ -158,10 +236,15 @@ the sampled search split and then runs diagnosis + meta-analysis, so cost scales
 with `rounds × split size`, and extraction (once, up front) scales with conversation
 length.
 
-Measured here (locomo, 1 conversation, 5 QA, `weak` start, gpt-4o-mini, 2 rounds):
-19 sessions → 305 memories, **322s wall-clock** end to end. The paper's headline is
-7 rounds over the full benchmark — budget accordingly, and get sign-off before a
-full-scale run.
+Measured, the paper-scale run (locomo/search, 6 conversations, 885 QA, 156
+sessions, `weak` start, gpt-4o, 7 rounds — the Reproduction check above):
+**7.14M tokens** (6.56M prompt / 585k completion) ≈ **$22** at gpt-4o list price,
+**2h17m** wall-clock. The engine answers questions **sequentially**, so wall-clock
+scales with `rounds × split size` and cannot be parallelised away.
+
+A cheap pilot for extrapolation (1 conversation, 152 QA, 3 rounds): 280k tokens,
+$0.82, 5.6 min. Scaling that by answer-call count predicted the full run within a
+factor of ~1.3 on cost — a pilot is the right way to size a run before paying for it.
 
 `max_rounds: 3` and a 1-conversation `single_stage` are the shipped defaults for
 that reason; the paper's setting is documented, not defaulted.

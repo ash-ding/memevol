@@ -146,8 +146,23 @@ async def run_evolution(cfg: Dict[str, Any]) -> Dict[str, Any]:
         from evolvemem.benchmarks import get_adapter
         adapter = get_adapter(adapter_name)
 
+    # Starting point: an archived theta if one is given, else the named initial
+    # config. Seeding from a prior theta is upstream's own `--prior` flow (used
+    # for the paper's cross-benchmark transfer result) and is what lets a run be
+    # extended without paying for the rounds already done.
+    #
+    # CAVEAT, state this wherever a resumed number is reported: resuming is NOT
+    # identical to having run the rounds continuously. The engine restarts its
+    # round counter and loses `attempt_history`, so diagnosis cannot see which
+    # proposals were already tried and rejected; and memories added by targeted
+    # re-extraction in the earlier run are not in the extraction cache, so the
+    # store restarts from the base extraction.
     embedder = None
-    theta0 = load_theta({"initial_config": cfg["initial_config"]})
+    resumed = bool(cfg.get("theta_path") or cfg.get("theta"))
+    theta0 = load_theta(cfg) if resumed else load_theta({"initial_config": cfg["initial_config"]})
+    if resumed:
+        print(f"[evolvemem] RESUMING from theta {cfg.get('theta_path')} — round counter and "
+              f"attempt_history restart; see README before reporting a resumed number")
     if theta0.fusion_mode != "keyword_only" and theta0.semantic_top_k > 0:
         embedder = _shared_embedder(cfg["embedding_model"])
 
@@ -171,10 +186,18 @@ async def run_evolution(cfg: Dict[str, Any]) -> Dict[str, Any]:
         ),
     )
 
+    # A search loop's cost is the thing you most need to see before scaling it,
+    # and this baseline is the one that CAN see it (llm_bridge routes every
+    # internal call through common.llm). `evaluate_memo` sets this up on the
+    # scoring path; the search path has to do it itself.
+    from common.tokens import init_global_tracker
+    tracker = init_global_tracker()
+
     started = time.time()
     # The engine is synchronous; keep the event loop free so `llm_bridge`'s
     # calls can be scheduled back onto it.
     result = await asyncio.to_thread(engine.evolve, sessions, qa_pairs, None)
+    token_summary = tracker.summary()
 
     summary = {
         "dataset": dataset,
@@ -185,14 +208,22 @@ async def run_evolution(cfg: Dict[str, Any]) -> Dict[str, Any]:
         "n_sessions": len(sessions),
         "n_qa": len(qa_pairs),
         "duration_seconds": round(time.time() - started, 1),
+        "token_usage": token_summary,
         "final_config": result.final_config,
+        # Field names follow upstream's RoundResult exactly (f1 / zero_f1_count /
+        # category_f1 / retrieval_config): guessing at them silently writes nulls.
         "rounds": [
             {
                 "round_id": r.round_id,
-                "score": getattr(r, "score", None),
-                "accepted": getattr(r, "accepted", None),
-                "improvements_applied": list(getattr(r, "improvements_applied", []) or []),
-                "config": getattr(r, "config", None),
+                "f1": r.f1,
+                "zero_f1_count": r.zero_f1_count,
+                "total_questions": r.total_questions,
+                "category_f1": r.category_f1,
+                "memory_count": r.memory_count,
+                "all_metrics": r.all_metrics,
+                "improvements_applied": list(r.improvements_applied or []),
+                "duration_seconds": r.duration_seconds,
+                "retrieval_config": r.retrieval_config,
             }
             for r in result.rounds
         ],
@@ -205,6 +236,11 @@ async def run_evolution(cfg: Dict[str, Any]) -> Dict[str, Any]:
         json.dumps(summary, indent=2), encoding="utf-8")
 
     print(result.trajectory())
+    for model, stats in (token_summary or {}).items():
+        if isinstance(stats, dict):
+            print(f"[evolvemem] tokens {model}: prompt={stats.get('prompt_tokens', 0):,} "
+                  f"completion={stats.get('completion_tokens', 0):,} "
+                  f"total={stats.get('total_tokens', 0):,}")
     print(f"[evolvemem] theta -> {run_dir / f'theta_{stamp}.json'}")
     return summary
 
