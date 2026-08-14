@@ -143,7 +143,11 @@ class DynamicMemWorkflow(BaseWorkflow):
                 prev_end = max(prev_end, len(visible))
                 if segment:
                     t1 = time.time()
-                    await self._phase1_update(memo, segment)
+                    # Phase set at the call site (see BaseWorkflow.run_single_user
+                    # for why); DynamicMem drives its own per-checkpoint ingest
+                    # loop and so needs its own wrapper.
+                    with tokens.phase(tokens.BUILD):
+                        await self._phase1_update(memo, segment)
                     total_ingested += len(segment)
                     log.info(
                         f"[Checkpoint {cp_idx}/{len(checkpoints_used)}] User {user_tag} "

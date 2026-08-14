@@ -26,9 +26,13 @@ covers both API and local work.
 Registration happens at the LIBRARY boundary (`install()`), for the same
 reason `common/openai_usage.py` patches the SDK boundary: the models are
 constructed deep inside vendored `src/` trees that are byte-identical to
-upstream and must not be edited. Patching the constructor METHOD (rather than
-rebinding the class name) also composes with the per-baseline `_st_shim`
-memoizing factories, whichever order they install in.
+upstream and must not be edited.
+
+It patches the constructor METHOD on the real class rather than rebinding the
+class name, so it composes with the per-baseline `_st_shim` memoizing
+factories in either install order — but finding that class takes care, since
+those factories rebind the package attribute to a plain function (see
+`_sentence_transformer_class`).
 """
 from __future__ import annotations
 
@@ -88,6 +92,47 @@ def _device_of(model: Any) -> Optional[str]:
         return None
 
 
+def _sentence_transformer_class() -> Any:
+    """The REAL `SentenceTransformer` class, however the package attribute has
+    been rebound.
+
+    `sentence_transformers.SentenceTransformer` is NOT reliably the class by
+    the time this runs: lightmem's and simplemem's `_st_shim` replace that
+    attribute with a memoizing FACTORY FUNCTION at memo.py import time, which
+    is before `evaluate_memo` installs this. Patching `__init__` on a function
+    object silently does nothing — which is exactly what happened on the first
+    real simplemem/LoCoMo run, whose run record reported no local models while
+    Qwen3-Embedding-0.6B was loaded and running.
+
+    Resolution order: unwrap the shim's stashed original, then the package
+    attribute if it really is a class, then the defining module (new path
+    first — `sentence_transformers.SentenceTransformer` is itself deprecated).
+    """
+    import sentence_transformers as _st
+
+    candidate = getattr(_st, "SentenceTransformer", None)
+    # The shims stash the original on the wrapper for exactly this purpose.
+    unwrapped = getattr(candidate, "_real_sentence_transformer", None)
+    if isinstance(unwrapped, type):
+        return unwrapped
+    if isinstance(candidate, type):
+        return candidate
+    for module_path in ("sentence_transformers.sentence_transformer.model",
+                        "sentence_transformers.SentenceTransformer"):
+        try:
+            import importlib
+            module = importlib.import_module(module_path)
+            cls = getattr(module, "SentenceTransformer", None)
+            if isinstance(cls, type):
+                return cls
+        except ImportError:
+            continue
+    raise RuntimeError(
+        "could not resolve the real SentenceTransformer class "
+        f"(package attribute is {type(candidate).__name__})"
+    )
+
+
 def install() -> bool:
     """Patch the local-model constructors to self-register. Idempotent.
 
@@ -103,9 +148,8 @@ def install() -> bool:
 
     # --- sentence-transformers: every local embedder in the fleet ---
     try:
-        import sentence_transformers as _st
-
-        real_init = _st.SentenceTransformer.__init__
+        cls = _sentence_transformer_class()
+        real_init = cls.__init__
         if not getattr(real_init, "__wrapped_by_memevol__", False):
             def _init(self, *args, **kwargs):
                 real_init(self, *args, **kwargs)
@@ -114,10 +158,16 @@ def install() -> bool:
                          library="sentence-transformers")
 
             _init.__wrapped_by_memevol__ = True   # type: ignore[attr-defined]
-            _st.SentenceTransformer.__init__ = _init
+            cls.__init__ = _init
             patched = True
     except Exception as exc:
-        log.debug(f"[local-model] sentence-transformers not tracked: {exc!r}")
+        # LOUD, not debug: a silent failure here produces an empty
+        # `local_models` in the run record, which reads as "nothing local ran"
+        # — the exact false-completeness this module exists to prevent.
+        log.warning(
+            f"[local-model] could not track sentence-transformers ({exc!r}); "
+            f"local embedders will be MISSING from the run record"
+        )
 
     # --- transformers: LLMlingua-2 (token classifier) and cross-encoders ---
     try:

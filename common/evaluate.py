@@ -601,6 +601,11 @@ async def evaluate_memo(
     # what ran and no cost figure is read as complete when it is not.
     from common import local_models as _local_models
     _local_models.install()
+    # Vendored systems fan LLM calls out across their own thread pools;
+    # `ThreadPoolExecutor.submit` drops contextvars, which would file that
+    # work under `other` instead of the phase that started it.
+    from common.tokens import install_thread_context_propagation
+    install_thread_context_propagation()
 
     # ---- cross-stage memory cache (gauntlet + single; never smoke/sanity) ----
     fingerprint = ""

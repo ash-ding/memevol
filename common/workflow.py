@@ -568,7 +568,14 @@ class BaseWorkflow(ABC):
             log.info(f"[Phase 1] User {user_tag} memory loaded from cache "
                      f"({time.time() - t1:.1f}s)")
         else:
-            await self._phase1_update(memo, init_data)
+            # Wrapped at the CALL SITE, not inside `_phase1_update`: benchmarks
+            # override that method (LoCoMo's init_data is a conversation dict,
+            # not a list) and an override does not inherit a phase block living
+            # in the base implementation. A real simplemem/LoCoMo run filed
+            # 151k build tokens under `other` before this moved out here.
+            # Everything spent inside is the cost of HAVING the memory.
+            with tokens.phase(tokens.BUILD):
+                await self._phase1_update(memo, init_data)
             t1_elapsed = time.time() - t1
             item_count = self._phase1_item_count(init_data)
             log.info(
@@ -750,10 +757,7 @@ class BaseWorkflow(ABC):
         r = self.recorder_class()
         await self.phase1_log_init(r, items)
         try:
-            # Everything the memory system spends here is the cost of HAVING
-            # the memory — the headline number this repo reports.
-            with tokens.phase(tokens.BUILD):
-                await memo.build_memory_from_data(r)
+            await memo.build_memory_from_data(r)
         except Exception as exc:
             log.warning(f"build_memory_from_data failed: {exc}")
             raise RuntimeError(f"[Phase1_Update] {type(exc).__name__}: {exc}") from exc

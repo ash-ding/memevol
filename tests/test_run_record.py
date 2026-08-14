@@ -91,6 +91,44 @@ def test_device_is_read_off_the_model():
     assert L._device_of(_Opaque()) is None
 
 
+def test_registration_survives_a_baseline_st_shim_taking_the_name_first():
+    """REGRESSION (found by a real simplemem/LoCoMo run, which reported NO
+    local models while Qwen3-Embedding-0.6B was loaded): lightmem's and
+    simplemem's `_st_shim` rebind `sentence_transformers.SentenceTransformer`
+    to a memoizing FUNCTION at memo.py import time — before evaluate_memo
+    installs this. Patching `__init__` on a function object silently does
+    nothing, so the real class has to be resolved explicitly."""
+    import sentence_transformers as st
+
+    real_cls = st.SentenceTransformer
+    L.reset()
+    L._installed = False
+    try:
+        # Stand in for the baseline shim: the package attribute is now a
+        # plain function, exactly as _st_shim leaves it.
+        def _memoizing_factory(*args, **kwargs):
+            return real_cls(*args, **kwargs)
+
+        _memoizing_factory._real_sentence_transformer = real_cls
+        st.SentenceTransformer = _memoizing_factory
+
+        assert L._sentence_transformer_class() is real_cls, "resolved the wrong object"
+
+        real_init = real_cls.__init__
+        try:
+            real_cls.__init__ = lambda self, *a, **k: None
+            L.install()
+            obj = real_cls.__new__(real_cls)
+            real_cls.__init__(obj, "Qwen/Qwen3-Embedding-0.6B")
+        finally:
+            real_cls.__init__ = real_init
+    finally:
+        st.SentenceTransformer = real_cls
+        L._installed = True
+
+    assert [m["name"] for m in L.summary()] == ["Qwen/Qwen3-Embedding-0.6B"]
+
+
 def test_install_patches_the_local_model_entry_points():
     import sentence_transformers as st
     import transformers as tf

@@ -219,6 +219,93 @@ def test_phase_is_not_raced_across_concurrent_users():
     assert by_phase["judge"]["calls"] == 6 * _Workflow.N_QA
 
 
+def test_build_phase_survives_a_phase1_update_override():
+    """REGRESSION (found by a real simplemem/LoCoMo run): the build phase used
+    to be set INSIDE BaseWorkflow._phase1_update, but LoCoMo overrides that
+    method (its init_data is a conversation dict, not a list), and an override
+    inherits nothing from the base implementation's body. 151k build tokens
+    were filed under `other`. The phase now lives at the CALL SITE."""
+    class _OverridingWorkflow(_Workflow):
+        async def _phase1_update(self, memo, init_data):
+            # LoCoMo's shape: duplicates the base logic, no super() call.
+            r = self.recorder_class()
+            await self.phase1_log_init(r, init_data)
+            await memo.build_memory_from_data(r)
+
+    tracker, _, _, _ = _run(workflow_cls=_OverridingWorkflow)
+    by_phase = tracker.summary()["by_phase"]
+    assert by_phase.get("build", {}).get("calls") == 1, (
+        f"build tokens escaped the phase: {by_phase}")
+    assert "other" not in by_phase
+
+
+def test_build_wall_clock_is_recorded_for_an_override_too():
+    """The same bug also left `build` missing from phase_seconds entirely,
+    which is how it was spotted — wall-clock is the only cost signal that
+    covers local compute, so a missing phase there hides real cost."""
+    class _OverridingWorkflow(_Workflow):
+        async def _phase1_update(self, memo, init_data):
+            r = self.recorder_class()
+            await self.phase1_log_init(r, init_data)
+            await memo.build_memory_from_data(r)
+
+    tracker, _, _, _ = _run(workflow_cls=_OverridingWorkflow)
+    assert "build" in tracker.summary()["phase_seconds"]
+
+
+def test_build_phase_is_not_double_counted():
+    """The wrapper moved to the call site; a leftover one inside
+    _phase1_update would nest build inside build and bill the time twice.
+    Build sleeps a known duration, so double counting is measurable."""
+    SLEEP = 0.05
+
+    class _SlowBuildMemo(_Memo):
+        async def build_memory_from_data(self, recorder) -> None:
+            await asyncio.sleep(SLEEP)
+
+    tracker, _, _, _ = _run(memo_cls=_SlowBuildMemo, users=("u1",))
+    build = tracker.summary()["phase_seconds"]["build"]
+    assert build >= SLEEP * 0.8, f"build wall-clock not recorded: {build}"
+    assert build < SLEEP * 1.8, f"build time counted twice: {build} vs {SLEEP}"
+
+
+def test_phase_survives_a_vendored_thread_pool():
+    """Vendored systems (simplemem) fan LLM calls out over their own
+    ThreadPoolExecutor, whose `submit` does NOT carry contextvars — those
+    calls would land in `other`."""
+    import concurrent.futures
+    T.install_thread_context_propagation()
+    tracker = _fresh_tracker()
+
+    def _worker():
+        tracker.update("m", _usage(10, 1))
+        return T.current_phase()
+
+    with T.phase(T.BUILD):
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+            seen = [f.result() for f in [pool.submit(_worker) for _ in range(4)]]
+
+    assert seen == ["build"] * 4, seen
+    assert tracker.summary()["by_phase"]["build"]["calls"] == 4
+
+
+def test_thread_propagation_copies_rather_than_shares_context():
+    """A worker's own phase changes must not leak back to the caller or to
+    sibling workers."""
+    import concurrent.futures
+    T.install_thread_context_propagation()
+
+    def _worker():
+        with T.phase(T.RETRIEVE):
+            pass
+        return T.current_phase()
+
+    with T.phase(T.BUILD):
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            [f.result() for f in [pool.submit(_worker) for _ in range(2)]]
+        assert T.current_phase() == "build"
+
+
 def test_judge_phase_is_forced_not_inherited():
     """Judging is evaluation overhead — it must never be billed to a memory
     phase, even when scored from inside a build block."""

@@ -358,6 +358,52 @@ def read_total_tokens(data: Dict[str, Any]) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Phase propagation into worker threads
+# ---------------------------------------------------------------------------
+
+_thread_propagation_installed = False
+
+
+def install_thread_context_propagation() -> bool:
+    """Make `ThreadPoolExecutor.submit` carry the caller's context, so work
+    handed to a worker thread keeps its phase. Idempotent.
+
+    Several vendored systems fan their LLM calls out across their own thread
+    pools — simplemem compresses windows at `max_parallel_workers` and
+    searches at `max_retrieval_workers`, both `concurrent.futures`. `submit`
+    does NOT copy contextvars (unlike `asyncio.to_thread`), so every call made
+    inside those pools would be attributed to `other` instead of to the phase
+    that started them, and the numbers would understate build for exactly the
+    baselines that parallelize hardest.
+
+    Editing those pools is not an option — they live under `src/`, which is
+    byte-identical to upstream. So propagate at the stdlib boundary, the same
+    pattern as `common/openai_usage.py`. This only widens contextvar
+    visibility inside workers; it changes no scheduling or execution
+    semantics, and copies (never shares) the context, so a worker's own
+    contextvar writes stay local to it.
+    """
+    global _thread_propagation_installed
+    if _thread_propagation_installed:
+        return False
+    import concurrent.futures
+
+    real_submit = concurrent.futures.ThreadPoolExecutor.submit
+    if getattr(real_submit, "__wrapped_by_memevol__", False):
+        _thread_propagation_installed = True
+        return False
+
+    def submit(self, fn, /, *args, **kwargs):
+        ctx = contextvars.copy_context()
+        return real_submit(self, lambda: ctx.run(fn, *args, **kwargs))
+
+    submit.__wrapped_by_memevol__ = True    # type: ignore[attr-defined]
+    concurrent.futures.ThreadPoolExecutor.submit = submit
+    _thread_propagation_installed = True
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Offline text token counting (memory-token measurement)
 #
 # Not usage reporting — this counts tokens in text we assembled ourselves,
