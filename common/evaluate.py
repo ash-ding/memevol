@@ -399,6 +399,33 @@ def _stage_cost_metrics(stage_usage: Dict[str, Any],
     }
 
 
+def _memory_token_metrics(recorder_list: List[Any]) -> Dict[str, Any]:
+    """Memory tokens for one stage, summed over its users.
+
+    `memory_tokens_per_query` divides by the queries actually PROMPTED —
+    steps where retrieval returned and a QA prompt was built. A query whose
+    QA call then failed still had the memory stitched into a prompt, so its
+    cost was genuinely incurred. `memory_tokens_n_answered` carries the
+    stricter denominator so the other reading stays recoverable; neither is
+    the sampled count, which differs whenever a query fails.
+    """
+    total = 0
+    n_prompted = 0
+    n_answered = 0
+    for rec in recorder_list:
+        if isinstance(rec, Exception):
+            continue
+        total += int(getattr(rec, "memory_tokens_total", 0))
+        n_prompted += int(getattr(rec, "memory_tokens_n", 0))
+        n_answered += int(getattr(rec, "memory_tokens_answered_n", 0))
+    return {
+        "memory_tokens_total": total,
+        "memory_tokens_per_query": (total / n_prompted) if n_prompted else 0.0,
+        "memory_tokens_n_queries": n_prompted,
+        "memory_tokens_n_answered": n_answered,
+    }
+
+
 #: Cost fields accumulated ACROSS executed stages (cost accounting spans the
 #: whole gauntlet, not just the last stage). `phase_seconds` and the cache
 #: tallies are merged separately — they are not flat ints.
@@ -406,6 +433,9 @@ _CUMULATIVE_COST_FIELDS = (
     "tokens", "tokens_build", "tokens_retrieve", "tokens_memory",
     "tokens_answer", "tokens_judge", "llm_calls",
     "build_cache_hits", "build_cache_misses",
+    "memory_tokens_total", "memory_tokens_n_queries", "memory_tokens_n_answered",
+    # NOTE: memory_tokens_per_query is a RATIO — recomputed from the
+    # accumulated total/denominator, never summed.
 )
 
 
@@ -475,10 +505,29 @@ async def evaluate_memo(
     traces/}``; afterwards the reached stage's score.json / token_usage.json /
     traces/ are copied to the out_dir root and a ``stages.json`` summary is
     written (non-smoke). A root score.json is guaranteed even when the first
-    stage crashes (error score), so callers can always read one. Returns the
-    metrics dict {raw_score, score_max, per_user_stddev, tokens, stage,
-    eliminated} (stage: 1/2/3 gauntlet tier, FULL_STAGE for the single pass,
-    0.0 for smoke).
+    stage crashes (error score), so callers can always read one.
+
+    Returns the metrics dict, accumulated across every executed stage:
+
+      raw_score, score_max, per_user_stddev, stage, eliminated
+      tokens                     ALL-PHASE token total (unchanged meaning —
+                                 forge's `tokens_total` objective)
+      tokens_build               cost of BUILDING the memory
+      tokens_retrieve            memory-system work at query time
+      tokens_memory              build + retrieve
+      tokens_answer/_judge       QA agent / evaluation overhead
+      llm_calls                  request count
+      phase_seconds              wall-clock per phase — the only cost signal
+                                 that also covers local models
+      build_cache_hits/_misses   a cached build spends no tokens; a
+                                 tokens_build of 0 beside a non-zero hit
+                                 count means "not measured", not "free"
+      memory_tokens_total        tokens the memory added to the QA prompts
+      memory_tokens_per_query    the recurring cost of USING the memory
+      memory_tokens_n_queries    denominator: queries actually prompted
+      memory_tokens_n_answered   stricter denominator (answer succeeded)
+
+    (stage: 1/2/3 gauntlet tier, FULL_STAGE for the single pass, 0.0 for smoke.)
 
     ``sample_seed`` rides every stage spec (constant across stages so the
     stage1 ⊂ stage2 ⊂ stage3 nesting holds). ``memory_cache`` mounts the
@@ -568,13 +617,15 @@ async def evaluate_memo(
         stddev: Optional[float] = None
         crashed: Optional[Exception] = None
         stage_usage: Dict[str, Any] = {}
+        stage_records: List[Any] = []
         try:
             records, rlen = await workflow.run_all_users(
                 task_list, stage=stage_name, stage_spec=spec,
                 max_sample_concurrent=max_sample_concurrent,
             )
-            workflow.save_full_traces(records[:rlen])
-            score = _build_score_json(records[:rlen])
+            stage_records = records[:rlen]
+            workflow.save_full_traces(stage_records)
+            score = _build_score_json(stage_records)
             raw_score = float(score["benchmark_eval_score"]["benchmark_overall_eval_score"])
             stddev = _per_user_stddev(score)
             stage_usage = _diff_summary(tracker.summary(), usage_before)
@@ -588,7 +639,8 @@ async def evaluate_memo(
         if not stage_usage:
             stage_usage = _diff_summary(tracker.summary(), usage_before)
 
-        cost = _stage_cost_metrics(stage_usage, workflow)
+        cost = {**_stage_cost_metrics(stage_usage, workflow),
+                **_memory_token_metrics(stage_records)}
         m: Dict[str, Any] = {
             "raw_score": raw_score,
             "score_max": workflow.judge_score_max,
@@ -617,6 +669,11 @@ async def evaluate_memo(
                 m[field] += int(s.get(field, 0))
             for ph, secs in s.get("phase_seconds", {}).items():
                 m["phase_seconds"][ph] = round(m["phase_seconds"].get(ph, 0.0) + secs, 3)
+        # A ratio, so recomputed from the accumulated pair rather than summed.
+        m["memory_tokens_per_query"] = (
+            m["memory_tokens_total"] / m["memory_tokens_n_queries"]
+            if m["memory_tokens_n_queries"] else 0.0
+        )
         final_metrics = m
         reached = stage_name
         if crashed is not None:

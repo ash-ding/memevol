@@ -357,6 +357,45 @@ def read_total_tokens(data: Dict[str, Any]) -> int:
     )
 
 
+# ---------------------------------------------------------------------------
+# Offline text token counting (memory-token measurement)
+#
+# Not usage reporting — this counts tokens in text we assembled ourselves,
+# before any API call. Used by common/workflow.py to measure how much the
+# retrieved memory added to the QA prompt.
+# ---------------------------------------------------------------------------
+
+_ENCODER_CACHE: Dict[str, Any] = {}
+_ENCODER_LOCK = threading.Lock()
+
+
+def _encoder_for(model: str):
+    """tiktoken encoder for `model`, cached per process.
+
+    Unknown / non-OpenAI model names (claude-*, local models) fall back to
+    cl100k_base: the resulting count is then an approximation, but memory
+    tokens are used as a RELATIVE cost signal, and the same encoding is
+    applied to both sides of the differential.
+    """
+    with _ENCODER_LOCK:
+        enc = _ENCODER_CACHE.get(model)
+        if enc is None:
+            import tiktoken
+            try:
+                enc = tiktoken.encoding_for_model(model)
+            except KeyError:
+                enc = tiktoken.get_encoding("cl100k_base")
+            _ENCODER_CACHE[model] = enc
+        return enc
+
+
+def count_text_tokens(text: str, model: str = "gpt-4o") -> int:
+    """Token count of `text` under `model`'s encoding."""
+    if not text:
+        return 0
+    return len(_encoder_for(model).encode(text))
+
+
 GLOBAL_TOKEN_TRACKER: Optional[TokenTracker] = None
 
 

@@ -237,6 +237,16 @@ class DynamicMemWorkflow(BaseWorkflow):
         memory_blocks = tce.retrieved_to_memory_blocks(retrieved)
         prompt = self._build_answer_prompt(item, memory_blocks)
 
+        # Memory tokens, measured against the OFFICIAL prompt this benchmark
+        # actually sends — DynamicMem answers through `_build_answer_prompt`
+        # (per task family), not the ABC-compat `build_qa_prompt`, so the
+        # base class's measurement point does not apply here.
+        try:
+            memory_tokens = self._measure_memory_tokens(
+                recorder, prompt, self._build_answer_prompt(item, []))
+        except Exception:
+            memory_tokens = None
+
         from common.llm import Agent
         agent = Agent(system_prompt="", model=self.model)
         answer_err: Optional[Tuple[str, str]] = None
@@ -265,6 +275,10 @@ class DynamicMemWorkflow(BaseWorkflow):
             judge_reason=judge_reason, qa_metadata=qa_metadata,
             retrieved_memory=retrieved, relevant_context=relevant_context,
         )
+        self._stamp_memory_tokens(recorder, memory_tokens)
+        if answer_err is None and memory_tokens is not None:
+            recorder.memory_tokens_answered_n = getattr(
+                recorder, "memory_tokens_answered_n", 0) + 1
         return answer_err
 
     def _build_answer_prompt(self, item: Dict, memory_blocks: List[str]) -> str:
