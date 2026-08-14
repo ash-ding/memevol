@@ -558,9 +558,12 @@ class Agent:
             what="Agent",
         )
 
+        # A completed request counts even when the server returned no usage
+        # block — the call was made and paid for. The phase comes from the
+        # ambient ContextVar (common.tokens.phase, set by common/workflow.py).
         from common.tokens import GLOBAL_TOKEN_TRACKER
-        if GLOBAL_TOKEN_TRACKER is not None and usage:
-            await GLOBAL_TOKEN_TRACKER.update(model_name=self.model, usage=usage)
+        if GLOBAL_TOKEN_TRACKER is not None:
+            GLOBAL_TOKEN_TRACKER.update(model_name=self.model, usage=usage)
 
         self.messages.append({'role': 'assistant', 'content': answer})
 
@@ -648,9 +651,15 @@ class Embedding:
         except RuntimeError:
             return asyncio.run(_run())
 
+        # `ThreadPoolExecutor.submit` does NOT carry contextvars into the
+        # worker (unlike `asyncio.to_thread`), so the ambient LLM phase
+        # (common.tokens.phase) would be lost and these embeddings would be
+        # filed under "other". Copy the calling context explicitly.
         import concurrent.futures
+        import contextvars
+        ctx = contextvars.copy_context()
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(lambda: asyncio.run(_run()))
+            future = pool.submit(lambda: ctx.run(lambda: asyncio.run(_run())))
             return future.result()
 
     async def get_embedding(self, text: str) -> List[float]:
@@ -665,8 +674,10 @@ class Embedding:
                 model=self.model, input=text, timeout=request_timeout
             )
             from common.tokens import GLOBAL_TOKEN_TRACKER
-            if GLOBAL_TOKEN_TRACKER is not None and hasattr(resp, "usage"):
-                await GLOBAL_TOKEN_TRACKER.update(model_name=self.model, usage=resp.usage)
+            if GLOBAL_TOKEN_TRACKER is not None:
+                GLOBAL_TOKEN_TRACKER.update(
+                    model_name=self.model, usage=getattr(resp, "usage", None)
+                )
             return resp.data[0].embedding
 
         try:
@@ -744,8 +755,10 @@ class Embedding:
                     model=self.model, input=chunk_input, timeout=request_timeout
                 )
                 from common.tokens import GLOBAL_TOKEN_TRACKER
-                if GLOBAL_TOKEN_TRACKER is not None and hasattr(resp, "usage"):
-                    await GLOBAL_TOKEN_TRACKER.update(model_name=self.model, usage=resp.usage)
+                if GLOBAL_TOKEN_TRACKER is not None:
+                    GLOBAL_TOKEN_TRACKER.update(
+                        model_name=self.model, usage=getattr(resp, "usage", None)
+                    )
                 for j, item in zip(chunk, resp.data):
                     all_embeddings[j] = item.embedding
 

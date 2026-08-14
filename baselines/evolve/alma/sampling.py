@@ -17,7 +17,9 @@ the analysis / generation prompts can be reused without changes:
         ...,
         {"error_info": "...", "score": 0.0},  # for each invalid user / partial failure
       ],
-      "token_usage": { per_model: {...} },
+      "token_usage": common.tokens.TokenTracker.summary() — phase-keyed
+                     ({by_model_phase, by_phase, totals, ...}), replayed into
+                     the main-process tracker by memo_manager.
     }
 """
 

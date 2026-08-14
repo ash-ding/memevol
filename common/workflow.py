@@ -30,6 +30,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Type
 
+from common import tokens
 from common.memo_class import MemoClass
 from common.logger import get_logger
 from common.recorder import Basic_Recorder
@@ -163,8 +164,14 @@ class BaseWorkflow(ABC):
             expect.update(extra_meta)
         loaded = mc.load_memo(self.memory_cache_dir, key, expect,
                               memo_factory=self.memo_class)
+        # Cache hits spend NO build tokens — true for this run, misleading if
+        # read as the harness's build cost. The tallies ride out in the stage
+        # metrics so a 0 is never mistaken for a free memory system.
         if loaded is not None:
+            self.build_cache_hits += 1
             log.info(f"[memcache] hit: {key}")
+        else:
+            self.build_cache_misses += 1
         return loaded
 
     def _cache_save(self, memo, key: str, extra_meta: Optional[Dict] = None) -> None:
@@ -219,6 +226,11 @@ class BaseWorkflow(ABC):
         # against reusing memory built by different harness code.
         self.memory_cache_dir: Optional[Path] = None
         self.harness_fingerprint: str = ""
+        # Build-cache tallies (see `_cache_load`) — a cached build spends no
+        # tokens, so cost readers need to know how much of the build was
+        # actually paid for during THIS run.
+        self.build_cache_hits = 0
+        self.build_cache_misses = 0
         # Lazy-constructed Judge (per common.metric.Judge). Subclasses can
         # override `_make_judge` to customize prompt / score range.
         self._judge_instance = None
@@ -508,7 +520,8 @@ class BaseWorkflow(ABC):
             retrieve_recorder.init = self.build_query_recorder_init(init_data, qa)
 
             try:
-                retrieved = await memo.retrieve_memory_for_query(retrieve_recorder)
+                with tokens.phase(tokens.RETRIEVE):
+                    retrieved = await memo.retrieve_memory_for_query(retrieve_recorder)
             except Exception as exc:
                 # Per-QA failure isolation: log a score=0 step and continue
                 # to the next QA — a single bad query must not silently
@@ -552,12 +565,13 @@ class BaseWorkflow(ABC):
 
             full_prompt = f"{system_msg}\n\n{user_msg}" if system_msg else user_msg
             try:
-                answer = await memo.use_memory_to_answer(retrieve_recorder, retrieved, full_prompt)
-                if answer is None:
-                    agent.messages = [{"role": "system", "content": system_msg}]
-                    answer = await agent.ask(
-                        user_msg, with_history=False, reasoning_effort=self.reasoning_effort
-                    )
+                with tokens.phase(tokens.ANSWER):
+                    answer = await memo.use_memory_to_answer(retrieve_recorder, retrieved, full_prompt)
+                    if answer is None:
+                        agent.messages = [{"role": "system", "content": system_msg}]
+                        answer = await agent.ask(
+                            user_msg, with_history=False, reasoning_effort=self.reasoning_effort
+                        )
             except Exception as exc:
                 # QA-agent transport failure (retries already exhausted in
                 # common.llm). Mirror the retrieve-error path: record a
@@ -585,10 +599,16 @@ class BaseWorkflow(ABC):
                     await qa_tracker.increment()
                 continue
 
-            score, judge_reason = await self.judge(
-                qa["query"], answer, qa.get("reference", ""),
-                qa_metadata=qa_metadata,
-            )
+            # Wrapped at the CALL SITE, not inside common.metric.Judge:
+            # benchmarks override `judge` (LongMemEval dispatches per
+            # question_type; DynamicMem uses its own TCE judge, which does not
+            # go through common.metric at all), and the call site is the one
+            # place all of them pass through.
+            with tokens.phase(tokens.JUDGE):
+                score, judge_reason = await self.judge(
+                    qa["query"], answer, qa.get("reference", ""),
+                    qa_metadata=qa_metadata,
+                )
 
             await self.log_qa_step(
                 recorder=recorder,
@@ -635,7 +655,10 @@ class BaseWorkflow(ABC):
         r = self.recorder_class()
         await self.phase1_log_init(r, items)
         try:
-            await memo.build_memory_from_data(r)
+            # Everything the memory system spends here is the cost of HAVING
+            # the memory — the headline number this repo reports.
+            with tokens.phase(tokens.BUILD):
+                await memo.build_memory_from_data(r)
         except Exception as exc:
             log.warning(f"build_memory_from_data failed: {exc}")
             raise RuntimeError(f"[Phase1_Update] {type(exc).__name__}: {exc}") from exc

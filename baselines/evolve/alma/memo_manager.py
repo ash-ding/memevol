@@ -132,10 +132,22 @@ class Memo_Manager:
         all_success = not any("error_info" in ex for ex in artifact.get("examples", []))
 
         # Aggregate subprocess token usage into the main-process global tracker.
+        # The subprocess's token_usage.json is phase-keyed
+        # ({model: {phase: counters}} under `by_model_phase`), so the phases
+        # are replayed EXPLICITLY — the ContextVar in this process says
+        # nothing about what the subprocess was doing. `calls` is replayed as
+        # a single synthetic update per (model, phase) carrying the batch's
+        # totals, so the token sums are exact; the call count is restated
+        # below rather than incremented one-by-one.
         from common.tokens import GLOBAL_TOKEN_TRACKER
         if GLOBAL_TOKEN_TRACKER is not None:
-            for model_name, usage_dict in artifact.get("token_usage", {}).items():
-                await GLOBAL_TOKEN_TRACKER.update(model_name=model_name, usage=usage_dict)
+            usage = artifact.get("token_usage", {}) or {}
+            for model_name, phases in usage.get("by_model_phase", {}).items():
+                for phase_name, counters in phases.items():
+                    GLOBAL_TOKEN_TRACKER.update(
+                        model_name=model_name, usage=counters,
+                        phase_name=phase_name, calls=int(counters.get("calls", 0)),
+                    )
 
         return all_success, artifact, structure_sha, code
 

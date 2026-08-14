@@ -363,11 +363,50 @@ def _per_user_stddev(score: Dict[str, Any]) -> Optional[float]:
     return (sum((r - mean) ** 2 for r in rewards) / len(rewards)) ** 0.5
 
 
-def _total_tokens(summary: Dict[str, Any]) -> int:
-    """Sum total_tokens across all models in a TokenTracker.summary()."""
-    return sum(
-        int(m.get("total_tokens", 0)) for m in summary.values() if isinstance(m, dict)
-    )
+def _stage_cost_metrics(stage_usage: Dict[str, Any],
+                        workflow: Any) -> Dict[str, Any]:
+    """Cost block for one stage's metrics dict, from that stage's usage delta.
+
+    `tokens` stays the ALL-PHASE total (unchanged semantics — forge's
+    `tokens_total` frontier objective and every frontier entry recorded before
+    the phase dimension existed mean exactly this). The phase split arrives as
+    ADDITIONAL keys rather than by redefining the old one:
+
+      tokens_build     the cost of HAVING the memory — the issue's headline
+      tokens_retrieve  memory-system work at query time
+      tokens_memory    build + retrieve = the full cost of operating the memory
+      tokens_answer    the QA agent (cost of answering, not of the memory)
+      tokens_judge     evaluation overhead — never part of a cost claim
+      llm_calls        request count, all phases
+
+    `build_cache_hits` rides along because a cached build spends no tokens:
+    a `tokens_build` of 0 next to a non-zero hit count means "not measured
+    here", not "free".
+    """
+    from common.tokens import (ANSWER, BUILD, JUDGE, MEMORY_PHASES, RETRIEVE,
+                               phase_tokens, total_tokens)
+    return {
+        "tokens": total_tokens(stage_usage),
+        "tokens_build": phase_tokens(stage_usage, BUILD),
+        "tokens_retrieve": phase_tokens(stage_usage, RETRIEVE),
+        "tokens_memory": phase_tokens(stage_usage, *MEMORY_PHASES),
+        "tokens_answer": phase_tokens(stage_usage, ANSWER),
+        "tokens_judge": phase_tokens(stage_usage, JUDGE),
+        "llm_calls": int(stage_usage.get("totals", {}).get("calls", 0)),
+        "phase_seconds": dict(stage_usage.get("phase_seconds", {})),
+        "build_cache_hits": int(getattr(workflow, "build_cache_hits", 0)),
+        "build_cache_misses": int(getattr(workflow, "build_cache_misses", 0)),
+    }
+
+
+#: Cost fields accumulated ACROSS executed stages (cost accounting spans the
+#: whole gauntlet, not just the last stage). `phase_seconds` and the cache
+#: tallies are merged separately — they are not flat ints.
+_CUMULATIVE_COST_FIELDS = (
+    "tokens", "tokens_build", "tokens_retrieve", "tokens_memory",
+    "tokens_answer", "tokens_judge", "llm_calls",
+    "build_cache_hits", "build_cache_misses",
+)
 
 
 def _memo_source_dir(memo_class: type) -> Optional["Path"]:
@@ -454,7 +493,7 @@ async def evaluate_memo(
     import shutil as _shutil
     from pathlib import Path
     from benchmarks.registry import resolve as _resolve_dataset
-    from common.tokens import init_global_tracker
+    from common.tokens import diff_summary as _diff_summary, init_global_tracker
     from common.memory_cache import harness_fingerprint as _dir_fingerprint
 
     out_dir = Path(out_dir)
@@ -519,10 +558,16 @@ async def evaluate_memo(
             workflow.memory_cache_dir = memcache_dir
             workflow.harness_fingerprint = fingerprint
 
-        tokens_before = _total_tokens(tracker.summary())
+        # The tracker is process-global and CUMULATIVE, but each stage's
+        # token_usage.json must describe that stage alone — snapshot before,
+        # subtract after. (Before this, stage2's file silently contained
+        # stage1's tokens while the `tokens` metric beside it was a correct
+        # delta, and the two disagreed.)
+        usage_before = tracker.summary()
         raw_score = 0.0
         stddev: Optional[float] = None
         crashed: Optional[Exception] = None
+        stage_usage: Dict[str, Any] = {}
         try:
             records, rlen = await workflow.run_all_users(
                 task_list, stage=stage_name, stage_spec=spec,
@@ -532,32 +577,46 @@ async def evaluate_memo(
             score = _build_score_json(records[:rlen])
             raw_score = float(score["benchmark_eval_score"]["benchmark_overall_eval_score"])
             stddev = _per_user_stddev(score)
+            stage_usage = _diff_summary(tracker.summary(), usage_before)
             with (stage_dir / "score.json").open("w", encoding="utf-8") as f:
                 _json.dump(score, f, indent=2, ensure_ascii=False)
             with (stage_dir / "token_usage.json").open("w", encoding="utf-8") as f:
-                _json.dump(tracker.summary(), f, indent=2, ensure_ascii=False)
+                _json.dump(stage_usage, f, indent=2, ensure_ascii=False)
         except Exception as exc:  # a crashed stage eliminates + stops
             crashed = exc
-        tokens_after = _total_tokens(tracker.summary())
+        # A crashed stage still burned tokens before it died — count them.
+        if not stage_usage:
+            stage_usage = _diff_summary(tracker.summary(), usage_before)
 
+        cost = _stage_cost_metrics(stage_usage, workflow)
         m: Dict[str, Any] = {
             "raw_score": raw_score,
             "score_max": workflow.judge_score_max,
             "per_user_stddev": stddev,
-            "tokens": tokens_after - tokens_before,
+            **cost,
         }
         score_max = int(m["score_max"]) or 1
         normalized = raw_score / score_max
+        # stages.json keeps THIS stage's cost; `m` below accumulates across
+        # stages. `cost` is deep-copied into both so the accumulation cannot
+        # mutate the per-stage record through the shared phase_seconds dict.
         stage_summary[stage_name] = {
             "raw_score": raw_score,
             "score_max": m["score_max"],
             "normalized": normalized,
             "threshold": threshold,
-            "tokens": m["tokens"],
+            **copy.deepcopy(cost),
             "spec": spec,
         }
+        m["phase_seconds"] = dict(cost["phase_seconds"])
         # Cost accounting spans ALL executed stages, not just the last.
-        m["tokens"] += sum(s["tokens"] for k, s in stage_summary.items() if k != stage_name)
+        for k, s in stage_summary.items():
+            if k == stage_name:
+                continue
+            for field in _CUMULATIVE_COST_FIELDS:
+                m[field] += int(s.get(field, 0))
+            for ph, secs in s.get("phase_seconds", {}).items():
+                m["phase_seconds"][ph] = round(m["phase_seconds"].get(ph, 0.0) + secs, 3)
         final_metrics = m
         reached = stage_name
         if crashed is not None:
