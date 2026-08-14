@@ -136,9 +136,14 @@ The CLI carries only the two genuine runtime knobs an evolve baseline is allowed
 **Split discipline is enforced in code**: `evolve.py` refuses any split but
 `search`. Held-out numbers come from a frozen θ, and only with manager authorization.
 
-Artifacts: `memo_archive/<dataset>/theta_<stamp>.json` +
-`evolution_summary_<stamp>.json` (per-round scores, accept/revert decisions, applied
-changes), and `results/<dataset>/<split>/` for scored runs.
+Artifacts are scoped **per run**, not per dataset —
+`memo_archive/<dataset>/<initial>_r<rounds>[_resumed]_<model>/` holding `theta.json`,
+`evolution_summary.json` (per-round F1, zero-F1 counts, per-category F1, applied
+changes, token usage) and `rounds/round_N.json`. The engine renumbers its rounds from
+zero on every run, so a shared directory would let a second run silently overwrite the
+first one's trajectory. `cache/` is deliberately shared across runs at
+`memo_archive/<dataset>/cache/`: extraction is keyed by session id and is the
+expensive part to redo. Scored runs write `results/<dataset>/<split>/`.
 
 ## Reproduction check (2026-08-14)
 
@@ -155,7 +160,21 @@ Internal token-F1, i.e. the metric the loop optimises (Eq. 3), not our judge.
 | R4 | **40.6** | 38.5 | accept +0.004 — **best**, returned |
 | R5 | 40.3 | 38.1 | REJECT −0.003 |
 | R6 | 39.9 | 45.4 | REJECT −0.007 |
-| R7 | not run | **54.3** | — |
+| R7 | not run continuously — see below | **54.3** | — |
+
+**The extra round, run afterwards by resuming from R4's θ** (`theta_path`, 2 further
+evaluations): diagnosis proposed exactly the paper's R7 lever,
+`enable_answer_verification`, and the guard accepted it — **+2.05 → F1 41.5**, our
+best artifact. The paper's R7 gains +8.9 from the same lever. The gain concentrates
+in raw cat 4 (0.441 → 0.479); cat 3 regresses (0.266 → 0.218) and the zero-F1 count
+rises (244 → 263), which is what a second-pass rewriter does — it rescues some
+answers and flattens others.
+
+Resuming is measurably not free, so read that number with a handicap: re-evaluating
+R4's own θ scored **39.4**, not the 40.6 it scored in place. The round counter and
+`attempt_history` restart, and the ~350 memories that targeted re-extraction added
+during the first run are not in the extraction cache, so the store restarts from the
+base 2,580. A continuous 8th round would start 1.2 points higher.
 
 **Verdict: the mechanism reproduces; the headline number does not, and most of the
 difference is contract, not method.**
@@ -184,16 +203,18 @@ Weighting the paper's own columns by the true per-category counts confirms which
 mapping its table uses: **its mapping reproduces its reported Overall (0.544 vs
 0.543); the official mapping gives 0.480.** So pair by category id, never by name:
 
-| raw cat | this repo's name | paper's column | ours (R4) | paper | Δ | n (our split) |
+| raw cat | this repo's name | paper's column | ours (best) | paper | Δ | n (our split) |
 |---|---|---|---|---|---|---|
-| 1 | multi-hop | SingleHop | 33.4 | 32.9 | **+0.5** | 172 |
+| 1 | multi-hop | SingleHop | 33.1 | 32.9 | **+0.2** | 172 |
 | 2 | temporal | Temporal | 38.1 | 38.4 | −0.3 | 180 |
-| 3 | open-domain | MultiHop | 25.5 | 31.6 | −6.1 | 53 |
-| 4 | single-hop | OpenDomain | 45.8 | 49.6 | −3.8 | 480 |
+| 3 | open-domain | MultiHop | 21.8 | 31.6 | −9.8 | 53 |
+| 4 | single-hop | OpenDomain | 47.9 | 49.6 | −1.7 | 480 |
 | 5 | adversarial | Adversarial | — excluded — | 93.6 | — | 0 |
-| | | **weighted, cats 1–4** | **40.6** | **43.1** | **−2.5** | 885 |
+| | | **weighted, cats 1–4** | **41.5** | **43.1** | **−1.6** | 885 |
 
-So on the four categories both sides score, the gap is **2.5 points**, not 14. The
+"ours (best)" is the resumed answer-verification round. So on the four categories
+both sides score, the gap is **1.6 points**, not 14 — and the one real deficit is
+cat 3 (open-domain, 6% of questions). The
 headline difference is dominated by **Adversarial at 93.6**, the paper's highest
 cell, which this repo excludes entirely: 444 of 446 cat-5 items carry no `answer`
 key — only `adversarial_answer`, the trap option — so before `7235255`
@@ -239,8 +260,10 @@ length.
 Measured, the paper-scale run (locomo/search, 6 conversations, 885 QA, 156
 sessions, `weak` start, gpt-4o, 7 rounds — the Reproduction check above):
 **7.14M tokens** (6.56M prompt / 585k completion) ≈ **$22** at gpt-4o list price,
-**2h17m** wall-clock. The engine answers questions **sequentially**, so wall-clock
-scales with `rounds × split size` and cannot be parallelised away.
+**2h17m** wall-clock. The resumed answer-verification round added **3.48M tokens ≈
+$10** for two evaluations — verification issues a second LLM pass per question, so a
+round with it on costs roughly double. The engine answers questions **sequentially**,
+so wall-clock scales with `rounds × split size` and cannot be parallelised away.
 
 A cheap pilot for extrapolation (1 conversation, 152 QA, 3 rounds): 280k tokens,
 $0.82, 5.6 min. Scaling that by answer-call count predicted the full run within a

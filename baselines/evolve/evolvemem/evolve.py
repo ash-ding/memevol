@@ -166,8 +166,18 @@ async def run_evolution(cfg: Dict[str, Any]) -> Dict[str, Any]:
     if theta0.fusion_mode != "keyword_only" and theta0.semantic_top_k > 0:
         embedder = _shared_embedder(cfg["embedding_model"])
 
-    run_dir = ARCHIVE / dataset
+    # One directory per RUN, not per dataset. The engine numbers its rounds from
+    # zero every time, so a second run — a resume, an ablation, a different
+    # max_rounds — would otherwise overwrite the first run's round_N.json and
+    # silently destroy the trajectory it recorded. The stamp carries what
+    # actually distinguishes runs; `cache/` stays shared on purpose, since
+    # extraction is keyed by session id and is the expensive part to redo.
+    stamp = (f"{cfg['initial_config']}_r{cfg['max_rounds']}"
+             + ("_resumed" if resumed else "")
+             + f"_{cfg['evolve_llm_model'].replace('/', '-')}")
+    run_dir = ARCHIVE / dataset / stamp
     run_dir.mkdir(parents=True, exist_ok=True)
+    cache_dir = ARCHIVE / dataset / "cache"
 
     engine = EvolutionEngine(
         llm_call=make_llm_call(cfg["evolve_llm_model"]),
@@ -181,7 +191,7 @@ async def run_evolution(cfg: Dict[str, Any]) -> Dict[str, Any]:
                 window_size=int(cfg["extraction_window_size"]),
                 overlap=int(cfg["extraction_overlap"]),
             ),
-            cache_dir=str(run_dir / "cache"),
+            cache_dir=str(cache_dir),
             results_dir=str(run_dir / "rounds"),
         ),
     )
@@ -229,10 +239,9 @@ async def run_evolution(cfg: Dict[str, Any]) -> Dict[str, Any]:
         ],
     }
 
-    stamp = f"{dataset}_{cfg['initial_config']}_r{cfg['max_rounds']}"
-    (run_dir / f"theta_{stamp}.json").write_text(
+    (run_dir / "theta.json").write_text(
         json.dumps(result.final_config, indent=2), encoding="utf-8")
-    (run_dir / f"evolution_summary_{stamp}.json").write_text(
+    (run_dir / "evolution_summary.json").write_text(
         json.dumps(summary, indent=2), encoding="utf-8")
 
     print(result.trajectory())
@@ -241,7 +250,7 @@ async def run_evolution(cfg: Dict[str, Any]) -> Dict[str, Any]:
             print(f"[evolvemem] tokens {model}: prompt={stats.get('prompt_tokens', 0):,} "
                   f"completion={stats.get('completion_tokens', 0):,} "
                   f"total={stats.get('total_tokens', 0):,}")
-    print(f"[evolvemem] theta -> {run_dir / f'theta_{stamp}.json'}")
+    print(f"[evolvemem] theta -> {run_dir / 'theta.json'}")
     return summary
 
 
