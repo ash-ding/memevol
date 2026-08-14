@@ -33,11 +33,15 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from common.memo_class import MemoClass
+from common.openai_usage import install as _install_openai_usage
 from baselines.harness.hipporag2.memo import app_log_to_passage
 from baselines.harness.simplemem._st_shim import (
     ensure_sentence_transformers, install_embedding_cache, import_simplemem_system,
 )
 
+# SimpleMem's llm_client.py builds its own `openai` client; the SDK-boundary
+# patch captures its calls without editing the vendored file.
+_install_openai_usage()
 ensure_sentence_transformers()     # embedding.py imports ST eagerly
 install_embedding_cache()          # share the ~0.6B Qwen3 embedder across per-user systems
 # Import the vendored simplemem chain (which pulls in lancedb) with HF `datasets`

@@ -184,6 +184,12 @@ def _get_async_client(provider: str = "openai"):
                 timeout=httpx.Timeout(600.0, connect=10.0),
                 max_retries=0,
             )
+            # Usage on THIS client is reported by the call sites below; the
+            # SDK-boundary shim (common/openai_usage.py) that captures the
+            # vendored baselines' own clients must skip it or every call
+            # would be counted twice.
+            from common.openai_usage import OWNED_CLIENT_ATTR
+            setattr(client, OWNED_CLIENT_ATTR, True)
         elif provider == "anthropic":
             client = _build_anthropic_client()
         else:

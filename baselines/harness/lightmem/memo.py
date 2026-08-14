@@ -39,12 +39,16 @@ from pathlib import Path
 from typing import Dict, List
 
 from common.memo_class import MemoClass
+from common.openai_usage import install as _install_openai_usage
 from baselines.harness.hipporag2.memo import app_log_to_passage
 from baselines.harness.lightmem._st_shim import (
     ensure_sentence_transformers, install_embedding_cache, install_eager_attention,
     import_lightmemory,
 )
 
+# LightMem's memory managers build their own `openai` clients (5 files under
+# src/); the SDK-boundary patch captures them without editing any of them.
+_install_openai_usage()
 ensure_sentence_transformers()     # ST is imported eagerly by the vendored pipeline
 install_embedding_cache()          # share the embedder across per-user systems
 install_eager_attention()          # LLMlingua-2 segmenter needs eager output_attentions (transformers>=5)
