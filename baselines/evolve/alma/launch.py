@@ -14,7 +14,8 @@ in the main process when constructing the meta-agent analysis input.
 Output layout under <output_run_dir>:
   score.json                 — overall + per_user + invalid_users
   traces/<user_id>.json      — full QA trajectory for each user
-  token_usage.json           — per-model token totals
+  token_usage.json           — per-(model, phase) token totals + call counts
+  run_record.json            — local models that ran, per-phase wall-clock
 """
 
 from __future__ import annotations

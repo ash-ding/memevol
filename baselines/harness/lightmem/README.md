@@ -122,13 +122,20 @@ Turns are ingested in order; the per-user Qdrant index is instance-scoped
   triggers) + a local embedding pass. **Offline update** adds a per-entry
   `gpt-4o-mini` dedup/update call over the whole index. **Retrieve** is a local
   embedding + Qdrant search, then the shared `gpt-5-mini` QA + `gpt-5-mini` judge.
-- LightMem's internal `gpt-4o-mini` calls do **not** flow through `common.tokens`
-  (same caveat as amem / simplemem / HippoRAG), so only the shared QA/judge side
-  appears in `token_usage.json`.
+- LightMem's internal `gpt-4o-mini` calls **are** tracked: `memo.py` installs
+  `common.openai_usage`, which captures them at the SDK boundary (no edit under
+  `src/`, so byte-identity holds), so extraction and offline-update cost appears
+  in `token_usage.json` under the `build` phase.
 - The LLMlingua-2 pre-compressor (a BERT model) and the sentence-transformer
   embedder are local and benefit from a GPU (`llmlingua_device` / `embedding_device`,
   default `cuda`; set `cpu` to run without a GPU, slowly). The embedder is loaded
   once per process and shared across users (`_st_shim`).
+- **Neither local model can ever appear in the token numbers** — they are not
+  API calls, so there is no usage object to report. LLMlingua-2 runs one forward
+  pass per ingested text; that compute is real and invisible to any token count.
+  `run_record.json` names both models with their device, and `phase_seconds`
+  is the only cost figure that covers them. A cost comparison against another
+  baseline must say it covers API calls only.
 - Build/retrieve are synchronous + blocking, so users don't overlap under
   `max_sample_concurrent` (a blocking hook body stalls the event loop) — the
   same profile as amem/simplemem.
@@ -155,5 +162,6 @@ memory strings in the expected `timestamp weekday memory` format.
     ├── outputs/<instance_id>/     # per-user Qdrant index (on-disk) — gitignored
     └── results/<dataset>/<split>/
         ├── score.json             # {"benchmark_eval_score": {...}, "per_user": {...}, ...}
-        ├── token_usage.json        # shared QA/judge token totals (common.tokens)
+        ├── token_usage.json        # per-(model, phase) tokens + call counts (common.tokens)
+        ├── run_record.json         # local models that ran (+device), per-phase wall-clock
         └── traces/<user_id>.json   # full per-user QA trajectory

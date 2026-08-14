@@ -82,10 +82,18 @@ true). See `config.example.yaml`.
 
 ## Caveats
 
-- **Internal LLM cost is not tracked**: Graphiti calls the OpenAI SDK directly, so
-  its gpt-4o-mini graph-construction calls do NOT flow through `common.tokens`
-  (same caveat as amem/hipporag2/simplemem/lightmem). `token_usage.json` reflects
-  only the shared QA + judge (gpt-5-mini).
+- **Internal LLM cost IS tracked; local compute is not.** Graphiti calls the
+  OpenAI SDK directly, and `memo.py` installs `common.openai_usage` before
+  importing it, so its gpt-4o-mini graph-construction calls are captured at the
+  SDK boundary and land in `token_usage.json` under the `build` phase — with no
+  edit under `src/` (byte-identity preserved). What can NEVER be counted is the
+  local compute: BGE-m3 embedding and the **bge-reranker-v2-m3 cross-encoder**,
+  which scores (query, doc) PAIRS and so runs k forward passes per query — the
+  heaviest per-query cost in the fleet. Neither is an API call, so neither
+  produces a usage object. `run_record.json` names them (with device) and
+  `phase_seconds` is the only figure covering both. **Any cost comparison
+  against another baseline must state that it covers API calls only** — zep is
+  where that understatement is largest.
 - **Build is expensive**: `add_episode` runs several LLM calls per episode
   (extraction, resolution, fact, temporal, dedup) and is sequential per user (the
   graph dedups against accumulated state). Cost/latency scale like amem's per-note

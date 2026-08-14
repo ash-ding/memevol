@@ -399,6 +399,36 @@ def _stage_cost_metrics(stage_usage: Dict[str, Any],
     }
 
 
+#: Stated on every run record. Token counts cover API calls ONLY; local
+#: compute (embedders, rerankers, the LLMlingua-2 compressor) produces no
+#: usage object and can never enter them. Any cost comparison across
+#: baselines has to say so, because the gap is largest exactly where the
+#: local compute is heaviest (zep runs bge-m3 AND a cross-encoder).
+COST_COVERAGE_CAVEAT = (
+    "Token counts cover API calls only. Local models listed under "
+    "`local_models` ran on this machine and produce no usage object, so their "
+    "compute is NOT in any token number here — `phase_seconds` is the only "
+    "figure that covers both."
+)
+
+
+def _run_record(stage_usage: Dict[str, Any], workflow: Any,
+                local: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """What this stage actually spent, including the parts tokens can't say."""
+    return {
+        "local_models": local,
+        "phase_seconds": dict(stage_usage.get("phase_seconds", {})),
+        "llm_calls_by_phase": {
+            ph: c.get("calls", 0) for ph, c in stage_usage.get("by_phase", {}).items()
+        },
+        "build_cache": {
+            "hits": int(getattr(workflow, "build_cache_hits", 0)),
+            "misses": int(getattr(workflow, "build_cache_misses", 0)),
+        },
+        "coverage_caveat": COST_COVERAGE_CAVEAT,
+    }
+
+
 def _memory_token_metrics(recorder_list: List[Any]) -> Dict[str, Any]:
     """Memory tokens for one stage, summed over its users.
 
@@ -502,8 +532,8 @@ async def evaluate_memo(
       REQUIRED `single_stage` block (raises ValueError if absent).
 
     Per executed stage it writes ``out_dir/<stage>/{score.json, token_usage.json,
-    traces/}``; afterwards the reached stage's score.json / token_usage.json /
-    traces/ are copied to the out_dir root and a ``stages.json`` summary is
+    run_record.json, traces/}``; afterwards the reached stage's score.json /
+    token_usage.json / run_record.json / traces/ are copied to the out_dir root and a ``stages.json`` summary is
     written (non-smoke). A root score.json is guaranteed even when the first
     stage crashes (error score), so callers can always read one.
 
@@ -564,6 +594,13 @@ async def evaluate_memo(
 
     workflow_cls, env_module, _rec = _resolve_dataset(dataset)
     tracker = init_global_tracker()
+
+    # Local models (embedders, rerankers, the LLMlingua-2 compressor) are real
+    # compute that can NEVER appear in token counts — they are not API calls.
+    # Installed here, before any memo is constructed, so every run record names
+    # what ran and no cost figure is read as complete when it is not.
+    from common import local_models as _local_models
+    _local_models.install()
 
     # ---- cross-stage memory cache (gauntlet + single; never smoke/sanity) ----
     fingerprint = ""
@@ -633,6 +670,11 @@ async def evaluate_memo(
                 _json.dump(score, f, indent=2, ensure_ascii=False)
             with (stage_dir / "token_usage.json").open("w", encoding="utf-8") as f:
                 _json.dump(stage_usage, f, indent=2, ensure_ascii=False)
+            with (stage_dir / "run_record.json").open("w", encoding="utf-8") as f:
+                _json.dump(
+                    _run_record(stage_usage, workflow, _local_models.summary()),
+                    f, indent=2, ensure_ascii=False,
+                )
         except Exception as exc:  # a crashed stage eliminates + stops
             crashed = exc
         # A crashed stage still burned tokens before it died — count them.
@@ -674,6 +716,10 @@ async def evaluate_memo(
             m["memory_tokens_total"] / m["memory_tokens_n_queries"]
             if m["memory_tokens_n_queries"] else 0.0
         )
+        # Process-wide, not per-stage: a model loaded in stage1 is still
+        # running in stage3. Carried in the metrics so every consumer of
+        # evaluate_memo sees which compute is missing from the token numbers.
+        m["local_models"] = _local_models.summary()
         final_metrics = m
         reached = stage_name
         if crashed is not None:
@@ -694,7 +740,7 @@ async def evaluate_memo(
         final_metrics["eliminated"] = eliminated
         # Reached-stage artifacts up to the root (score/tokens/traces) + stages.json.
         reached_dir = out_dir / reached
-        for fname in ("score.json", "token_usage.json"):
+        for fname in ("score.json", "token_usage.json", "run_record.json"):
             src = reached_dir / fname
             if src.exists():
                 _shutil.copy2(src, out_dir / fname)

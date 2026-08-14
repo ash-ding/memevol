@@ -112,12 +112,16 @@ the new segment; `finalize` flushes its remainder).
   dialogues (with overlap), plus a local embedding pass. **Retrieve** adds
   planning + (optional) reflection `gpt-4.1-mini` calls per query, then the
   shared `gpt-5-mini` QA + `gpt-5-mini` judge.
-- SimpleMem's internal `gpt-4.1-mini` calls do **not** flow through
-  `common.tokens` (same caveat as amem / HippoRAG), so only the shared QA/judge
-  side appears in `token_usage.json`.
+- SimpleMem's internal `gpt-4.1-mini` calls **are** tracked: `memo.py` installs
+  `common.openai_usage`, which captures its vendored `llm_client.py` calls at
+  the SDK boundary (no edit under `src/`, so byte-identity holds). Window
+  compression lands under the `build` phase; planning/reflection under
+  `retrieve`.
 - The faithful embedder (`Qwen/Qwen3-Embedding-0.6B`) is a ~0.6B local model:
   it benefits from a GPU and downloads once from HuggingFace. `_st_shim` loads
-  it once per process and shares it across users.
+  it once per process and shares it across users. It is **not** an API call, so
+  its compute can never appear in any token count — `run_record.json` names it
+  with its device, and `phase_seconds` is the only figure that covers it.
 - Build/retrieve are synchronous + blocking, so users don't overlap under
   `max_sample_concurrent` (a blocking hook body stalls the event loop). The
   real build speedup is SimpleMem's own window parallelism
