@@ -1,0 +1,39 @@
+# evolvemem baseline — standalone uv project (EvolveMem AutoResearch search loop).
+#
+#   cd baselines/evolve/evolvemem && uv sync      # -> .venv/ (CPython 3.12 via .python-version)
+#
+# Isolated per-baseline env (uv sync + committed uv.lock for reproducibility).
+# The shared-core block is the closure common/ + datasets/ need — duplicated
+# into every baseline pyproject on purpose (independence over DRY).
+[project]
+name = "memevol-baseline-evolvemem"
+version = "0.0.0"
+description = "EvolveMem self-evolving retrieval-configuration search loop"
+requires-python = ">=3.12"
+dependencies = [
+    # --- shared core (common/ + datasets/) ---
+    "openai==1.107.3",
+    "anthropic[vertex]",
+    "python-dotenv",
+    "httpx",
+    "PyYAML",
+    "jsonschema",
+    "scipy",
+    "numpy",
+    "rich",
+    "tiktoken",
+    # --- evolvemem-specific ---
+    # The `evolvemem` package itself is VENDORED under src/ (byte-identical @
+    # db80b6a — see README.md), so it is not a dependency. What follows is what
+    # the vendored closure actually imports; storage is stdlib sqlite3, and the
+    # LLM is an INJECTED callable (see llm_bridge.py), so there is no SDK here
+    # beyond the shared-core openai.
+    "rank_bm25",              # multi_retriever.py — the BM25 view (the weak initial config IS this)
+    "sentence-transformers",  # embeddings.py — the semantic view; skipped entirely by a keyword_only theta
+    "rouge-score",            # benchmarks/metrics.py — part of upstream's metric bundle
+    # NOT included: upstream's requirements.txt also lists pyyaml (already in the
+    # shared-core block above) and nothing else — EvolveMem is a light package.
+]
+
+[tool.uv]
+package = false   # this dir is an app env, not a buildable package

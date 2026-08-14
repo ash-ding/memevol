@@ -28,7 +28,8 @@ baselines/
 ├── evolve/              # SEARCH-METHOD baselines — compared against forge ITSELF
 │   ├── alma/            #   LLM-meta-agent search loop (memevol's original method)
 │   │                    #     own pyproject.toml + .python-version + uv.lock + .venv/ (gitignored)
-│   ├── evolvemem/       #   (paper PDF; to be implemented under the conventions below)
+│   ├── evolvemem/       #   EvolveMem AutoResearch loop: evolves a retrieval CONFIG (not code)
+│   │                    #     vendored src/evolvemem/ @ db80b6a; own pyproject/.python-version/uv.lock
 │   └── memevolve/       #   (paper PDF; to be implemented under the conventions below)
 └── harness/             # READY-MADE MEMORY SYSTEMS — compared against forge's
     ├── eval_utility.py   #   EVOLVED HARNESSES. Shared runner: run_baseline()
@@ -275,6 +276,7 @@ cd baselines/harness/hipporag2 && uv run python run.py --config my_hr.yaml
 | Baseline | Kind | Approach | Optimization | Best for |
 |---|---|---|---|---|
 | **[evolve/alma](evolve/alma/)** | search method | LLM-meta-agent search loop | Yes — propose / select / evolve over harness code | Established baseline; the framework's "v1" memory-architecture search |
+| **[evolve/evolvemem](evolve/evolvemem/)** | search method | EvolveMem AutoResearch loop (arXiv:2605.13941): LLM diagnoses per-question failure logs and proposes guarded edits to a ~42-field retrieval config | Yes — but over a CONFIG, never over code | Published search-method comparison point; the config-vs-code axis against forge. NOTE: the only baseline that overrides `use_memory_to_answer` (its action space includes answer policy) |
 | **[harness/hipporag2](harness/hipporag2/)** | ready-made harness | Graph-based RAG pipeline as retrieval memory (OpenIE → KG → PPR retrieval → passages; shared QA agent answers) | None (fixed pipeline) | Hand-designed memory architecture comparison point, multi-dataset |
 | **[harness/amem](harness/amem/)** | ready-made harness | A-mem agentic-notes memory (per-note LLM analysis + memory evolution → keyword-rewrite retrieval; shared QA agent answers) | None (fixed pipeline) | Agentic note-graph memory comparison point, multi-dataset |
 | **[harness/lightmem](harness/lightmem/)** | ready-made harness | LightMem compression + offline-update memory (LLMlingua-2 pre-compression → topic segmentation → LLM metadata/summary extraction → Qdrant index → per-entry LLM offline update; `LightMemory.retrieve` → passages; shared QA agent answers) | None (fixed pipeline) | Compression + offline-refinement memory comparison point, multi-dataset |
@@ -314,6 +316,38 @@ prior code, traces, and scores. alma runs the shared per-dataset workflows
 (including the official DynamicMem TCE v2 checkpoint protocol) AND the same
 `common.evaluate.evaluate_memo` evaluator forge runs in-container, so its numbers ARE
 comparable with forge.
+
+### evolve/evolvemem — self-evolving retrieval configuration (AutoResearch)
+
+[EvolveMem](https://arxiv.org/abs/2605.13941) (arXiv:2605.13941), vendored from
+[aiming-lab/SimpleMem](https://github.com/aiming-lab/SimpleMem) @ `db80b6a` —
+the same commit `harness/simplemem` is pinned to. A closed loop
+(EVALUATE → DIAGNOSE → PROPOSE → GUARD) optimises a ~42-field retrieval
+configuration theta: an LLM reads per-question failure logs, proposes at most two
+field edits per round, and an elitist guard reverts regressions, explores on
+plateaus, and stops on convergence.
+
+```bash
+cd baselines/evolve/evolvemem
+uv run python evolve.py --config config.example.yaml   # SEARCH: evolve a theta (search split only)
+uv run python run.py    --config config.example.yaml   # SCORE:  evaluate a theta via evaluate_memo
+```
+
+Artifacts: `memo_archive/<dataset>/theta_<stamp>.json` +
+`evolution_summary_<stamp>.json`, and `results/<dataset>/<split>/`.
+
+**Key difference from alma and forge**: evolvemem evolves a CONFIGURATION, never
+code. Its action space is fixed in advance (though the paper shows diagnosis
+growing new dimensions within it), where alma and forge rewrite harness source.
+That makes it the natural "how far does config-space search get you?" reference
+point.
+
+**Read its README before comparing numbers**: it is the ONLY baseline that
+overrides `use_memory_to_answer`, because theta's action space includes answer
+policy (`answer_style`, answer verification, per-category styles). Deferring to the
+shared QA agent would score a different artifact than the loop optimised. Its
+`honor_answer_policy: false` ablation gives the shared-answerer number for
+comparison against the harness baselines.
 
 ### harness/hipporag2 — graph-based RAG pipeline as retrieval memory
 
