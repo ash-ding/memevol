@@ -987,17 +987,18 @@ def _read_dataset_metrics(harness_dir: Path, dataset: str, subdir: Optional[str]
         except Exception as exc:
             log.warning(f"could not parse {dataset} score.json for {harness_dir.name}: {exc}")
 
-    # token_usage.json: sum total_tokens across all models
+    # token_usage.json: total tokens across all models and phases. Read via
+    # common.tokens.read_total_tokens, which accepts BOTH the current
+    # phase-keyed schema and the pre-phase flat {model: counters} shape — run
+    # directories written before the phase dimension landed must not silently
+    # read as 0 tokens.
     tokens_json = ds_dir / "token_usage.json"
     if tokens_json.exists():
         try:
+            from common.tokens import read_total_tokens
             with tokens_json.open("r", encoding="utf-8") as f:
                 data = json.load(f)
-            metrics["tokens"] = sum(
-                int(model_usage.get("total_tokens", 0))
-                for model_usage in data.values()
-                if isinstance(model_usage, dict)
-            )
+            metrics["tokens"] = read_total_tokens(data)
         except Exception as exc:
             log.warning(f"could not parse {dataset} token_usage.json for {harness_dir.name}: {exc}")
 
@@ -1115,6 +1116,12 @@ def _build_objectives(
     """
     out: Dict[str, Any] = {}
     total_tokens = 0
+    # Phase-split cost, summed across datasets like tokens_total. Absent from
+    # metrics dicts produced before the phase dimension landed, in which case
+    # they stay 0 (never emitted as a mislabelled 0 — see below).
+    phase_totals = {"tokens_build_total": 0, "tokens_memory_total": 0,
+                    "llm_calls_total": 0}
+    any_phase_data = False
     for ds, m in per_dataset_metrics.items():
         raw = float(m.get("raw_score", 0.0))
         score_max = int(m.get("score_max", 10))
@@ -1129,8 +1136,17 @@ def _build_objectives(
         if m.get("stage") is not None:
             out[f"stage_{ds}"] = float(m["stage"])
         total_tokens += int(m.get("tokens", 0))
+        if "tokens_build" in m:
+            any_phase_data = True
+            phase_totals["tokens_build_total"] += int(m.get("tokens_build", 0))
+            phase_totals["tokens_memory_total"] += int(m.get("tokens_memory", 0))
+            phase_totals["llm_calls_total"] += int(m.get("llm_calls", 0))
     if per_dataset_metrics:
+        # `tokens_total` keeps its ALL-PHASE meaning so entries recorded before
+        # the phase split stay comparable; the build/memory split is additive.
         out["tokens_total"] = total_tokens
+        if any_phase_data:
+            out.update(phase_totals)
 
     # Harness-level: code_length (best-effort; missing harness.py from a crashed
     # propose just means we record 0 rather than crashing).

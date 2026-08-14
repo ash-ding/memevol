@@ -65,6 +65,12 @@ reports on; `config.example.yaml` keeps the repo's shared gpt-5-mini agent),
 `top_k: 10` per the paper's "s=10 similar memories". 6/6 conversations, 22.5 min,
 **796 tokens/question**.
 
+> **The token figure is an UNDERCOUNT and is not comparable to a current
+> run.** It was measured before `common.openai_usage` existed, when mem0's own
+> LLM and OpenAI-embedder calls did not reach `common.tokens` — only the
+> shared QA + judge did. Runs from now on capture them under the `build` /
+> `retrieve` phases, so the number WILL rise. (2026-08-14)
+
 Scored with `baselines/harness/score_paper_metrics.py`, which recomputes the
 papers' metrics — the shared judge is binary and is not what they report.
 

@@ -29,6 +29,13 @@ from pathlib import Path
 from typing import Dict, List
 
 from common.memo_class import MemoClass
+from common.openai_usage import install as _install_openai_usage
+
+# HippoRAG's OpenIE / triple extraction and its OpenAI embedder run through the
+# SDK inside the venv-installed package (until #23 vendors it). Patching the
+# SDK boundary is what separates its internal calls from the shared QA agent —
+# they use the SAME model (cfg["llm_model"]), so the model name never could.
+_install_openai_usage()
 
 OUTPUTS_DIR = Path(__file__).resolve().parent / "outputs"
 

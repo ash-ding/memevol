@@ -31,7 +31,15 @@ import os
 from typing import Dict, List, Tuple
 
 from common.memo_class import MemoClass
+from common.openai_usage import install as _install_openai_usage
 from baselines.harness.hipporag2.memo import app_log_to_passage
+
+# A-mem's LLMController builds its own `openai` client (a lazy `from openai
+# import OpenAI` inside OpenAIController.__init__), so its 2 calls per
+# ingested note never reached common.tokens. Patching the SDK boundary here —
+# integration code — captures them with ZERO edits under src/, preserving the
+# byte-identity the README's `diff -r` asserts.
+_install_openai_usage()
 # NOTE: sentence-transformers eagerly imports HuggingFace `datasets`. That used
 # to collide with memevol's own top-level `datasets/` package and needed a
 # sys.modules shim (_st_shim.py); the package was renamed to `benchmarks/`

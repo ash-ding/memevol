@@ -43,7 +43,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from common.memo_class import MemoClass
+from common.openai_usage import install as _install_openai_usage
 from baselines.harness.hipporag2.memo import app_log_to_passage
+
+# The vendored utils.py builds its own `openai` client; patching the SDK
+# boundary captures its calls with ZERO edits under src/.
+_install_openai_usage()
+
 # NOTE: the vendored utils.py imports sentence-transformers, which eagerly
 # imports HuggingFace `datasets`. That used to collide with memevol's own
 # top-level `datasets/` package and needed a sys.modules shim; the package was

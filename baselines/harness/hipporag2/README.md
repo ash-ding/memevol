@@ -75,7 +75,12 @@ A couple of keys are worth calling out beyond what the YAML comments say:
 - `embedding` — any OpenAI embedding model name (API, no GPU needed) or a
   local HF/NV embedding model (GPU, loaded in-process by HippoRAG).
 - `llm_model` — used BOTH as HippoRAG's internal OpenIE/triple-extraction
-  LLM and as the shared QA agent's model.
+  LLM and as the shared QA agent's model. The two are still told apart in
+  cost accounting: `memo.py` installs `common.openai_usage`, and tokens are
+  keyed by `(model, phase)`, so OpenIE lands under `build` and the QA agent
+  under `answer` even though the model name is identical. (Before the phase
+  dimension, this baseline was exactly the case the "internal model differs
+  from the QA model" heuristic could not handle.)
 - `embedding_batch_size` / `embedding_dtype` — leave `null`: for API
   embeddings (the default `text-embedding-3-small`) this resolves to
   batch 16 / dtype auto; for local embeddings, batch 4 / dtype float16 —
@@ -137,7 +142,8 @@ baselines/harness/hipporag2/
 │                                       # cache (OpenIE, embeddings, KG) — gitignored
 └── results/<dataset>/<split>/
     ├── score.json          # {"benchmark_eval_score": {...}, "per_user": {...}, "invalid_users": [...]}
-    ├── token_usage.json     # per-model token totals (common.tokens.TokenTracker)
+    ├── token_usage.json     # per-(model, phase) tokens + call counts (common.tokens)
+    ├── run_record.json      # local models that ran (+device), per-phase wall-clock
     └── traces/<user_id>.json   # full per-user QA trajectory (no sampling)
 ```
 

@@ -30,6 +30,7 @@ from typing import Any, Dict, List, Optional, Tuple, Type
 
 import httpx
 
+from common import tokens
 from common.sampling import combine_seed
 from common.workflow import BaseWorkflow, _QAProgressTracker, log
 from benchmarks.dynamicmem.env import (
@@ -142,7 +143,11 @@ class DynamicMemWorkflow(BaseWorkflow):
                 prev_end = max(prev_end, len(visible))
                 if segment:
                     t1 = time.time()
-                    await self._phase1_update(memo, segment)
+                    # Phase set at the call site (see BaseWorkflow.run_single_user
+                    # for why); DynamicMem drives its own per-checkpoint ingest
+                    # loop and so needs its own wrapper.
+                    with tokens.phase(tokens.BUILD):
+                        await self._phase1_update(memo, segment)
                     total_ingested += len(segment)
                     log.info(
                         f"[Checkpoint {cp_idx}/{len(checkpoints_used)}] User {user_tag} "
@@ -214,7 +219,8 @@ class DynamicMemWorkflow(BaseWorkflow):
         retrieve_recorder = self.recorder_class()
         retrieve_recorder.init = self.build_query_recorder_init(visible_logs, item)
         try:
-            retrieved = await memo.retrieve_memory_for_query(retrieve_recorder)
+            with tokens.phase(tokens.RETRIEVE):
+                retrieved = await memo.retrieve_memory_for_query(retrieve_recorder)
         except Exception as exc:
             log.warning(
                 f"retrieve_memory_for_query failed for {recorder.user_id} on "
@@ -235,13 +241,24 @@ class DynamicMemWorkflow(BaseWorkflow):
         memory_blocks = tce.retrieved_to_memory_blocks(retrieved)
         prompt = self._build_answer_prompt(item, memory_blocks)
 
+        # Memory tokens, measured against the OFFICIAL prompt this benchmark
+        # actually sends — DynamicMem answers through `_build_answer_prompt`
+        # (per task family), not the ABC-compat `build_qa_prompt`, so the
+        # base class's measurement point does not apply here.
+        try:
+            memory_tokens = self._measure_memory_tokens(
+                recorder, prompt, self._build_answer_prompt(item, []))
+        except Exception:
+            memory_tokens = None
+
         from common.llm import Agent
         agent = Agent(system_prompt="", model=self.model)
         answer_err: Optional[Tuple[str, str]] = None
         try:
-            ans = await memo.use_memory_to_answer(retrieve_recorder, retrieved, prompt)
-            if ans is None:
-                ans = await agent.ask(prompt, reasoning_effort=self.reasoning_effort)
+            with tokens.phase(tokens.ANSWER):
+                ans = await memo.use_memory_to_answer(retrieve_recorder, retrieved, prompt)
+                if ans is None:
+                    ans = await agent.ask(prompt, reasoning_effort=self.reasoning_effort)
             raw_answer = ans
         except Exception as exc:
             # Keep the official empty-answer semantics (parse failure → 0)
@@ -250,8 +267,10 @@ class DynamicMemWorkflow(BaseWorkflow):
             answer_err = ("answer", f"{type(exc).__name__}: {str(exc)[:200]}")
             raw_answer = ""
 
-        # 3. Official holistic Core+Detail judging (0.0-1.0).
-        score, judge_reason, predicted_str, extra_meta = await self._judge_item(item, raw_answer)
+        # 3. Official holistic Core+Detail judging (0.0-1.0). Judged under the
+        #    `judge` phase — evaluation overhead, never part of a cost claim.
+        with tokens.phase(tokens.JUDGE):
+            score, judge_reason, predicted_str, extra_meta = await self._judge_item(item, raw_answer)
         qa_metadata.update(extra_meta)
 
         await self.log_qa_step(
@@ -260,6 +279,10 @@ class DynamicMemWorkflow(BaseWorkflow):
             judge_reason=judge_reason, qa_metadata=qa_metadata,
             retrieved_memory=retrieved, relevant_context=relevant_context,
         )
+        self._stamp_memory_tokens(recorder, memory_tokens)
+        if answer_err is None and memory_tokens is not None:
+            recorder.memory_tokens_answered_n = getattr(
+                recorder, "memory_tokens_answered_n", 0) + 1
         return answer_err
 
     def _build_answer_prompt(self, item: Dict, memory_blocks: List[str]) -> str:
@@ -391,10 +414,16 @@ class DynamicMemWorkflow(BaseWorkflow):
             if not resp.choices:
                 raise _llm.EmptyResponseError("judge returned no choices")
 
-            from common.tokens import GLOBAL_TOKEN_TRACKER
-            if GLOBAL_TOKEN_TRACKER is not None and getattr(resp, "usage", None) is not None:
+            # Forced to the `judge` phase — evaluation overhead never belongs
+            # in a memory-cost claim (mirrors common.metric.Judge).
+            from common.tokens import GLOBAL_TOKEN_TRACKER, JUDGE
+            if GLOBAL_TOKEN_TRACKER is not None:
                 try:
-                    await GLOBAL_TOKEN_TRACKER.update(model_name=self.judge_model, usage=resp.usage)
+                    GLOBAL_TOKEN_TRACKER.update(
+                        model_name=self.judge_model,
+                        usage=getattr(resp, "usage", None),
+                        phase_name=JUDGE,
+                    )
                 except Exception:
                     pass
             return resp.choices[0].message.content or ""
