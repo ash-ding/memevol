@@ -51,10 +51,11 @@ baselines/harness/lightmem/results/
 baselines/harness/lightmem/smoke_*.yaml
 baselines/harness/simplemem/results/
 baselines/harness/zep/results/
-baselines/evolve/evolvemem/results/
-# evolvemem's archive holds the evolved theta of each run — per-run output, like
-# alma's memo_archive; keep the per-dataset dirs, not the artifacts of a local run.
-baselines/evolve/evolvemem/memo_archive/*/
+# evolvemem is a standalone reproduction: upstream's runner writes here, and
+# everything it produces is test-touching (it evolves over the full LoCoMo-10).
+baselines/evolve/evolvemem/upstream/evolution_results/
+baselines/evolve/evolvemem/upstream/evolution_cache/
+baselines/evolve/evolvemem/upstream/data/
 
 # --- Other baselines' runtime artifacts (evolve/<name>/ + harness/<name>/) ---
 baselines/*/*/outputs/
