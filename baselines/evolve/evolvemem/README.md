@@ -231,9 +231,12 @@ The paper publishes exactly one per-category trajectory (Appendix C.1, raw cat 4
 
 - **Embedder.** Paper: `BAAI/bge-base-en-v1.5` (768-dim). This run: the config
   default `all-MiniLM-L6-v2` (384-dim). The semantic view is what R2 switches on.
-- **One round short.** The paper's R_max=7 means R0–R7 (8 evaluations); our
-  `max_rounds: 7` produced R0–R6, so we never ran the round carrying its largest
-  single gain (+8.9).
+- **One round short — since corrected.** The paper's R_max=7 means R0–R7 (8
+  evaluations); our `max_rounds: 7` produced R0–R6, so the continuous run stopped
+  one evaluation short of the paper's largest single gain. That round was run
+  afterwards by resuming from R4's θ (above): same lever, +2.05 here against the
+  paper's +8.9, and with a 1.2-point starting handicap. Use `max_rounds: 8` for a
+  continuous equivalent.
 - **Scale.** 6 of 10 conversations, 885 vs 1,986 QA — the test split is off-limits
   without manager authorization, so a full-benchmark number is not ours to take.
 
