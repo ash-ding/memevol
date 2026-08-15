@@ -226,8 +226,15 @@ def test_config_example_passes_strict_validation_unedited():
     cfg_path = PROJECT_ROOT / "baselines/evolve/evolvemem/config.example.yaml"
     cfg = load_and_validate(cfg_path)
     assert cfg["split"] == "search" and cfg["initial_config"] == "weak"
-    # Cheap by default — the paper's 7 rounds are documented, not the default.
-    assert cfg["max_rounds"] <= 3
+    # The shipped defaults ARE the paper's / upstream's configuration, so an
+    # unedited run is the reproduction rather than a toy: gpt-4o backbone,
+    # BAAI/bge-base-en-v1.5 embedder, R_max=7, whole search split. This test is
+    # what stops a well-meaning "make the default cheaper" edit from silently
+    # turning the documented reproduction into something else.
+    assert cfg["max_rounds"] == 7
+    assert cfg["evolve_llm_model"] == "gpt-4o"
+    assert cfg["embedding_model"] == "BAAI/bge-base-en-v1.5"
+    assert cfg["single_stage"] == {"n_conversations": None, "n_qa": None}
 
 
 def test_config_rejects_missing_and_unknown_keys():

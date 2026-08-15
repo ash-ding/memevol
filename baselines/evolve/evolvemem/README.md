@@ -121,7 +121,8 @@ view on.
 ```bash
 # SEARCH — evolve a theta on the search split
 cd baselines/evolve/evolvemem
-uv run python evolve.py --config config.example.yaml            # or --max-rounds 7
+uv run python evolve.py --config config.example.yaml            # paper setting by default (~$22, ~2h)
+uv run python evolve.py --config config.example.yaml --max-rounds 2   # cheap probe
 
 # SCORE — evaluate a theta through the shared eval path
 uv run python run.py --config config.example.yaml               # or --theta <path>
@@ -145,11 +146,53 @@ first one's trajectory. `cache/` is deliberately shared across runs at
 `memo_archive/<dataset>/cache/`: extraction is keyed by session id and is the
 expensive part to redo. Scored runs write `results/<dataset>/<split>/`.
 
-## Reproduction check (2026-08-14)
+## Reproduction check (2026-08-15)
 
-Paper settings as far as our protocol allows: `weak` (BM25-only) start, gpt-4o,
-`max_rounds: 7`, whole **search** split — 6 conversations, 885 QA, 156 sessions.
-Internal token-F1, i.e. the metric the loop optimises (Eq. 3), not our judge.
+**`config.example.yaml` ships the paper's configuration**, so an unedited
+`evolve.py` run IS this reproduction: `weak` (BM25-only) start, gpt-4o backbone,
+`BAAI/bge-base-en-v1.5` embedder, `max_rounds: 7`, whole search split, no sizing
+caps. That costs ~$22 and ~2h — lower `max_rounds` or `single_stage` for a cheap
+probe, and see the cost profile below before scaling up.
+`tests/test_evolvemem_baseline.py` pins those four values so a well-meaning
+"make the default cheaper" edit cannot silently turn the documented
+reproduction into something else.
+
+### First: does upstream's code reproduce the paper at all?
+
+Before judging our own numbers, we ran **upstream's own entry point, unmodified,
+on its own terms** — `run_benchmark.py locomo --initial weak --max-rounds 7
+--embed-model BAAI/bge-base-en-v1.5`, full LoCoMo-10 (10 conversations, 272
+sessions, 1,986 QA, cat-5 included), in a throwaway sandbox that touches nothing
+in this repo. It reaches **F1 59.1** (R5), above the paper's reported 54.3:
+
+| round | upstream, its own contract | paper (Table 4) | guard |
+|---|---|---|---|
+| R0 | **29.3** | 30.5 | start |
+| R1 | 39.2 | 35.8 | accept +9.9 — `locomo_cat5_mcq` on |
+| R2 | 53.0 | 34.8 | accept +13.8 — `enable_intent_planning` on |
+| R3 | 50.3 | 37.2 | REJECT |
+| R4 | 50.4 | 38.5 | REJECT |
+| R5 | **59.1** | 38.1 | accept +6.1 — `enable_answer_verification` on, **best** |
+| R6 | 58.5 | 45.4 | REJECT |
+
+Three things follow, and they are the reason this section exists:
+
+1. **The paper's headline is reproducible** — its own code exceeds it. So any
+   shortfall on our side is ours to explain, not the paper's.
+2. **The paper's per-round table does not reproduce.** Upstream's code is at 53.0
+   by R2 where the paper reports 34.8, and its `--max-rounds 7` yields R0–R6
+   (7 evaluations) while Table 4 lists R0–R7 (8 rows). Endpoint higher, path
+   different, round count off by one. Treat Table 4 as illustrative.
+3. **cat-5 is the single biggest lever, and the loop finds it first.** Upstream's
+   largest early jump (+9.9 at R1) is `locomo_cat5_mcq`, and adversarial ends at
+   85.9 — its top category. That category does not exist in our data at all, so
+   our diagnosis module can never even propose it.
+
+### Ours, under this repo's contract
+
+Same loop, same code, our data: 6 conversations, 885 QA, 156 sessions, cat-5
+excluded. Internal token-F1, i.e. the metric the loop optimises (Eq. 3), not our
+judge.
 
 | round | ours | paper | our guard |
 |---|---|---|---|
@@ -227,18 +270,34 @@ which would invalidate every historical LoCoMo number in this repo.
 The paper publishes exactly one per-category trajectory (Appendix C.1, raw cat 4):
 41.0% at R0 → 49.6% at R7. Ours on the same category: 40.0% at R0 → 45.8% at R4.
 
-### Remaining, fixable differences
+### What we cannot match, and why
 
-- **Embedder.** Paper: `BAAI/bge-base-en-v1.5` (768-dim). This run: the config
-  default `all-MiniLM-L6-v2` (384-dim). The semantic view is what R2 switches on.
-- **One round short — since corrected.** The paper's R_max=7 means R0–R7 (8
-  evaluations); our `max_rounds: 7` produced R0–R6, so the continuous run stopped
-  one evaluation short of the paper's largest single gain. That round was run
-  afterwards by resuming from R4's θ (above): same lever, +2.05 here against the
-  paper's +8.9, and with a 1.2-point starting handicap. Use `max_rounds: 8` for a
-  continuous equivalent.
-- **Scale.** 6 of 10 conversations, 885 vs 1,986 QA — the test split is off-limits
-  without manager authorization, so a full-benchmark number is not ours to take.
+The knobs are now aligned — `config.example.yaml` ships the paper's backbone,
+embedder, start config and round count, and the round count matches upstream's
+code (its own `--max-rounds 7` yields R0–R6 too, so our earlier "off-by-one" was
+faithful to the code, not to Table 4). What remains is **protocol**, and none of
+it is ours to change unilaterally:
+
+- **cat-5 (adversarial) does not exist in our LoCoMo.** 444 of 446 items carry no
+  `answer` key, so `benchmarks/locomo/env.py` drops the category outright
+  (`7235255`, 2026-07-08) — before that, ~22% of LoCoMo scored against an empty
+  gold. Upstream instead reads `qa.get("answer") or qa.get("adversarial_answer")`
+  and scores it, reaching 85.9 there. Its evolution loop finds this lever first
+  (+9.9 at R1, `locomo_cat5_mcq`); ours cannot propose it, because no cat-5
+  question is ever in the failure log it reads.
+- **6 of 10 conversations.** We evolve on the search split; the other 4 are
+  held out. Upstream evolves on all 10 — which for us would mean optimising on
+  the test split, contaminating every held-out LoCoMo number in the repo. Not a
+  cost decision, a protocol one.
+- **Gold is `answer` only.** Even with cat-5 restored, our env would score it
+  against an empty reference; matching upstream means changing the LoCoMo gold
+  contract for every method in the repo.
+
+All three live in `benchmarks/locomo/env.py` — shared surface, so a manager
+decision, and one that invalidates every historical LoCoMo number. **The
+honest reading is not "we scored lower", it is "we measure a different thing":
+under our contract EvolveMem reaches 41.5, under its own it reaches 59.1, and
+the delta is dominated by a question category we deliberately do not score.**
 
 Charts and the full write-up: dashboard page **baselines #1**.
 
@@ -255,10 +314,12 @@ Charts and the full write-up: dashboard page **baselines #1**.
 
 ## Cost profile
 
-Read this before raising `max_rounds`. Each round re-answers **every** question in
-the sampled search split and then runs diagnosis + meta-analysis, so cost scales
-with `rounds × split size`, and extraction (once, up front) scales with conversation
-length.
+Read this before running the default config, which is no longer a toy: it is the
+paper's setting (7 rounds over the whole search split), i.e. ~$22 and ~2h. Each
+round re-answers **every** question in the split and then runs diagnosis +
+meta-analysis, so cost scales with `rounds × split size`; extraction (once, up
+front) scales with conversation length. `--max-rounds 2` with a
+`single_stage: {n_conversations: 1, n_qa: 5}` is the ~$1 probe.
 
 Measured, the paper-scale run (locomo/search, 6 conversations, 885 QA, 156
 sessions, `weak` start, gpt-4o, 7 rounds — the Reproduction check above):
@@ -271,6 +332,10 @@ so wall-clock scales with `rounds × split size` and cannot be parallelised away
 A cheap pilot for extrapolation (1 conversation, 152 QA, 3 rounds): 280k tokens,
 $0.82, 5.6 min. Scaling that by answer-call count predicted the full run within a
 factor of ~1.3 on cost — a pilot is the right way to size a run before paying for it.
+
+For reference, the upstream sandbox run (full LoCoMo-10, 1,986 QA, 7 rounds) took
+**~7.5h** and an estimated **$45–50**; upstream's own runner does not count tokens,
+which is why that figure is an estimate and ours is not.
 
 `max_rounds: 3` and a 1-conversation `single_stage` are the shipped defaults for
 that reason; the paper's setting is documented, not defaulted.

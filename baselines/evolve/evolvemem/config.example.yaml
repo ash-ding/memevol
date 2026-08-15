@@ -25,17 +25,23 @@ sampling_seed: 42              # seeds the sampled subset (both paths; a no-op a
 memory_cache: true             # cross-stage Phase-1 memory reuse (gauntlet only)
 
 # --- the search loop (evolve.py) --------------------------------------------
-max_rounds: 3                  # evolution rounds. DEFAULT IS DELIBERATELY CHEAP.
-                               # The paper's headline trajectory is 7 rounds
-                               # (R0 30.5 -> R7 54.3 F1); each round re-answers
-                               # every QA in the split and runs diagnosis, so
-                               # cost scales with rounds x split size. Raise this
-                               # (or pass --max-rounds) only with cost in mind.
+max_rounds: 7                  # the paper's setting (R_max=7). NOTE the round
+                               # count: 7 here yields R0..R6 = 7 evaluations,
+                               # which is also what upstream's own
+                               # `run_benchmark.py --max-rounds 7` produces —
+                               # the paper's Table 4 lists R0..R7 (8 rows), so
+                               # its table and its code disagree by one.
+                               # COST: each round re-answers EVERY QA in the
+                               # split and then runs diagnosis, so cost scales
+                               # with rounds x split size. With the sizing below
+                               # (whole search split, 885 QA) this default run
+                               # is ~7.1M gpt-4o tokens, ~$22, ~2h. Lower
+                               # max_rounds / single_stage for a cheap probe.
 initial_config: weak           # weak = BM25-only k=5, the paper's R0 and the honest
                                # analogue of forge starting from seeds/no_memory.
                                # strong = SimpleMem-level start (smaller search space).
 convergence_threshold: 0.005   # stop when the primary metric improves less than this
-evolve_llm_model: gpt-4o-mini  # the loop's own LLM: extraction, diagnosis, meta-analysis,
+evolve_llm_model: gpt-4o       # the paper's backbone. The loop's own LLM: extraction, diagnosis, meta-analysis,
                                # AND the answer generation the evolved theta prescribes.
                                # Routed through common.llm, so unlike the harness
                                # baselines these internal calls ARE counted in token_usage.json.
@@ -46,9 +52,11 @@ extraction_overlap: 2          # window overlap in turns (upstream default)
 theta_path: null               # path to an evolved theta JSON (or an evolution_summary
                                # carrying final_config). null => score `initial_config`
                                # instead, which is how the paper's R0 baseline is reproduced.
-                               # evolve.py writes memo_archive/<dataset>/theta_<stamp>.json.
-embedding_model: all-MiniLM-L6-v2   # sentence-transformers model for the semantic view.
-                                    # Never loaded when the theta is keyword_only (e.g. weak).
+                               # evolve.py writes memo_archive/<dataset>/<run>/theta.json.
+embedding_model: BAAI/bge-base-en-v1.5   # the paper's embedder (768-dim; §4.1 Implementation).
+                                    # Never loaded while the theta is keyword_only — the `weak`
+                                    # start is BM25-only, so this is first touched when the loop
+                                    # switches the semantic view on (upstream does that at R0->R1).
 honor_answer_policy: true      # true  = the artifact answers under the theta's evolved answer
                                #         policy (answer_style / verification / answer_model).
                                #         This baseline is the ONLY one overriding the third hook —
@@ -72,8 +80,9 @@ max_sample_concurrent: 3       # asyncio concurrency across users/samples
 # --- Sizing (config-file only). BOTH keys must be present; the inactive one is
 #     null. evolve.py reads single_stage to size the SEARCH split it evolves on. ---
 single_stage:
-  n_conversations: 1           # locomo: conversations sampled. null = all in the split.
-  n_qa: 5                      # locomo: QA per conversation. null = all (cat 1-4; cat-5 excluded)
+  n_conversations: null        # locomo: null = every conversation in the search split (6).
+  n_qa: null                   # locomo: null = all QA per conversation (cat 1-4; cat-5 excluded
+                               # by this repo's protocol — see README "What we cannot match")
 # For dynamicmem use {n_users, n_checkpoints, n_task_a, n_task_c};
 # for longmemeval_s use {n_questions}. See baselines/README.md's sizing table.
 stages: null
