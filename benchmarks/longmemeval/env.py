@@ -233,18 +233,60 @@ def _find_sample(samples: List[Dict], question_id: str) -> Dict:
     raise KeyError(f"LongMemEval question_id not found: {question_id}")
 
 
+def _session_key(idx: int) -> str:
+    """Positional session id handed to the memory system (0-based idx)."""
+    return f"session_{idx + 1:03d}"
+
+
+def _gold_session_keys(sample: Dict) -> List[str]:
+    """Translate `answer_session_ids` onto the normalized ids _build_sessions
+    emits, so recorder-side gold lookup keeps working after the rename.
+
+    Recorder-side only: this never reaches the memory system (it lives in
+    qa_metadata, which the workflow does not put into recorder.init).
+    """
+    gold = set(sample.get("answer_session_ids", []) or [])
+    return [
+        _session_key(i)
+        for i, sid in enumerate(sample.get("haystack_session_ids", []))
+        if sid in gold
+    ]
+
+
 def _build_sessions(sample: Dict) -> List[Dict]:
-    """Convert parallel lists into a list of session dicts."""
+    """Convert parallel lists into a list of session dicts.
+
+    Strips the two upstream scoring labels that would otherwise leak the
+    answer location to the memory system — see the inline notes below.
+    """
     out: List[Dict] = []
-    for sid, date, msgs in zip(
+    for idx, (sid, date, msgs) in enumerate(zip(
         sample.get("haystack_session_ids", []),
         sample.get("haystack_dates", []),
         sample.get("haystack_sessions", []),
-    ):
+    )):
         out.append({
-            "session_id": sid,
+            # Normalized positional id, NOT the upstream one. Upstream names
+            # every gold session "answer_<hash>" and every distractor
+            # "sharegpt_*" / "ultrachat_*" (948/948 vs 0/22919 across the
+            # file), so passing it through hands the memory system a perfect
+            # gold/distractor classifier. Upstream's own reader never sees it
+            # either — run_generation.py labels sessions positionally
+            # ("### Session 45:"). See _gold_session_keys() for how
+            # answer_session_ids is translated onto these.
+            "session_id": _session_key(idx),
             "date": date,
-            "messages": msgs,
+            # Only role/content survive. Upstream tags evidence turns with
+            # `has_answer`; that key is present ONLY inside gold sessions
+            # (10960 messages, 0 in distractors), so its mere PRESENCE is a
+            # perfect classifier too. It is a scoring label — the upstream
+            # README says it exists for "turn-level memory recall accuracy
+            # evaluation" — not model input.
+            "messages": [
+                {"role": m.get("role", ""), "content": m.get("content", "")}
+                for m in (msgs or [])
+                if isinstance(m, dict)
+            ],
         })
     return out
 
@@ -287,7 +329,8 @@ def load_user_data(
         "metadata": {
             "question_type": sample.get("question_type", ""),
             "question_date": sample.get("question_date", ""),
-            "answer_session_ids": list(sample.get("answer_session_ids", []) or []),
+            # Normalized to match the session_ids _build_sessions emits.
+            "answer_session_ids": _gold_session_keys(sample),
         },
     }]
     # eval_n_qa is a no-op for LongMemEval (one QA per haystack) but we honour
