@@ -16,13 +16,16 @@ dataset: dynamicmem            # which benchmark: dynamicmem | locomo | longmeme
 split: test                    # test | search (search = the training split used during evolution)
 progressive: false             # false = ONE single pass (sized by single_stage); true = staged stage1->2->3 gauntlet (sized by stages)
 sampling_seed: 42              # seeds the sampled subset (both paths; a no-op at whole-split)
-memory_cache: true             # cross-stage Phase-1 memory reuse. Values:
-                               #   true      reuse a snapshot — INCLUDING one from a previous run; the
-                               #             cache is results/<dataset>/<split>/memory_cache, which is
-                               #             NOT run-scoped, so a re-run skips the build
+memory_cache: rebuild          # cross-stage Phase-1 memory reuse. Values:
+                               #   rebuild   DEFAULT — build Phase 1 fresh once per run, then let the
+                               #             later gauntlet stages reuse that build. A run never inherits
+                               #             memory from an earlier one, so every result is reproducible
+                               #             from scratch; the build is still paid only ONCE per run
+                               #   true      also reuse a snapshot from a PREVIOUS run — the cache is
+                               #             results/<dataset>/<split>/memory_cache and is NOT
+                               #             run-scoped, so a re-run skips the build entirely. Faster,
+                               #             but what you measure is yesterday's memory
                                #   false     off entirely — every stage rebuilds
-                               #   rebuild   build fresh ONCE this run, then let the later stages reuse
-                               #             it and overwrite the stale entry
                                # Any change to this file's method knobs invalidates an entry (the sidecar
                                # fingerprints the memo config), so two different configs can never reuse
                                # each other's memory.
