@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from common.memo_class import MemoClass
+from common.store_cache import DiskStoreCache
 from baselines.harness.hipporag2.memo import app_log_to_passage
 from baselines.harness.simplemem._st_shim import (
     ensure_sentence_transformers, install_embedding_cache, import_simplemem_system,
@@ -109,13 +110,20 @@ def _entry_to_passage(entry: MemoryEntry) -> str:
     return "\n".join(parts)
 
 
-class SimpleMemMemo(MemoClass):
+class SimpleMemMemo(DiskStoreCache, MemoClass):
 
     def __init__(self, config=None):
         super().__init__(config)
         self._system: Optional[SimpleMemSystem] = None   # lazy — built on first hook call
         self._instance_id = uuid.uuid4().hex[:12]        # per-user LanceDB scoping
         self._next_id = 1                                # sequential Dialogue ids across BUILD calls
+
+    # -- memory-cache hooks (common/store_cache.py) --
+    _store_handle = "_system"
+
+    def _store_path(self):
+        """Per-user LanceDB directory — the whole of SimpleMem's persistent state."""
+        return OUTPUTS_DIR / self._instance_id
 
     def _ensure_system(self):
         if self._system is not None:
@@ -138,7 +146,8 @@ class SimpleMemMemo(MemoClass):
                 model=cfg.get("simplemem_llm_model"),
                 base_url=cfg.get("base_url") or None,
                 db_path=save_dir,
-                clear_db=True,
+                # A restored LanceDB store must NOT be cleared (DiskStoreCache).
+                clear_db=not self.restored_from_cache,
                 enable_thinking=False,
                 use_streaming=False,
                 enable_planning=cfg.get("enable_planning"),

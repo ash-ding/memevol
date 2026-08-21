@@ -43,6 +43,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from common.memo_class import MemoClass
+from common.store_cache import DiskStoreCache
 from baselines.harness.hipporag2.memo import app_log_to_passage
 # NOTE: the vendored utils.py imports sentence-transformers, which eagerly
 # imports HuggingFace `datasets`. That used to collide with memevol's own
@@ -136,19 +137,27 @@ def _page_to_passage(page: Dict[str, Any]) -> str:
     return f"{head}{body}"
 
 
-class MemoryOSMemo(MemoClass):
+class MemoryOSMemo(DiskStoreCache, MemoClass):
 
     def __init__(self, config=None):
         super().__init__(config)
         self._memo: Optional[Memoryos] = None
         self._instance_id = uuid.uuid4().hex[:12]   # per-user on-disk store
 
+    # -- memory-cache hooks (common/store_cache.py) --
+    _store_handle = "_memo"
+
+    def _store_path(self):
+        """Per-user data_storage_path — STM/MTM/LPM all persist under it."""
+        return OUTPUTS_DIR / self._instance_id
+
     def _ensure_system(self) -> None:
         if self._memo is not None:
             return
         cfg = self.config
         save_dir = OUTPUTS_DIR / self._instance_id
-        if save_dir.exists():
+        # Never wipe a store restored from the memory cache (DiskStoreCache).
+        if save_dir.exists() and not self.restored_from_cache:
             shutil.rmtree(save_dir, ignore_errors=True)
         save_dir.mkdir(parents=True, exist_ok=True)
         with open(os.devnull, "w") as devnull, \

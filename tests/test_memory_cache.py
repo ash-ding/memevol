@@ -265,6 +265,178 @@ def test_base_workflow_cache_skips_phase1():
         assert sum(ingest_calls) == 0, "second run must hit the final-memory cache"
 
 
+def test_hook_restored_memo_keeps_its_config():
+    """REGRESSION: the cache used to pass the bare memo CLASS as
+    `memo_factory`, so `load_memo` built the restoring instance with no config
+    while the normal per-user path built it with `memo_config`. A
+    `load_memory` that needs config to reopen its backend (simplemem needs the
+    model names) would silently restore a broken memo.
+
+    Both paths now go through `BaseWorkflow._new_memo`.
+    """
+    from benchmarks.locomo.workflow import LoCoMoWorkflow
+    from common.memo_class import MemoClass
+
+    # MemoClass, not FakeMemo: the fakes here predate config injection and
+    # take no ctor argument, which is exactly what this test is about.
+    cfg = {"simplemem_llm_model": "gpt-4.1-mini", "embedding_model": "qwen3"}
+    wf = LoCoMoWorkflow(memo_class=MemoClass, model="gpt-5-mini/low",
+                        memo_config=cfg)
+
+    direct = wf._new_memo()
+    viacache = wf._new_memo()          # exactly what memo_factory now calls
+    assert direct.config == cfg, direct.config
+    assert viacache.config == cfg, viacache.config
+
+
+def test_cache_factory_is_the_shared_constructor():
+    """The cache must not build memos its own way — that is how the two paths
+    drifted apart in the first place."""
+    import inspect
+    from common.workflow import BaseWorkflow
+
+    src = inspect.getsource(BaseWorkflow._cache_load)
+    assert "memo_factory=self._new_memo" in src, src
+
+
+def test_memo_class_declares_the_cache_hooks():
+    """The baselines subclass common.MemoClass, not forge's base. The hooks
+    were only declared on forge's, which is why no baseline implemented them."""
+    from common.memo_class import MemoClass
+
+    m = MemoClass(config={"k": "v"})
+    assert m.save_memory("/tmp/x") is False
+    assert m.load_memory("/tmp/x") is False
+
+
+def test_config_change_invalidates_the_cache():
+    """A cache entry must not survive a change to the memo's CONFIG.
+
+    `harness_fingerprint` covers the memo's SOURCE, so this was the gap: run
+    the faithful arm (384-dim MiniLM) then the unified arm (1536-dim API
+    embedder) into the same results dir, and the second run reused the first's
+    memory. Same code, different memory, no error — just a comparison that
+    isn't one.
+    """
+    from benchmarks.locomo.workflow import LoCoMoWorkflow
+    from common.memo_class import MemoClass
+
+    def meta_for(cfg):
+        wf = LoCoMoWorkflow(memo_class=MemoClass, model="gpt-5-mini/low", memo_config=cfg)
+        wf.status = "search"
+        return wf._cache_meta()
+
+    faithful = meta_for({"embedding_model": "all-MiniLM-L6-v2", "window_size": 40})
+    unified = meta_for({"embedding_model": "text-embedding-3-small", "window_size": 40})
+    windowed = meta_for({"embedding_model": "all-MiniLM-L6-v2", "window_size": 20})
+    same = meta_for({"window_size": 40, "embedding_model": "all-MiniLM-L6-v2"})
+
+    assert faithful["memo_config"] != unified["memo_config"], "embedder swap must miss"
+    assert faithful["memo_config"] != windowed["memo_config"], "window change must miss"
+    assert faithful["memo_config"] == same["memo_config"], "key order must not matter"
+
+
+def test_config_fingerprint_is_stable_across_processes():
+    """An unserialisable value must contribute its TYPE, not its repr — a repr
+    carries a memory address, which would change every process and make the
+    entry permanently unreusable instead of merely correct."""
+    from common.memory_cache import config_fingerprint
+
+    assert config_fingerprint({"f": lambda: 1}) == config_fingerprint({"f": lambda: 2})
+    assert config_fingerprint(None) == config_fingerprint({}) == "none"
+
+
+def test_pre_existing_entries_without_the_field_are_a_miss():
+    """Snapshots written before this field existed must rebuild, not be trusted."""
+    import json as _json
+    with tempfile.TemporaryDirectory() as d:
+        cache = Path(d)
+        mc.save_memo(FakeMemo(), cache, "u__final", _meta())          # legacy-shaped meta
+        sidecar = _json.loads((cache / "u__final.meta.json").read_text(encoding="utf-8"))
+        assert "memo_config" not in sidecar
+        expect = dict(_meta()); expect["memo_config"] = "abc123"
+        assert mc.load_memo(cache, "u__final", expect) is None
+
+
+def test_cache_mode_resolution():
+    """`memory_cache` is tri-state. A typo must fail loudly rather than be
+    truthy and silently behave like True."""
+    from common.memory_cache import resolve_cache_mode
+
+    assert resolve_cache_mode(True) == (True, True)      # reuse across runs
+    assert resolve_cache_mode(False) == (False, False)   # off; every stage rebuilds
+    assert resolve_cache_mode("rebuild") == (True, False)  # fresh once, then reuse
+    assert resolve_cache_mode("REBUILD") == (True, False)
+    for bad in ("rebiuld", "yes", "", None, 1):
+        try:
+            resolve_cache_mode(bad)
+            raise AssertionError(f"expected ValueError for {bad!r}")
+        except ValueError:
+            pass
+
+
+def test_rebuild_rebuilds_ONCE_then_later_stages_reuse():
+    """`rebuild` must skip reads for the FIRST stage only.
+
+    REGRESSION: the read flag was set from a single value inside the per-stage
+    loop, so it stayed False for the whole run and EVERY stage rebuilt — which
+    is `memory_cache: false` with extra disk writes, not what `rebuild` means.
+
+    Asserted on what evaluate_memo actually assigns per stage, not on a flag
+    this test sets itself; the previous version flipped it by hand and so could
+    not see the bug.
+    """
+    import asyncio, shutil, tempfile
+    from pathlib import Path as _P
+    from benchmarks.locomo.workflow import LoCoMoWorkflow
+    from common.evaluate import evaluate_memo
+    from common.memo_class import MemoClass
+
+    class _M(MemoClass):
+        async def retrieve_memory_for_query(self, r): return {}
+
+    class _Rec:                      # reward 1.0 so every stage promotes
+        def __init__(self, user_id):
+            self.user_id, self.reward = user_id, 1.0
+            self.steps = [{"q": "x", "score": 1.0}]
+            self.failure_info = None
+
+    def _read_flags_for(mode):
+        seen = []
+
+        async def _capture(self, task_list, *, stage="stage3", stage_spec=None,
+                           max_sample_concurrent=6):
+            seen.append((stage, getattr(self, "memory_cache_read", None),
+                         self.memory_cache_dir is not None))
+            recs = [_Rec(u) for u in task_list]
+            return recs, len(recs)
+
+        out_dir = _P(tempfile.mkdtemp(prefix="test_rebuild_"))
+        orig = LoCoMoWorkflow.run_all_users
+        LoCoMoWorkflow.run_all_users = _capture
+        try:
+            asyncio.run(evaluate_memo(
+                memo_class=_M, dataset="locomo", split="test", progressive=True,
+                out_dir=out_dir, qa_model="gpt-5-mini/low",
+                judge_model="gpt-5-mini/low", memory_cache=mode))
+        finally:
+            LoCoMoWorkflow.run_all_users = orig
+            shutil.rmtree(out_dir, ignore_errors=True)
+        return seen
+
+    rebuild = _read_flags_for("rebuild")
+    assert len(rebuild) >= 2, rebuild
+    assert rebuild[0][1] is False, f"first stage must NOT read: {rebuild}"
+    assert all(s[1] is True for s in rebuild[1:]), f"later stages must read: {rebuild}"
+    assert all(s[2] for s in rebuild), f"writes stay enabled throughout: {rebuild}"
+
+    always = _read_flags_for(True)
+    assert all(s[1] is True for s in always), f"true reads at every stage: {always}"
+
+    off = _read_flags_for(False)
+    assert all(not s[2] for s in off), f"false disables the cache entirely: {off}"
+
+
 # ---------------- runner ----------------
 
 def main():

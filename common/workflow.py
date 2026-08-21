@@ -143,26 +143,46 @@ class BaseWorkflow(ABC):
             return int(n_qa)
         return self.eval_n_qa or self._default_qa_per_user_hint
 
+    def _new_memo(self):
+        """The ONE way a memo instance is constructed.
+
+        Shared by the normal per-user path and by the memory cache's
+        `memo_factory`. They used to build memos differently: the cache passed
+        the bare class, so a hook-restored memo came back with an EMPTY config
+        while a freshly-built one got `memo_config`. Any `load_memory` that
+        needs config to rebuild its backend (simplemem needs the model names to
+        reopen its store) would have silently restored a broken instance.
+        """
+        if self.memo_config is not None:
+            return self.memo_class(config=self.memo_config)
+        return self.memo_class()
+
     # ---- Cross-stage memory cache (common/memory_cache.py) ----
 
     def _cache_meta(self) -> Dict:
         """Sidecar fields that must match for a cache entry to be reused —
         different ingest config or harness code ⇒ different memory."""
+        from common.memory_cache import config_fingerprint
         return {
             "model": self.model,
             "max_logs": self.max_logs,
             "harness_fingerprint": self.harness_fingerprint,
+            # The memo's CONFIG, not just its source. Two runs of identical code
+            # with a different embedder / internal LLM / window size build
+            # materially different memory; without this the second silently
+            # reuses the first's. See config_fingerprint.
+            "memo_config": config_fingerprint(self.memo_config),
         }
 
     def _cache_load(self, key: str, extra_meta: Optional[Dict] = None):
-        if self.memory_cache_dir is None:
+        if self.memory_cache_dir is None or not self.memory_cache_read:
             return None
         from common import memory_cache as mc
         expect = self._cache_meta()
         if extra_meta:
             expect.update(extra_meta)
         loaded = mc.load_memo(self.memory_cache_dir, key, expect,
-                              memo_factory=self.memo_class)
+                              memo_factory=self._new_memo)
         if loaded is not None:
             log.info(f"[memcache] hit: {key}")
         return loaded
@@ -218,6 +238,9 @@ class BaseWorkflow(ABC):
         # (baselines / sanity / dev runs). `harness_fingerprint` guards
         # against reusing memory built by different harness code.
         self.memory_cache_dir: Optional[Path] = None
+        # False under `memory_cache: rebuild` — writes continue, reads are
+        # skipped, so Phase 1 is built fresh once per run.
+        self.memory_cache_read: bool = True
         self.harness_fingerprint: str = ""
         # Lazy-constructed Judge (per common.metric.Judge). Subclasses can
         # override `_make_judge` to customize prompt / score range.
@@ -460,8 +483,7 @@ class BaseWorkflow(ABC):
         sample_seed = (stage_spec or {}).get("sample_seed")
         init_data, qa_pairs = await self.load_user_data(user_dir, qa_size, sample_seed=sample_seed)
 
-        memo = (self.memo_class(config=self.memo_config)
-                if self.memo_config is not None else self.memo_class())
+        memo = self._new_memo()
 
         # Cross-stage memory cache: Phase-1 input for this benchmark family is
         # independent of the QA count, so the final memory built at an earlier
