@@ -49,6 +49,17 @@ log = get_logger("main")
 # never collide.
 _SUFFIX = ".store"
 
+# Runtime artefacts that must NOT be copied into (or out of) a snapshot.
+#
+# These are not memory — they are process-liveness markers. Qdrant's local mode
+# holds `.lock` OPEN for the life of the client, so on Windows copying it fails
+# outright with `[Errno 13] Permission denied` and takes the whole snapshot down
+# with it. Even where the copy succeeds (POSIX), restoring a stale lock into a
+# fresh store is wrong: the backend must be free to take its own.
+_EPHEMERAL = shutil.ignore_patterns(
+    ".lock", "*.lock", "LOCK", "*.pid", "*.sock", "*.tmp", "~*",
+)
+
 
 class DiskStoreCache:
     """Mixin implementing the memory-cache hooks by copying a directory/file."""
@@ -114,6 +125,6 @@ def _replace(src: Path, dst: Path) -> None:
         shutil.rmtree(dst, ignore_errors=True) if dst.is_dir() else dst.unlink()
     dst.parent.mkdir(parents=True, exist_ok=True)
     if src.is_dir():
-        shutil.copytree(src, dst)
+        shutil.copytree(src, dst, ignore=_EPHEMERAL)
     else:
         shutil.copy2(src, dst)

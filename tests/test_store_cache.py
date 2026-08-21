@@ -150,6 +150,36 @@ def test_every_wired_baseline_declares_a_store_path():
     assert len(wired) >= 5, f"expected the disk-backed baselines to be wired, got {wired}"
 
 
+def test_lock_files_are_never_snapshotted():
+    """REGRESSION (found by a real lightmem run): Qdrant holds `.lock` OPEN for
+    the life of the client, so copying it failed with `[Errno 13] Permission
+    denied` on Windows and took the whole snapshot down — lightmem then fell
+    through to pickle, which also fails for it, leaving it uncached.
+
+    A lock is process-liveness, not memory; restoring a stale one would also
+    stop the backend taking its own.
+    """
+    with tempfile.TemporaryDirectory() as d:
+        memo = DirMemo(Path(d) / "a").open("real-data")
+        store = memo._store_path()
+        (store / ".lock").write_text("held", encoding="utf-8")
+        (store / "seg.pid").write_text("123", encoding="utf-8")
+        (store / "nested").mkdir()
+        (store / "nested" / "x.lock").write_text("held", encoding="utf-8")
+
+        assert memo.save_memory(Path(d) / "snap") is True
+        snap = Path(str(Path(d) / "snap") + ".store")
+        copied = {p.name for p in snap.rglob("*") if p.is_file()}
+        assert "data.txt" in copied, copied
+        assert not any(n.endswith((".lock", ".pid")) for n in copied), copied
+
+        # and the restore brings the real data back, still lock-free
+        fresh = DirMemo(Path(d) / "b")
+        assert fresh.load_memory(Path(d) / "snap") is True
+        assert (fresh._store_path() / "data.txt").read_text(encoding="utf-8") == "real-data"
+        assert not (fresh._store_path() / ".lock").exists()
+
+
 def main():
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = []
