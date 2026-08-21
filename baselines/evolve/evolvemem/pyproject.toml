@@ -1,0 +1,30 @@
+# evolvemem baseline — standalone uv project.
+#
+#   cd baselines/evolve/evolvemem && uv sync      # -> .venv/ (CPython 3.12 via .python-version)
+#
+# DELIBERATELY INDEPENDENT of the rest of this repo. This module vendors
+# upstream's EvolveMem subtree whole — package AND entry points — and runs it on
+# upstream's own terms to reproduce the paper. It imports nothing from `common/`,
+# `benchmarks/` or `baselines/`, so there is no shared-core dependency block
+# here: what follows is exactly upstream's `upstream/requirements.txt` plus the
+# two packages its lazy import paths need. See README.md for why this baseline
+# is scoped that way and what it costs (its numbers are NOT comparable with
+# forge's or any harness baseline's).
+[project]
+name = "memevol-baseline-evolvemem"
+version = "0.0.0"
+description = "EvolveMem — standalone reproduction of arXiv:2605.13941"
+requires-python = ">=3.12"
+dependencies = [
+    # --- upstream/requirements.txt, verbatim ---
+    "openai>=1.0.0",
+    "pyyaml>=6.0",
+    "sentence-transformers>=2.2.0",
+    "numpy>=1.24.0",
+    # --- reached by lazy imports upstream does not declare ---
+    "rank_bm25",     # multi_retriever.py — the BM25 view (the `weak` start IS this)
+    "rouge-score",   # benchmarks/metrics.py — part of its metric bundle
+]
+
+[tool.uv]
+package = false   # this dir is an app env, not a buildable package
