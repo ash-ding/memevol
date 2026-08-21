@@ -50,6 +50,29 @@ def user_key(user_dir: str) -> str:
     return _KEY_SANITIZE_RE.sub("_", name)
 
 
+def config_fingerprint(config: Optional[Dict[str, Any]]) -> str:
+    """sha256[:16] over a memo's CONFIG — the knobs that change what gets built.
+
+    `harness_fingerprint` covers the memo's source, so editing memo.py
+    invalidates a cache entry. It does NOT cover configuration, and the config
+    is where the interesting differences live: swap `embedding_model` from a
+    384-dim MiniLM to a 1536-dim API embedder, or change simplemem's
+    `window_size`, and the memory that comes out is materially different while
+    the source is byte-identical. Without this, the entry would be reused and
+    the run would silently answer from memory built under the OTHER settings.
+
+    Values that cannot be serialised (a factory callable injected by a test)
+    contribute their TYPE NAME, never their repr — a repr carries a memory
+    address, which would change every process and make the entry permanently
+    unreusable rather than merely correct.
+    """
+    if not config:
+        return "none"
+    blob = json.dumps(config, sort_keys=True, ensure_ascii=False,
+                      default=lambda o: f"<{type(o).__name__}>")
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
+
 def harness_fingerprint(harness_dir: Path) -> str:
     """sha256[:16] over the harness's code files (harness.py + helper *.py +
     requirements.txt), name + content. Mirrors the scope of the orchestrator's

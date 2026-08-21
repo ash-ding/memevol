@@ -309,6 +309,55 @@ def test_memo_class_declares_the_cache_hooks():
     assert m.load_memory("/tmp/x") is False
 
 
+def test_config_change_invalidates_the_cache():
+    """A cache entry must not survive a change to the memo's CONFIG.
+
+    `harness_fingerprint` covers the memo's SOURCE, so this was the gap: run
+    the faithful arm (384-dim MiniLM) then the unified arm (1536-dim API
+    embedder) into the same results dir, and the second run reused the first's
+    memory. Same code, different memory, no error — just a comparison that
+    isn't one.
+    """
+    from benchmarks.locomo.workflow import LoCoMoWorkflow
+    from common.memo_class import MemoClass
+
+    def meta_for(cfg):
+        wf = LoCoMoWorkflow(memo_class=MemoClass, model="gpt-5-mini/low", memo_config=cfg)
+        wf.status = "search"
+        return wf._cache_meta()
+
+    faithful = meta_for({"embedding_model": "all-MiniLM-L6-v2", "window_size": 40})
+    unified = meta_for({"embedding_model": "text-embedding-3-small", "window_size": 40})
+    windowed = meta_for({"embedding_model": "all-MiniLM-L6-v2", "window_size": 20})
+    same = meta_for({"window_size": 40, "embedding_model": "all-MiniLM-L6-v2"})
+
+    assert faithful["memo_config"] != unified["memo_config"], "embedder swap must miss"
+    assert faithful["memo_config"] != windowed["memo_config"], "window change must miss"
+    assert faithful["memo_config"] == same["memo_config"], "key order must not matter"
+
+
+def test_config_fingerprint_is_stable_across_processes():
+    """An unserialisable value must contribute its TYPE, not its repr — a repr
+    carries a memory address, which would change every process and make the
+    entry permanently unreusable instead of merely correct."""
+    from common.memory_cache import config_fingerprint
+
+    assert config_fingerprint({"f": lambda: 1}) == config_fingerprint({"f": lambda: 2})
+    assert config_fingerprint(None) == config_fingerprint({}) == "none"
+
+
+def test_pre_existing_entries_without_the_field_are_a_miss():
+    """Snapshots written before this field existed must rebuild, not be trusted."""
+    import json as _json
+    with tempfile.TemporaryDirectory() as d:
+        cache = Path(d)
+        mc.save_memo(FakeMemo(), cache, "u__final", _meta())          # legacy-shaped meta
+        sidecar = _json.loads((cache / "u__final.meta.json").read_text(encoding="utf-8"))
+        assert "memo_config" not in sidecar
+        expect = dict(_meta()); expect["memo_config"] = "abc123"
+        assert mc.load_memo(cache, "u__final", expect) is None
+
+
 # ---------------- runner ----------------
 
 def main():

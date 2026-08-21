@@ -162,10 +162,16 @@ class BaseWorkflow(ABC):
     def _cache_meta(self) -> Dict:
         """Sidecar fields that must match for a cache entry to be reused —
         different ingest config or harness code ⇒ different memory."""
+        from common.memory_cache import config_fingerprint
         return {
             "model": self.model,
             "max_logs": self.max_logs,
             "harness_fingerprint": self.harness_fingerprint,
+            # The memo's CONFIG, not just its source. Two runs of identical code
+            # with a different embedder / internal LLM / window size build
+            # materially different memory; without this the second silently
+            # reuses the first's. See config_fingerprint.
+            "memo_config": config_fingerprint(self.memo_config),
         }
 
     def _cache_load(self, key: str, extra_meta: Optional[Dict] = None):
