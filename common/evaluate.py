@@ -408,7 +408,7 @@ async def evaluate_memo(
     single_stage: Optional[Dict[str, Any]] = None,
     max_sample_concurrent: int = 3,
     sample_seed: Optional[str] = None,
-    memory_cache: bool = True,
+    memory_cache: Any = True,        # True | False | "rebuild" (see resolve_cache_mode)
     memcache_fingerprint: Optional[str] = None,
     memcache_dir: Optional["Path"] = None,
     smoke: bool = False,
@@ -456,6 +456,7 @@ async def evaluate_memo(
     from benchmarks.registry import resolve as _resolve_dataset
     from common.tokens import init_global_tracker
     from common.memory_cache import harness_fingerprint as _dir_fingerprint
+    from common.memory_cache import resolve_cache_mode as _resolve_cache_mode
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -479,7 +480,8 @@ async def evaluate_memo(
 
     # ---- cross-stage memory cache (gauntlet + single; never smoke/sanity) ----
     fingerprint = ""
-    if memory_cache and not smoke:
+    cache_enabled, cache_read = _resolve_cache_mode(memory_cache)
+    if cache_enabled and not smoke:
         fingerprint = memcache_fingerprint if memcache_fingerprint is not None else ""
         if not fingerprint:
             src_dir = _memo_source_dir(memo_class)
@@ -517,6 +519,7 @@ async def evaluate_memo(
         workflow.output_run_dir = stage_dir
         if memcache_dir is not None:
             workflow.memory_cache_dir = memcache_dir
+            workflow.memory_cache_read = cache_read
             workflow.harness_fingerprint = fingerprint
 
         tokens_before = _total_tokens(tracker.summary())

@@ -21,6 +21,11 @@ Optional harness hooks (see forge/memo_class.py): a memo may implement
 the default pickle can't (the hook owns the file format at `path.*`). The
 sidecar meta is still written/validated by this module.
 
+The cache directory is ``<out_dir>/memory_cache`` — keyed on baseline + dataset
++ split, with nothing run-specific in it — so entries persist ACROSS runs and a
+re-run reuses the previous one's Phase-1 memory. The ``memory_cache`` config key
+chooses what to do about that; see ``CACHE_MODES`` / ``resolve_cache_mode``.
+
 Security note: pickles are produced and consumed ONLY inside the harness's
 own evaluation container, which already runs the harness's arbitrary code —
 no new attack surface. The host never unpickles cache files.
@@ -48,6 +53,30 @@ def user_key(user_dir: str) -> str:
     """Filename-safe cache key component for a user/sample identifier."""
     name = Path(str(user_dir)).name or str(user_dir)
     return _KEY_SANITIZE_RE.sub("_", name)
+
+
+#: Accepted values for the `memory_cache` config key.
+#:   True      read + write — reuse a previous run's snapshot (the default)
+#:   False     off entirely — every stage rebuilds
+#:   "rebuild" write-only — build Phase 1 fresh ONCE this run, then let the
+#:             later gauntlet stages reuse that build and overwrite the stale
+#:             entry. The middle ground `False` cannot express.
+CACHE_MODES = (True, False, "rebuild")
+
+
+def resolve_cache_mode(memory_cache) -> tuple:
+    """Normalise the `memory_cache` config value to (enabled, read_allowed).
+
+    Raises ValueError on anything else, so a typo (`rebiuld`) fails loudly
+    instead of being truthy and silently behaving like `True`.
+    """
+    if isinstance(memory_cache, bool):
+        return memory_cache, memory_cache
+    if isinstance(memory_cache, str) and memory_cache.strip().lower() == "rebuild":
+        return True, False
+    raise ValueError(
+        f"memory_cache must be one of {CACHE_MODES!r}, got {memory_cache!r}"
+    )
 
 
 def config_fingerprint(config: Optional[Dict[str, Any]]) -> str:

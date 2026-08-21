@@ -358,6 +358,50 @@ def test_pre_existing_entries_without_the_field_are_a_miss():
         assert mc.load_memo(cache, "u__final", expect) is None
 
 
+def test_cache_mode_resolution():
+    """`memory_cache` is tri-state. A typo must fail loudly rather than be
+    truthy and silently behave like True."""
+    from common.memory_cache import resolve_cache_mode
+
+    assert resolve_cache_mode(True) == (True, True)      # reuse across runs
+    assert resolve_cache_mode(False) == (False, False)   # off; every stage rebuilds
+    assert resolve_cache_mode("rebuild") == (True, False)  # fresh once, then reuse
+    assert resolve_cache_mode("REBUILD") == (True, False)
+    for bad in ("rebiuld", "yes", "", None, 1):
+        try:
+            resolve_cache_mode(bad)
+            raise AssertionError(f"expected ValueError for {bad!r}")
+        except ValueError:
+            pass
+
+
+def test_rebuild_mode_skips_reads_but_still_writes():
+    """`memory_cache: rebuild` must build Phase 1 fresh for the run WHILE still
+    writing, so the later gauntlet stages reuse that build.
+
+    That is the middle ground `memory_cache: false` cannot express — it
+    disables the cache entirely, so every stage rebuilds.
+    """
+    from benchmarks.locomo.workflow import LoCoMoWorkflow
+    from common.memo_class import MemoClass
+
+    with tempfile.TemporaryDirectory() as d:
+        wf = LoCoMoWorkflow(memo_class=MemoClass, model="gpt-5-mini/low",
+                            memo_config={"a": 1})
+        wf.status = "search"
+        wf.memory_cache_dir = Path(d)
+        wf._cache_save(FakeMemo(), "u__final")
+        assert wf._cache_load("u__final") is not None, "precondition: reuse works"
+
+        wf.memory_cache_read = False                     # what `rebuild` sets
+        assert wf._cache_load("u__final") is None, "reads must be skipped"
+        wf._cache_save(FakeMemo(), "u2__final")
+        assert (Path(d) / "u2__final.meta.json").exists(), "writes must continue"
+
+        wf.memory_cache_read = True
+        assert wf._cache_load("u2__final") is not None, "this run's build is reusable"
+
+
 # ---------------- runner ----------------
 
 def main():

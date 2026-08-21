@@ -175,7 +175,7 @@ class BaseWorkflow(ABC):
         }
 
     def _cache_load(self, key: str, extra_meta: Optional[Dict] = None):
-        if self.memory_cache_dir is None:
+        if self.memory_cache_dir is None or not self.memory_cache_read:
             return None
         from common import memory_cache as mc
         expect = self._cache_meta()
@@ -238,6 +238,9 @@ class BaseWorkflow(ABC):
         # (baselines / sanity / dev runs). `harness_fingerprint` guards
         # against reusing memory built by different harness code.
         self.memory_cache_dir: Optional[Path] = None
+        # False under `memory_cache: rebuild` — writes continue, reads are
+        # skipped, so Phase 1 is built fresh once per run.
+        self.memory_cache_read: bool = True
         self.harness_fingerprint: str = ""
         # Lazy-constructed Judge (per common.metric.Judge). Subclasses can
         # override `_make_judge` to customize prompt / score range.
