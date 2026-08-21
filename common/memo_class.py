@@ -65,3 +65,27 @@ class MemoClass(ABC):
         benchmark's standard QA agent (the default). `prompt` is the workflow's
         fully-formatted answer prompt. Default: None."""
         return None
+
+    # -------- Optional memory-cache hooks (common/memory_cache.py) --------
+    # Override BOTH when the default pickle can't capture your state — a live
+    # DB connection, an HTTP pool, a thread pool or a subprocess makes an
+    # instance unpicklable (`cannot pickle '_thread.RLock' object`), and the
+    # evaluator then silently rebuilds Phase-1 memory from scratch at every
+    # stage instead of reusing it. These are the same hooks `forge/memo_class.py`
+    # declares for evolved harnesses; declared here so the harness baselines
+    # can see them too.
+    #
+    # `path` is a per-snapshot filename PREFIX, not a file — write/read any
+    # file(s) at `str(path) + <your suffix>`. Return True on success; returning
+    # False (the default) tells the evaluator to fall back to its own pickle
+    # (save) or to rebuild from scratch (load). `load_memory` is called on a
+    # FRESH instance built exactly like any other, so `self.config` is
+    # populated and can be used to reopen a backend.
+
+    def save_memory(self, path) -> bool:
+        """Persist this memo's state under the `path` prefix. Default: False."""
+        return False
+
+    def load_memory(self, path) -> bool:
+        """Restore state written by `save_memory`. Default: False."""
+        return False

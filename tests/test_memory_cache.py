@@ -265,6 +265,50 @@ def test_base_workflow_cache_skips_phase1():
         assert sum(ingest_calls) == 0, "second run must hit the final-memory cache"
 
 
+def test_hook_restored_memo_keeps_its_config():
+    """REGRESSION: the cache used to pass the bare memo CLASS as
+    `memo_factory`, so `load_memo` built the restoring instance with no config
+    while the normal per-user path built it with `memo_config`. A
+    `load_memory` that needs config to reopen its backend (simplemem needs the
+    model names) would silently restore a broken memo.
+
+    Both paths now go through `BaseWorkflow._new_memo`.
+    """
+    from benchmarks.locomo.workflow import LoCoMoWorkflow
+    from common.memo_class import MemoClass
+
+    # MemoClass, not FakeMemo: the fakes here predate config injection and
+    # take no ctor argument, which is exactly what this test is about.
+    cfg = {"simplemem_llm_model": "gpt-4.1-mini", "embedding_model": "qwen3"}
+    wf = LoCoMoWorkflow(memo_class=MemoClass, model="gpt-5-mini/low",
+                        memo_config=cfg)
+
+    direct = wf._new_memo()
+    viacache = wf._new_memo()          # exactly what memo_factory now calls
+    assert direct.config == cfg, direct.config
+    assert viacache.config == cfg, viacache.config
+
+
+def test_cache_factory_is_the_shared_constructor():
+    """The cache must not build memos its own way — that is how the two paths
+    drifted apart in the first place."""
+    import inspect
+    from common.workflow import BaseWorkflow
+
+    src = inspect.getsource(BaseWorkflow._cache_load)
+    assert "memo_factory=self._new_memo" in src, src
+
+
+def test_memo_class_declares_the_cache_hooks():
+    """The baselines subclass common.MemoClass, not forge's base. The hooks
+    were only declared on forge's, which is why no baseline implemented them."""
+    from common.memo_class import MemoClass
+
+    m = MemoClass(config={"k": "v"})
+    assert m.save_memory("/tmp/x") is False
+    assert m.load_memory("/tmp/x") is False
+
+
 # ---------------- runner ----------------
 
 def main():
