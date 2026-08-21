@@ -111,7 +111,10 @@ max_sample_concurrent: 3
 
 # Reuse Phase-1 memory snapshots across stages (and across sample→full runs
 # within this workspace). Recommended on.
-memory_cache: true
+memory_cache: true             # cross-stage Phase-1 memory reuse; --no-memory-cache to disable.
+                               # true | false ONLY — the orchestrator gates on truthiness, so the
+                               # harness baselines' "rebuild" value would collapse to true here.
+                               # Delete the run's memory_cache mount to force a rebuild.
 
 gpu:
   enabled: false

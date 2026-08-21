@@ -17,7 +17,16 @@ dataset: locomo                 # which benchmark: dynamicmem | locomo | longmem
 split: test                    # test | search (search = the training split used during evolution)
 progressive: false             # false = ONE single pass (sized by single_stage); true = staged stage1->2->3 gauntlet (sized by stages)
 sampling_seed: 42              # seeds the sampled subset (both paths; a no-op at whole-split)
-memory_cache: true             # cross-stage Phase-1 memory reuse (gauntlet only); --no-memory-cache to disable
+memory_cache: true             # cross-stage Phase-1 memory reuse. Values:
+                               #   true      reuse a snapshot — INCLUDING one from a previous run; the
+                               #             cache is results/<dataset>/<split>/memory_cache, which is
+                               #             NOT run-scoped, so a re-run skips the build
+                               #   false     off entirely — every stage rebuilds
+                               #   rebuild   build fresh ONCE this run, then let the later stages reuse
+                               #             it and overwrite the stale entry
+                               # Any change to this file's method knobs invalidates an entry (the sidecar
+                               # fingerprints the memo config), so two different configs can never reuse
+                               # each other's memory.
 
 # --- Zep / Graphiti retrieval + models ---
 retrieve_k: 20                 # paper: top-20 edges (facts) + entity nodes (summaries) per query
