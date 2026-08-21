@@ -375,31 +375,66 @@ def test_cache_mode_resolution():
             pass
 
 
-def test_rebuild_mode_skips_reads_but_still_writes():
-    """`memory_cache: rebuild` must build Phase 1 fresh for the run WHILE still
-    writing, so the later gauntlet stages reuse that build.
+def test_rebuild_rebuilds_ONCE_then_later_stages_reuse():
+    """`rebuild` must skip reads for the FIRST stage only.
 
-    That is the middle ground `memory_cache: false` cannot express — it
-    disables the cache entirely, so every stage rebuilds.
+    REGRESSION: the read flag was set from a single value inside the per-stage
+    loop, so it stayed False for the whole run and EVERY stage rebuilt — which
+    is `memory_cache: false` with extra disk writes, not what `rebuild` means.
+
+    Asserted on what evaluate_memo actually assigns per stage, not on a flag
+    this test sets itself; the previous version flipped it by hand and so could
+    not see the bug.
     """
+    import asyncio, shutil, tempfile
+    from pathlib import Path as _P
     from benchmarks.locomo.workflow import LoCoMoWorkflow
+    from common.evaluate import evaluate_memo
     from common.memo_class import MemoClass
 
-    with tempfile.TemporaryDirectory() as d:
-        wf = LoCoMoWorkflow(memo_class=MemoClass, model="gpt-5-mini/low",
-                            memo_config={"a": 1})
-        wf.status = "search"
-        wf.memory_cache_dir = Path(d)
-        wf._cache_save(FakeMemo(), "u__final")
-        assert wf._cache_load("u__final") is not None, "precondition: reuse works"
+    class _M(MemoClass):
+        async def retrieve_memory_for_query(self, r): return {}
 
-        wf.memory_cache_read = False                     # what `rebuild` sets
-        assert wf._cache_load("u__final") is None, "reads must be skipped"
-        wf._cache_save(FakeMemo(), "u2__final")
-        assert (Path(d) / "u2__final.meta.json").exists(), "writes must continue"
+    class _Rec:                      # reward 1.0 so every stage promotes
+        def __init__(self, user_id):
+            self.user_id, self.reward = user_id, 1.0
+            self.steps = [{"q": "x", "score": 1.0}]
+            self.failure_info = None
 
-        wf.memory_cache_read = True
-        assert wf._cache_load("u2__final") is not None, "this run's build is reusable"
+    def _read_flags_for(mode):
+        seen = []
+
+        async def _capture(self, task_list, *, stage="stage3", stage_spec=None,
+                           max_sample_concurrent=6):
+            seen.append((stage, getattr(self, "memory_cache_read", None),
+                         self.memory_cache_dir is not None))
+            recs = [_Rec(u) for u in task_list]
+            return recs, len(recs)
+
+        out_dir = _P(tempfile.mkdtemp(prefix="test_rebuild_"))
+        orig = LoCoMoWorkflow.run_all_users
+        LoCoMoWorkflow.run_all_users = _capture
+        try:
+            asyncio.run(evaluate_memo(
+                memo_class=_M, dataset="locomo", split="test", progressive=True,
+                out_dir=out_dir, qa_model="gpt-5-mini/low",
+                judge_model="gpt-5-mini/low", memory_cache=mode))
+        finally:
+            LoCoMoWorkflow.run_all_users = orig
+            shutil.rmtree(out_dir, ignore_errors=True)
+        return seen
+
+    rebuild = _read_flags_for("rebuild")
+    assert len(rebuild) >= 2, rebuild
+    assert rebuild[0][1] is False, f"first stage must NOT read: {rebuild}"
+    assert all(s[1] is True for s in rebuild[1:]), f"later stages must read: {rebuild}"
+    assert all(s[2] for s in rebuild), f"writes stay enabled throughout: {rebuild}"
+
+    always = _read_flags_for(True)
+    assert all(s[1] is True for s in always), f"true reads at every stage: {always}"
+
+    off = _read_flags_for(False)
+    assert all(not s[2] for s in off), f"false disables the cache entirely: {off}"
 
 
 # ---------------- runner ----------------

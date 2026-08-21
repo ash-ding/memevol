@@ -481,6 +481,11 @@ async def evaluate_memo(
     # ---- cross-stage memory cache (gauntlet + single; never smoke/sanity) ----
     fingerprint = ""
     cache_enabled, cache_read = _resolve_cache_mode(memory_cache)
+    # Under "rebuild" this starts False and flips True after the FIRST
+    # cache-enabled stage, so Phase 1 is built once and the later stages reuse
+    # that build. Leaving it False for the whole run would rebuild at every
+    # stage — i.e. `memory_cache: false` with extra disk writes.
+    cache_read_now = cache_read
     if cache_enabled and not smoke:
         fingerprint = memcache_fingerprint if memcache_fingerprint is not None else ""
         if not fingerprint:
@@ -519,8 +524,10 @@ async def evaluate_memo(
         workflow.output_run_dir = stage_dir
         if memcache_dir is not None:
             workflow.memory_cache_dir = memcache_dir
-            workflow.memory_cache_read = cache_read
+            workflow.memory_cache_read = cache_read_now
             workflow.harness_fingerprint = fingerprint
+            # This stage writes its snapshot; every stage after it must reuse it.
+            cache_read_now = True
 
         tokens_before = _total_tokens(tracker.summary())
         raw_score = 0.0
