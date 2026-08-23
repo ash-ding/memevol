@@ -264,7 +264,10 @@ data_isolation: true
 # (harness, dataset) under harnesses/<id>/<ds>/memory_cache/ and reuse it at
 # deeper gauntlet stages (stage1..3 only; sanity/dev never touch it).
 # CLI off-switch: --no-memory-cache.
-memory_cache: true
+memory_cache: true             # cross-stage Phase-1 memory reuse; --no-memory-cache to disable.
+                               # true | false ONLY — the orchestrator gates on truthiness, so the
+                               # harness baselines' "rebuild" value would collapse to true here.
+                               # Delete the run's memory_cache mount to force a rebuild.
 
 # On resume, scan harnesses/ for dirs on disk that aren't in frontier.json
 # (e.g. the orchestrator was killed mid-eval), classify them, and run only

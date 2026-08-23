@@ -28,7 +28,11 @@ judge_model: gpt-5-mini          # LLM-as-judge model scoring predicted vs refer
 progressive: true                # true (alma default) = staged stage1->2->3 gauntlet (sized by stages); false = ONE single pass (sized by single_stage)
 random_sample: false             # true = each search step samples a different seeded subset; false = same fixed subset every step
 sampling_seed: 42                # base seed combined with (step_index, dataset) to derive each step's sample
-memory_cache: true               # cross-stage Phase-1 memory reuse (gauntlet only); --no-memory_cache to disable
+memory_cache: true               # cross-stage Phase-1 memory reuse; --no-memory_cache to disable.
+                                 # true | false ONLY. The harness baselines also accept "rebuild"
+                                 # (build fresh once per run), but alma cannot: eval_runner passes this
+                                 # to a SUBPROCESS as a boolean flag, so any other value collapses to
+                                 # true. Delete <out_dir>/memory_cache to force a rebuild here.
 
 # --- Sizing (config-file only; no CLI flags). BOTH keys must be present; the
 #     inactive one is null. Under strict mode the active block's leaves must all

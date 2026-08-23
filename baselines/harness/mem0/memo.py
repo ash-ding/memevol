@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from common.memo_class import MemoClass
+from common.store_cache import DiskStoreCache
 from baselines.harness.hipporag2.memo import app_log_to_passage
 
 # `import mem0` must resolve to the byte-identical vendored copy under src/, not
@@ -115,7 +116,7 @@ def _init_to_messages(init: Dict) -> List[Dict[str, str]]:
     return out
 
 
-class Mem0Memo(MemoClass):
+class Mem0Memo(DiskStoreCache, MemoClass):
 
     def __init__(self, config=None):
         super().__init__(config)
@@ -123,12 +124,20 @@ class Mem0Memo(MemoClass):
         self._instance_id = uuid.uuid4().hex[:12]
         self._user_id = f"u_{self._instance_id}"
 
+    # -- memory-cache hooks (common/store_cache.py) --
+    _store_handle = "_memory"
+
+    def _store_path(self):
+        """Per-user store: the Qdrant collection AND the history DB live here."""
+        return OUTPUTS_DIR / self._instance_id
+
     def _ensure_system(self) -> None:
         if self._memory is not None:
             return
         cfg = self.config
         store = OUTPUTS_DIR / self._instance_id
-        if store.exists():
+        # Never wipe a store restored from the memory cache (DiskStoreCache).
+        if store.exists() and not self.restored_from_cache:
             shutil.rmtree(store, ignore_errors=True)
         store.mkdir(parents=True, exist_ok=True)
         llm_conf: Dict[str, Any] = {"model": cfg.get("mem0_llm_model")}

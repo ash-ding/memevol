@@ -31,6 +31,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from common.memo_class import MemoClass
+from common.store_cache import DiskStoreCache
 
 # `import hipporag` must resolve to the byte-identical vendored copy under src/,
 # not to an editable install of an external checkout (which is how this baseline
@@ -78,7 +79,7 @@ def _init_to_passages(init: Dict) -> List[str]:
     raise KeyError(f"unrecognized recorder.init keys: {list(init)}")
 
 
-class HippoRAGMemo(MemoClass):
+class HippoRAGMemo(DiskStoreCache, MemoClass):
     def __init__(self, config=None):
         super().__init__(config)
         self._hippo = None
@@ -96,6 +97,15 @@ class HippoRAGMemo(MemoClass):
         # instance is created per user — no cross-user state" and key save_dir
         # on an instance-scoped id generated once here.
         self._instance_id = uuid.uuid4().hex[:12]
+
+    # -- memory-cache hooks (common/store_cache.py) --
+    _store_handle = "_hippo"
+
+    def _store_path(self):
+        """HippoRAG's save_dir. Keyed on the embedding model exactly as _ensure_hippo
+        builds it, so a restore lands where the graph will be reopened."""
+        emb = str(self.config.get("embedding", "") or "").replace("/", "_")
+        return OUTPUTS_DIR / f"{self._instance_id}_{emb}"
 
     def _ensure_hippo(self):
         if self._hippo is not None:

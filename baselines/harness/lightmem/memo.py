@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from common.memo_class import MemoClass
+from common.store_cache import DiskStoreCache
 from baselines.harness.hipporag2.memo import app_log_to_passage
 
 # LightMem's absolute imports (`from lightmem.memory...`) must resolve to the
@@ -202,7 +203,7 @@ def _init_to_turns(init: Dict) -> List[List[Dict]]:
     raise KeyError(f"unrecognized recorder.init keys: {list(init)}")
 
 
-class LightMemMemo(MemoClass):
+class LightMemMemo(DiskStoreCache, MemoClass):
 
     def __init__(self, config=None):
         super().__init__(config)
@@ -274,6 +275,13 @@ class LightMemMemo(MemoClass):
             "extraction_mode": cfg["extraction_mode"],
         }
         return config
+
+    # -- memory-cache hooks (common/store_cache.py) --
+    _store_handle = "_system"
+
+    def _store_path(self):
+        """Per-user Qdrant directory — the whole of LightMem's persistent state."""
+        return OUTPUTS_DIR / self._instance_id
 
     def _ensure_system(self):
         if self._system is not None:
