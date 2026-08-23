@@ -29,11 +29,30 @@ memory_cache: rebuild          # cross-stage Phase-1 memory reuse. Values:
                                # Any change to this file's method knobs invalidates an entry (the sidecar
                                # fingerprints the memo config), so two different configs can never reuse
                                # each other's memory.
-embedding: text-embedding-3-small   # OpenAI embedding model HippoRAG2 uses for its graph/vector index
-llm_model: gpt-5-mini           # shared QA agent AND HippoRAG2's internal LLM (NER, triple extraction, etc.)
+# --- DELIBERATE DEVIATION FROM THE PAPER (the only one in the fleet) --------
+# HippoRAG2's paper (arXiv 2502.14802 §4.4) specifies:
+#   extraction (NER + OpenIE) and triple filtering ... Llama-3.3-70B-Instruct
+#   retriever ......................................... nvidia/NV-Embed-v2 (7B)
+#   QA reader ......................... GPT-4o-mini OR Llama-3.3-70B-Instruct
+# Both of the first two are heavy LOCAL models (a 70B instruct model and a 7B
+# embedder) needing GPU infrastructure this repo's API-based harness does not
+# have. The defaults below are therefore the RUNNABLE API equivalents, not the
+# paper's. This is the one baseline whose "faithful arm" is not literally its
+# paper's setup — recorded here and in the README's faithfulness table rather
+# than left implicit. Point these keys at the paper's models if you have the
+# hardware; `llm_name` and `embedding_model_name` reach HippoRAG unchanged.
+embedding: text-embedding-3-small   # API embedder (1536-dim). PAPER: nvidia/NV-Embed-v2.
+hipporag2_llm_model: gpt-4o-mini    # HippoRAG2's INTERNAL LLM (NER, triple extraction, graph
+                                # construction). PAPER: Llama-3.3-70B-Instruct. gpt-4o-mini is both the
+                                # paper's alternative QA-reader model and what the other six baselines
+                                # build memory with, so it keeps the fleet comparable.
+                                # null => fall back to `llm_model`, the historical behaviour — which is
+                                # why hipporag2 was once the only baseline building memory with gpt-5-mini.
+llm_model: gpt-5-mini           # shared QA agent model (answers using the retrieved HippoRAG2 passages)
 judge_model: gpt-5-mini        # LLM-as-judge model scoring predicted vs reference answers
 embedding_batch_size: null      # batch size for embedding calls; null = HippoRAG2 internal default
 embedding_dtype: null           # embedding tensor dtype (e.g. bfloat16); null = HippoRAG2 internal default
+top_k: 5                        # PAPER §4.4: "Our QA module uses the top-5 retrieved passages as context"
 max_sample_concurrent: 3       # asyncio concurrency across users/samples (higher = faster, more API load)
 
 # --- Sizing (config-file only; there is no other parameter surface). BOTH keys

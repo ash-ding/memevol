@@ -137,6 +137,39 @@ def test_retrieve_empty_store_returns_empty_dict():
     assert out == {}
 
 
+# ---- configurable embedder (issue #26) ----
+
+def test_embedder_key_reaches_the_system():
+    """A-mem's embedder IS a constructor parameter (AgenticMemorySystem's
+    `model_name`), so the config key needs no extra plumbing: the name flows to
+    SimpleEmbeddingRetriever, which calls the patched SentenceTransformer
+    factory, which dispatches local-vs-API on that same name."""
+    from baselines.harness.amem import memo as amem_memo
+
+    built = {}
+
+    class _FakeAgenticMemorySystem:
+        def __init__(self, model_name=None, llm_backend=None, llm_model=None):
+            built.update(model_name=model_name, llm_model=llm_model)
+
+    real_system, real_llm = amem_memo.AgenticMemorySystem, amem_memo.LLMController
+    amem_memo.AgenticMemorySystem = _FakeAgenticMemorySystem
+    amem_memo.LLMController = lambda **kw: object()
+    try:
+        m = amem_memo.AMemMemo(config={"amem_llm_model": "gpt-5-mini",
+                                       "amem_embedding_model": "text-embedding-3-small"})
+        m._ensure_system()
+        assert built == {"model_name": "text-embedding-3-small", "llm_model": "gpt-5-mini"}
+
+        # absent key keeps A-mem's published embedder
+        built.clear()
+        m2 = amem_memo.AMemMemo(config={"amem_llm_model": "gpt-4o-mini"})
+        m2._ensure_system()
+        assert built["model_name"] == "all-MiniLM-L6-v2"
+    finally:
+        amem_memo.AgenticMemorySystem, amem_memo.LLMController = real_system, real_llm
+
+
 # NOTE: the `hf_datasets_active()` tests that used to live here were deleted with
 # the shim itself. They asserted that A-mem ops ran inside a context manager that
 # swapped memevol's `datasets` package for HF's; the `benchmarks/` rename removed

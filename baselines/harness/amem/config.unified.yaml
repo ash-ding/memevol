@@ -1,0 +1,49 @@
+# =============================================================================
+# amem — THE UNIFIED ARM.
+# Launch: cd baselines/harness/amem && uv run python run.py \
+#             --config config.unified.yaml
+#
+# The fleet runs in two arms. The FAITHFUL arm (config.example.yaml) gives each
+# method its own published models; the UNIFIED arm below puts every baseline on
+# ONE LLM (gpt-5-mini) and ONE embedder (text-embedding-3-small) so the
+# comparison against the main method is like-for-like — everything except the
+# memory design is held fixed.
+#
+# DEVIATION FROM THE PAPER (this file only): A-mem publishes on gpt-4o-mini with
+# a local all-MiniLM-L6-v2 index. Both are changed here. Do not quote numbers
+# from this arm as A-mem's published result.
+#
+# HOW IT RUNS AT ALL: A-mem's vendored OpenAIController hardcodes
+# temperature=0.7 and max_tokens=1000, which the gpt-5 family rejects.
+# baselines/harness/model_config.py normalises both away at the OpenAI-SDK
+# boundary — no edit under src/, so byte-identity holds.
+#
+# EXACT CONFIG (always on): the YAML must list EVERY key below — and ONLY
+# those keys (a null value counts as listed). A missing key OR an unknown
+# key aborts the run, naming the problem; sizing (single_stage/stages) is
+# checked to the leaf. Validated by common.config.validate_exact_config.
+# =============================================================================
+
+
+dataset: locomo                # which benchmark: dynamicmem | locomo | longmemeval_s
+split: test                    # test | search (search = the training split used during evolution)
+progressive: false             # false = ONE single pass (sized by single_stage); true = staged stage1->2->3 gauntlet
+sampling_seed: 42              # seeds the sampled subset (both paths; a no-op at whole-split)
+memory_cache: rebuild             # cross-stage Phase-1 memory reuse (gauntlet only)
+amem_llm_model: gpt-5-mini      # UNIFIED (paper: gpt-4o-mini) — A-mem's note analysis / memory
+                                # evolution / keyword-rewrite LLM
+amem_embedding_model: text-embedding-3-small   # UNIFIED (paper: all-MiniLM-L6-v2, local, 384-dim).
+                                # 1536-dim; A-mem holds its index in a plain numpy array sized from
+                                # the embeddings, so no dimension knob has to move with it. Any
+                                # `memory_cache` snapshot built at 384-dim is invalid here.
+retrieve_k: 10                 # top-k notes (+ linked neighbors) returned per query
+llm_model: gpt-5-mini           # shared QA agent model (answers using the retrieved A-mem notes)
+judge_model: gpt-5-mini        # LLM-as-judge model scoring predicted vs reference answers
+max_sample_concurrent: 3       # asyncio concurrency across users/samples
+
+# --- Sizing (config-file only). BOTH keys must be present; the inactive one
+#     is null. Every leaf field in the active block must be listed. ---
+single_stage:
+  n_conversations: null        # locomo: null = all conversations in the split
+  n_qa: null                   # null = all QA per conversation
+stages: null

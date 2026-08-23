@@ -34,9 +34,23 @@ memory_cache: rebuild          # cross-stage Phase-1 memory reuse. Values:
 # Paper = arXiv 2506.06326 §4.1 "Implementation Details". Where the shipped code
 # and the paper disagree, the code's value is the default here and the paper's is
 # named in the comment — the vendored implementation is the reference.
-memoryos_llm_model: gpt-4o-mini   # MemoryOS's own LLM: page/segment summarisation, keyword
-                                  # extraction, persona + knowledge distillation. The paper's
-                                  # headline LoCoMo numbers are on gpt-4o-mini.
+memoryos_llm_model: gpt-4o-mini   # PAPER (arXiv 2506.06326) Tables 1-2: GPT-4o-mini is the headline
+                                  # backbone on both GVD and LoCoMo (the paper also reports
+                                  # Qwen2.5-7B/3B). Drives page/segment summarisation, keyword
+                                  # extraction, persona + knowledge distillation. Its vendored
+                                  # chat_completion hardcodes temperature+max_tokens, which the
+                                  # gpt-5 family rejects — baselines/harness/model_config.py
+                                  # normalises those away, so a gpt-5 model IS runnable here.
+memoryos_embedding_model: all-MiniLM-L6-v2   # THE PAPER NAMES NO EMBEDDER — §4.1's implementation
+                                  # details cover hardware and the STM/MTM/LPM capacities but never
+                                  # state an embedding model. This is therefore the VENDORED CODE's
+                                  # value (utils.get_embedding's default argument), which is the only
+                                  # evidence available. 384-dim, local. Because that default argument
+                                  # means the requested name is never the configured one, the key is
+                                  # applied by seeding MemoryOS's own model cache under the requested
+                                  # name (memo.py::_seed_embedder). A `text-embedding-*` name switches
+                                  # to the OpenAI API embedder; no dimension knob is needed (MemoryOS
+                                  # sizes its FAISS indexes from the embedding array itself).
 base_url: null                 # OpenAI-compatible base URL for MemoryOS's internal LLM (null = OpenAI default)
 short_term_capacity: 7         # STM dialogue-page queue length. Paper: 7 (vendored default is 10)
 mid_term_capacity: 200         # max MTM segments before LFU eviction. PAPER: 200. The vendored

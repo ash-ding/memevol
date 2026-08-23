@@ -45,10 +45,18 @@ from typing import Any, Dict, List, Optional, Tuple
 from common.memo_class import MemoClass
 from common.store_cache import DiskStoreCache
 from baselines.harness.hipporag2.memo import app_log_to_passage
+from baselines.harness.model_config import (
+    get_embedder, install_openai_param_normalisation,
+)
 # NOTE: the vendored utils.py imports sentence-transformers, which eagerly
 # imports HuggingFace `datasets`. That used to collide with memevol's own
 # top-level `datasets/` package and needed a sys.modules shim; the package was
 # renamed to `benchmarks/` (2026-08-07), so plain imports are correct now.
+
+# MUST precede the vendored import: utils.chat_completion hardcodes temperature
+# + max_tokens on every call, which the gpt-5 family rejects.
+# (No embedder-constructor patch here — see _ensure_system.)
+install_openai_param_normalisation()
 
 _SRC = Path(__file__).resolve().parent / "src"
 # The vendored modules import each other ABSOLUTELY (`from long_term import ...`,
@@ -59,8 +67,40 @@ for _p in (str(_SRC / "memoryos"), str(_SRC)):
         sys.path.insert(0, _p)
 
 from memoryos import Memoryos            # noqa: E402  (vendored, byte-identical)
+from memoryos import utils as _mos_utils  # noqa: E402  (for the embedder seed below)
 
 OUTPUTS_DIR = Path(__file__).resolve().parent / "outputs"
+
+# The embedder name MemoryOS's vendored code always asks for. `get_embedding`
+# carries it as a DEFAULT ARGUMENT (`utils.py::get_embedding`) and every call
+# site takes the default, so it is the cache key regardless of what we configure.
+_VENDORED_EMBEDDER_KEY = "all-MiniLM-L6-v2"
+
+
+def _seed_embedder(model_name: str) -> None:
+    """Give MemoryOS the configured embedder by pre-filling its own model cache.
+
+    MemoryOS exposes no embedder parameter — `get_embedding(text, model_name=
+    "all-MiniLM-L6-v2")` builds one behind a process-global dict:
+
+        if model_name not in _model_cache:
+            _model_cache[model_name] = SentenceTransformer(model_name)
+
+    Seeding that dict under the name the vendored code asks for means the
+    `if` never fires and every call site (long_term, mid_term, updater) uses
+    what we put there — including an :class:`APIEmbedder` for a
+    `text-embedding-*` name. Editing `utils.py` would break the ``src/``
+    byte-identity, and patching the global ``SentenceTransformer`` constructor
+    (what amem/lightmem/simplemem must do, since they pass the configured name
+    through) would be a process-wide swap for what is really one dict entry.
+
+    Idempotent and safe to call per user: `get_embedder` memoizes, so every
+    instance shares one embedder rather than reloading the weights per
+    conversation. `get_embedding`'s own embedding cache keys on the default name
+    too, which stays correct because one process only ever holds one embedder.
+    """
+    if _VENDORED_EMBEDDER_KEY not in _mos_utils._model_cache:
+        _mos_utils._model_cache[_VENDORED_EMBEDDER_KEY] = get_embedder(model_name)
 
 
 def _pairs_from_init(init: Dict) -> List[Tuple[str, str, str]]:
@@ -155,6 +195,7 @@ class MemoryOSMemo(DiskStoreCache, MemoClass):
         if self._memo is not None:
             return
         cfg = self.config
+        _seed_embedder(cfg.get("memoryos_embedding_model") or "all-MiniLM-L6-v2")
         save_dir = OUTPUTS_DIR / self._instance_id
         # Never wipe a store restored from the memory cache (DiskStoreCache).
         if save_dir.exists() and not self.restored_from_cache:
@@ -176,10 +217,9 @@ class MemoryOSMemo(DiskStoreCache, MemoClass):
                 retrieval_queue_capacity=cfg.get("retrieval_queue_capacity"),
                 long_term_knowledge_capacity=cfg.get("long_term_knowledge_capacity"),
             )
-        # The embedder is NOT a constructor argument in this version: utils.py's
-        # get_embedding() hardcodes `all-MiniLM-L6-v2` behind a process-global
-        # cache. Recorded here so the config cannot imply a knob that does not
-        # exist (the README's `embedding_model_name` belongs to a later build).
+        # No dimension knob is needed: MemoryOS sizes its FAISS indexes from the
+        # embedding array itself (`dim = embeddings_np.shape[1]`, long_term.py
+        # and mid_term.py), so a 1536-dim API embedder drops straight in.
 
     async def build_memory_from_data(self, recorder) -> None:
         self._ensure_system()

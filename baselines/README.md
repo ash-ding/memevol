@@ -243,9 +243,10 @@ method's own knobs, and the shared model/judge/concurrency keys):
   was removed entirely from every harness `config.example.yaml` /
   `config.paper.yaml`.
 - **`config.example.yaml`** — each harness directory ships one, documenting
-  every required key inline; two (`mem0`, `memoryos`) also ship a
-  `config.paper.yaml` reproducing the original paper's LoCoMo setup. Copy
-  one to start a real run instead of hand-assembling a config from scratch:
+  every required key inline; every one also ships a `config.unified.yaml`
+  (see **Two model arms** below), and two (`mem0`, `memoryos`) additionally
+  ship a `config.paper.yaml` reproducing the original paper's LoCoMo setup.
+  Copy one to start a real run instead of hand-assembling a config from scratch:
   [`harness/hipporag2/config.example.yaml`](harness/hipporag2/config.example.yaml),
   [`harness/amem/config.example.yaml`](harness/amem/config.example.yaml),
   [`harness/lightmem/config.example.yaml`](harness/lightmem/config.example.yaml),
@@ -271,6 +272,95 @@ cp baselines/harness/hipporag2/config.example.yaml baselines/harness/hipporag2/m
 $EDITOR baselines/harness/hipporag2/my_hr.yaml   # e.g. change dataset:, sampling_seed:
 cd baselines/harness/hipporag2 && uv run python run.py --config my_hr.yaml
 ```
+
+### Two model arms — faithful vs unified
+
+Every model a harness baseline touches — internal LLM, embedder, reranker,
+compressor — is a config parameter. That makes two arms expressible, and each
+baseline ships a config for both:
+
+| arm | file | what it is |
+|---|---|---|
+| **faithful** | `config.example.yaml` | each method's own published models. **The default.** What every README's faithfulness table describes |
+| **unified** | `config.unified.yaml` | one LLM (`gpt-5-mini`) + one embedder (`text-embedding-3-small`) everywhere. The arm to compare against the main method |
+
+The faithful defaults are deliberately NOT replaced: the local embedders are
+paper choices (zep's bge-m3, simplemem's Qwen3) and the READMEs make
+faithfulness claims about them. Silently switching them would turn every
+baseline into a variant its authors never published. Choosing an arm is a
+config decision, and the two are directly comparable because everything else is
+held fixed.
+
+**Every faithful-arm model is traceable to a paper section**, cited inline in
+each `config.example.yaml`:
+
+| baseline | internal LLM | embedder | source |
+|---|---|---|---|
+| amem | gpt-4o-mini | all-MiniLM-L6-v2 | arXiv 2502.12110 §4.2 + Table 1 |
+| hipporag2 | gpt-4o-mini ⚠️ | text-embedding-3-small ⚠️ | arXiv 2502.14802 §4.4 — **see below** |
+| lightmem | gpt-4o-mini | all-MiniLM-L6-v2 | ICLR 2026 Table 5 (+ LLMlingua-2 compressor) |
+| mem0 | gpt-4o-mini | text-embedding-3-small | arXiv 2504.19413 §2, §3.3 |
+| memoryos | gpt-4o-mini | all-MiniLM-L6-v2 ⚠️ | arXiv 2506.06326 Tables 1-2; **paper states no embedder** |
+| simplemem | gpt-4.1-mini | Qwen/Qwen3-Embedding-0.6B | arXiv (SimpleMem) §3.1 |
+| zep | gpt-4o-mini-2024-07-18 | BAAI/bge-m3 | arXiv 2501.13956 §4.1 (+ bge-reranker-v2-m3) |
+
+Three entries carry a caveat, each recorded in its own README rather than left
+implicit:
+
+- **zep** pins the **dated** `gpt-4o-mini-2024-07-18` because that is what §4.1
+  names. The undated alias now resolves to a later snapshot, so leaving it
+  undated would silently stop reproducing the paper.
+- **memoryos**'s embedder comes from the vendored code, not the paper — §4.1
+  gives every capacity and threshold but never names an embedding model.
+- **hipporag2 is the one baseline whose default arm is not its paper's setup.**
+  §4.4 specifies Llama-3.3-70B-Instruct (NER/OpenIE/triple filtering) and
+  nvidia/NV-Embed-v2 (retriever) — a 70B model and a 7B embedder, both local and
+  GPU-bound, which this API-based harness cannot run. The defaults are runnable
+  API equivalents; the paper's models are named in the config and the README.
+
+Where a paper and its shipped code disagree, **the paper wins** and the code's
+value is named in the comment — memoryos (`short_term_capacity` 7 vs code 10,
+`mid_term_capacity` 200 vs code 2000) and simplemem (`window_size` 20 vs code
+40) both do this. Numbers collected under the other value are not comparable.
+
+Two things stay local in BOTH arms because they have no API equivalent:
+lightmem's **LLMlingua-2** prompt compressor (a BERT token classifier, produces
+no vectors) and zep's **bge-reranker-v2-m3** (a cross-encoder scoring
+`(query, doc)` pairs). They remain a real, untracked local compute cost.
+
+**How the unified arm is possible without touching `src/`.** Both levers live in
+[`harness/model_config.py`](harness/model_config.py) and act at boundaries the
+vendored code already passes through, so every README's `diff -r` byte-identity
+check still passes:
+
+- **`get_embedder`**, one cached factory returning either a real
+  sentence-transformer or an `.encode()`-compatible API adapter. It memoizes
+  across users, which matters because a fresh MemoClass is built per user (up
+  to ~0.6B of weights would otherwise reload per conversation). How each
+  baseline reaches it differs:
+  - **amem, simplemem, lightmem** build their embedder internally with no
+    injection point, so `install_embedder_factory()` patches the
+    `sentence_transformers` constructor they all funnel through. The
+    *configured* name is also the name they request, so the factory just
+    dispatches on it.
+  - **memoryos** is the exception: its `get_embedding()` carries the model name
+    as a default argument, so the requested name is never the configured one.
+    It calls `get_embedder()` directly and seeds its own vendored model cache
+    under the requested name — one dict entry, no global constructor patch.
+  - **zep** needs none of it: Graphiti accepts an injected `EmbedderClient`.
+    lightmem's API arm likewise uses its own vendored `TextEmbedderOpenAI`.
+- **the OpenAI param normalisation** patches `chat.completions.create` to drop
+  `temperature`/`top_p`/the penalties and rename `max_tokens` →
+  `max_completion_tokens` for reasoning models. **Five of the seven baselines
+  could not run a gpt-5 model at all without it** — amem, lightmem, simplemem
+  and memoryos hardcode `temperature` + `max_tokens`, and zep's graphiti still
+  sends `max_tokens` even though it already drops `temperature`.
+
+**Dimension coupling.** The API embedder is 1536-dim against local defaults of
+384 (MiniLM) / 1024 (bge-m3, Qwen3). Only lightmem carries an explicit
+`embedding_dims` knob that must move with it; the others size their index from
+the embedder itself. In every case, switching arms invalidates vector stores and
+`memory_cache: true` gauntlet snapshots built at the other width.
 
 ## Existing baselines
 

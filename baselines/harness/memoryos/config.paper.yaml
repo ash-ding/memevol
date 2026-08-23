@@ -34,6 +34,8 @@ memory_cache: true             # cross-stage Phase-1 memory reuse. Values:
 memoryos_llm_model: gpt-4o-mini   # MemoryOS's own LLM: page/segment summarisation, keyword
                                   # extraction, persona + knowledge distillation. The paper's
                                   # headline LoCoMo numbers are on gpt-4o-mini.
+memoryos_embedding_model: all-MiniLM-L6-v2   # the paper's embedder (384-dim, local). See
+                                  # config.unified.yaml for the one-API-embedder arm.
 base_url: null                 # OpenAI-compatible base URL for MemoryOS's internal LLM (null = OpenAI default)
 short_term_capacity: 7         # STM dialogue-page queue length. Paper: 7 (vendored default is 10)
 mid_term_capacity: 200         # max MTM segments before LFU eviction. PAPER: 200. The vendored

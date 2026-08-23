@@ -36,6 +36,9 @@ from typing import Dict, List, Optional, Tuple
 from common.memo_class import MemoClass
 from common.store_cache import DiskStoreCache
 from baselines.harness.hipporag2.memo import app_log_to_passage
+from baselines.harness.model_config import (
+    install_embedder_factory, install_openai_param_normalisation,
+)
 
 # SimpleMem's absolute imports (`from simplemem.core...`) must resolve to the
 # byte-identical vendored copy under src/, not any pip-installed simplemem.
@@ -43,60 +46,22 @@ _SRC = Path(__file__).resolve().parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
 
-_st_model_cache: dict = {}
-_embedding_cache_installed = False
-
-
-def install_embedding_cache() -> None:
-    """Monkeypatch ``sentence_transformers.SentenceTransformer`` with a memoizing
-    factory so the (heavy) embedding weights load once per process and are shared
-    across every per-user ``SimpleMemSystem``. Idempotent. Leaves SimpleMem's
-    vendored ``EmbeddingModel`` untouched — it just receives a cached model object
-    from the patched constructor.
-
-    A fresh MemoClass is built per user, so without this the ~0.6B Qwen3 weights
-    reload for every user in the split. Keyed on the resolved model path (first
-    positional arg or ``model_name_or_path`` kwarg), so different embedding models
-    (e.g. a MiniLM fallback) get distinct cache slots. If construction fails it is
-    NOT cached (a transient failure can be retried).
-
-    WHY A MONKEYPATCH. The clean shape is a cached factory whose model is injected
-    (see the zep baseline, which can do that because Graphiti accepts an injected
-    embedder). SimpleMem has no injection point: ``EmbeddingModel.__init__``
-    dispatches on ``model_name.startswith("qwen3")`` and constructs the
-    SentenceTransformer itself (``src/simplemem/core/utils/embedding.py``), with no
-    parameter to pass a pre-built model through. Editing that file would break the
-    ``src/`` byte-identity the README's ``diff -r`` asserts, so memoizing the
-    constructor is the only remaining lever. Issue #26 adds a configurable-model
-    layer with an embedder injected from here; once that lands this becomes a plain
-    cached factory and the patch disappears.
-    """
-    global _embedding_cache_installed
-    if _embedding_cache_installed:
-        return
-    import sentence_transformers as _st
-
-    _real_ctor = _st.SentenceTransformer
-
-    def _cached(*args, **kwargs):
-        key = args[0] if args else kwargs.get("model_name_or_path")
-        cached = _st_model_cache.get(key)
-        if cached is not None:
-            return cached
-        model = _real_ctor(*args, **kwargs)
-        if key is not None:
-            _st_model_cache[key] = model
-        return model
-
-    # Preserve the original on the wrapper for anyone who needs the true class.
-    _cached._real_sentence_transformer = _real_ctor  # type: ignore[attr-defined]
-    _st.SentenceTransformer = _cached
-    _embedding_cache_installed = True
-
-
-# Share the embedder across per-user systems. Must precede the first
-# SimpleMemSystem construction.
-install_embedding_cache()
+# The shared embedder factory (baselines/harness/model_config.py) memoizes the
+# heavy weights across per-user systems AND dispatches an API embedding model to
+# an APIEmbedder. SimpleMem has no injection point — ``EmbeddingModel.__init__``
+# dispatches on ``model_name.startswith("qwen3")`` and constructs the
+# SentenceTransformer itself — so patching that constructor is the only lever
+# that leaves ``src/`` byte-identical. Nothing here needs to know WHICH embedder
+# was configured: the ``embedding_model`` key reaches SimpleMem through its
+# ``EMBEDDING_MODEL`` env setting (see _ENV_FROM_CFG below), so the name the
+# vendored code requests IS the configured one, and the factory dispatches on it.
+#
+# The param-normalisation patch is needed because SimpleMem's ``LLMClient``
+# sends temperature=0.1..0.3 on every call, which the gpt-5 family rejects.
+#
+# Both must precede the vendored import (they bind their names at import time).
+install_embedder_factory()
+install_openai_param_normalisation()
 
 from simplemem.text.system import SimpleMemSystem  # noqa: E402  (vendored, byte-identical)
 from simplemem.core.models.memory_entry import Dialogue, MemoryEntry  # noqa: E402
@@ -106,7 +71,15 @@ OUTPUTS_DIR = Path(__file__).resolve().parent / "outputs"
 # SimpleMem settings that are read ONLY from its global `settings` singleton
 # (env / config.py), never from the SimpleMemSystem constructor. We stamp them
 # into os.environ before the first system is built so per-run config takes hold.
-# Keyed by config name → SimpleMem env var name.
+# Keyed by config name → SimpleMem env var name. (Settings resolves each
+# attribute through os.getenv on ACCESS, not at import, so stamping here works.)
+#
+# No embedding-dimension key is needed: SimpleMem sizes its LanceDB table from
+# `embedding_model.dimension` (vector_store.py:39), which the APIEmbedder
+# answers for itself — so switching to a 1536-dim API embedder needs no second
+# knob. It does invalidate any index built at the old width; the per-user
+# LanceDB store is created with `clear_db=True`, so that resolves itself, but a
+# `memory_cache: true` gauntlet snapshot taken at the old dimension does NOT.
 _ENV_FROM_CFG = {
     "embedding_model": "EMBEDDING_MODEL",
     "window_size": "WINDOW_SIZE",

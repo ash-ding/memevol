@@ -45,12 +45,23 @@ from typing import Any, Dict, List, Optional
 
 from common.memo_class import MemoClass
 from baselines.harness.hipporag2.memo import app_log_to_passage
+from baselines.harness.model_config import (
+    install_openai_param_normalisation, resolve_device,
+)
 
 # `import graphiti_core` must resolve to the byte-identical vendored copy under
 # src/, not any pip-installed graphiti-core. Idempotent.
 _SRC = Path(__file__).resolve().parent / "src"
 if str(_SRC) not in sys.path:
     sys.path.insert(0, str(_SRC))
+
+# Graphiti's OpenAIClient ALREADY drops `temperature` for the gpt-5 family and
+# routes structured output through `responses.parse` — but its plain-JSON path
+# still sends `max_tokens` (openai_client.py:126), which those models reject in
+# favour of `max_completion_tokens`. The shim renames it. No embedder factory
+# here: Graphiti accepts an injected EmbedderClient, so zep configures its
+# embedder directly (see _ensure) rather than patching a constructor.
+install_openai_param_normalisation()
 
 from graphiti_core import Graphiti  # noqa: E402
 from graphiti_core.driver.falkordb_driver import FalkorDriver  # noqa: E402
@@ -287,7 +298,9 @@ class ZepMemo(MemoClass):
         self._falkor_db = AsyncFalkorDB(dbfilename=self._db_path)
         driver = FalkorDriver(falkor_db=self._falkor_db)
 
-        device = self.config.get("device")
+        # Used to default to a hardcoded "cuda", which crashed outright on a
+        # CPU-only box; the config now defaults to null → auto-detect.
+        device = resolve_device(self.config.get("device"))
         # Embedder: paper-faithful BGE-m3 (default) or OpenAI (fallback).
         if self.config.get("embedder", "bge-m3") == "openai":
             from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig

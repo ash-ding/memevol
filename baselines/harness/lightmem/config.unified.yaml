@@ -1,0 +1,73 @@
+# =============================================================================
+# lightmem — THE UNIFIED ARM.
+# Launch: cd baselines/harness/lightmem && uv run python run.py \
+#             --config config.unified.yaml
+#
+# The fleet runs in two arms. The FAITHFUL arm (config.example.yaml) gives each
+# method its own published models; the UNIFIED arm below puts every baseline on
+# ONE LLM (gpt-5-mini) and ONE embedder (text-embedding-3-small) so the
+# comparison against the main method is like-for-like.
+#
+# DEVIATION FROM THE PAPER (this file only): LightMem publishes on gpt-4o-mini
+# with a local all-MiniLM-L6-v2 (384-dim) index. Both are changed here.
+#
+# WHAT STAYS LOCAL: the LLMlingua-2 pre-compressor. It is a BERT token
+# classifier scoring each token for retention before write — a core LightMem
+# stage with NO API equivalent, so it cannot fold into the one-API-model plan
+# and remains a real, untracked local compute cost in BOTH arms.
+#
+# HOW IT RUNS AT ALL: LightMem's memory manager sends temperature + max_tokens,
+# which the gpt-5 family rejects. baselines/harness/model_config.py normalises
+# both away at the OpenAI-SDK boundary — no edit under src/.
+#
+# The embedder switch is NOT an adapter: `text-embedding-*` selects LightMem's
+# OWN vendored TextEmbedderOpenAI arm (factory/text_embedder/openai.py).
+#
+# EXACT CONFIG (always on): the YAML must list EVERY key below — and ONLY
+# those keys (a null value counts as listed). A missing key OR an unknown
+# key aborts the run, naming the problem; sizing (single_stage/stages) is
+# checked to the leaf. Validated by common.config.validate_exact_config.
+# =============================================================================
+
+
+dataset: locomo                 # which benchmark: dynamicmem | locomo | longmemeval_s
+split: test                    # test | search (search = the training split used during evolution)
+progressive: false             # false = ONE single pass (sized by single_stage); true = staged stage1->2->3 gauntlet
+sampling_seed: 42              # seeds the sampled subset (both paths; a no-op at whole-split)
+memory_cache: rebuild             # cross-stage Phase-1 memory reuse (gauntlet only)
+
+# --- LightMem internal knobs (unchanged from the faithful arm) ---------------
+pre_compress: true             # LLMlingua-2 token pre-compression — LOCAL, no API equivalent
+topic_segment: true            # attention-based topic segmentation. REQUIRES pre_compress
+llmlingua_model: microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank   # local, ~180M
+llmlingua_device: null         # null/"auto" => cuda if a GPU is visible, else cpu (slow)
+compress_rate: 0.6             # LLMlingua-2 target compression rate (LoCoMo experiment value)
+messages_use: user_only        # which turns feed extraction: user_only | assistant_only | hybrid
+extract_threshold: 0.1         # segmentation/extraction trigger threshold (LoCoMo experiment value)
+extraction_mode: flat          # flat (factual entries only) | event (factual + relational)
+
+# --- UNIFIED models ---------------------------------------------------------
+lightmem_llm_model: gpt-5-mini    # UNIFIED (paper: gpt-4o-mini) — extraction + offline-update LLM
+manager_max_tokens: 16000      # max_tokens for the internal LLM; normalised to max_completion_tokens
+base_url: null                 # OpenAI-compatible base URL for BOTH the internal LLM and the API
+                               # embedder (null = OpenAI default)
+embedding_model: text-embedding-3-small   # UNIFIED (paper: all-MiniLM-L6-v2, local, 384-dim)
+embedding_dims: 1536           # MUST move with the embedder: it sizes the Qdrant collection AND is
+                               # sent as the API `dimensions` parameter. text-embedding-3-small = 1536.
+                               # Any index or `memory_cache` snapshot built at 384-dim is invalid here.
+embedding_device: null         # unused on the API arm (kept because exact-config requires the key)
+offline_update: true           # offline-update refinement phase after build (full LoCoMo-paper pipeline)
+update_sim_threshold: 0.9      # score_threshold for offline_update_all_entries
+retrieve_limit: 20             # top-k memories LightMemory.retrieve returns per query
+
+# --- shared eval (baseline convention) --------------------------------------
+llm_model: gpt-5-mini           # shared QA agent — answers using LightMem's retrieved memories
+judge_model: gpt-5-mini        # LLM-as-judge model scoring predicted vs reference answers
+max_sample_concurrent: 3       # asyncio concurrency across users/samples
+
+# --- Sizing (config-file only). BOTH keys must be present; the inactive one
+#     is null. Every leaf field in the active block must be listed. ---
+single_stage:
+  n_conversations: null        # locomo: null = all conversations in the split
+  n_qa: null                   # null = all QA per conversation
+stages: null

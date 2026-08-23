@@ -38,6 +38,13 @@ from typing import Any, Dict, List, Optional
 from common.memo_class import MemoClass
 from common.store_cache import DiskStoreCache
 from baselines.harness.hipporag2.memo import app_log_to_passage
+from baselines.harness.model_config import install_openai_param_normalisation
+
+# Mem0's OpenAI provider sends temperature + max_tokens on every extractor call,
+# which the gpt-5 family rejects. Installed before the mem0 import so the patch
+# is in place regardless of when mem0 builds its clients. No embedder factory:
+# mem0 is already on an API embedder (`embedder.provider: openai`).
+install_openai_param_normalisation()
 
 # `import mem0` must resolve to the byte-identical vendored copy under src/, not
 # to any pip-installed mem0ai (there is none in this baseline's env — mem0ai was

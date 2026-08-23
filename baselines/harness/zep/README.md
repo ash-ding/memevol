@@ -72,11 +72,59 @@ The rest (`embedder_model`, `reranker_model`, `db_root`,
 `single_stage` (progressive: false, REQUIRED) or `stages` (progressive:
 true). See `config.example.yaml`.
 
+## Model configuration (two arms)
+
+Every model this baseline touches is a config parameter, so it runs in two arms:
+
+| | faithful arm (`config.example.yaml`) | unified arm (`config.unified.yaml`) |
+|---|---|---|
+| graph LLM (`graph_llm_model`) | `gpt-4o-mini-2024-07-18` — the paper's exact pin (§4.1) | `gpt-5-mini` |
+| embedder (`embedder` / `embedder_model`) | `BAAI/bge-m3`, local, 1024-dim — the paper's (§4.1) | `text-embedding-3-small`, API, 1536-dim |
+| reranker (`reranker` / `reranker_model`) | `BAAI/bge-reranker-v2-m3` cross-encoder — the paper's family (§4.1) | **unchanged** — no API equivalent |
+
+The graph LLM pins the **dated** snapshot, quoting §4.1: *"we utilize
+gpt-4o-mini-2024-07-18 for graph construction"*. The undated `gpt-4o-mini` alias
+now resolves to a later snapshot, so leaving it undated would have silently
+stopped reproducing the paper. §4.1 names "the BGE-m3 models from BAAI for both
+reranking and embedding tasks" without pinning a reranker checkpoint;
+`bge-reranker-v2-m3` is that family's cross-encoder and graphiti's own default.
+
+**The faithful arm is the default**, and it is what the faithfulness table
+below and every number in this README describe. The unified arm puts all seven
+baselines on one LLM and one embedder so the comparison against the main method
+is like-for-like — it is a deliberate deviation from the paper, and its numbers
+must not be quoted as Zep's published result.
+
+Both arms leave `src/` **byte-identical** — the `diff -r` above still passes.
+
+- **the embedder** needs no patching at all: Graphiti accepts an injected
+  `EmbedderClient`, so `memo.py` simply constructs `BGEM3Embedder` or Graphiti's
+  own `OpenAIEmbedder`. Zep is the baseline the other three are measured
+  against — it is the only one with a real injection point.
+- **the LLM.** Graphiti already drops `temperature` for the gpt-5 family and
+  routes structured output through `responses.parse`, but its plain-JSON path
+  still sends `max_tokens` (`openai_client.py:126`), which those models reject.
+  The shim in [`../model_config.py`](../model_config.py) renames it to
+  `max_completion_tokens` at the OpenAI-SDK boundary.
+- **the reranker stays local.** `bge-reranker-v2-m3` is a CROSS-ENCODER: it
+  scores (query, doc) pairs, so it has no API equivalent. Graphiti does ship an
+  `OpenAIRerankerClient`, but that is an LLM-scoring reranker — a materially
+  different retrieval algorithm — so the unified arm keeps the paper's
+  cross-encoder and confines the change to the LLM and the embedder. It remains
+  the heaviest local cost in the fleet (~570M params, k forward passes per
+  query) in BOTH arms, which is why `device` still matters on the unified arm.
+
+`device` now defaults to `null` = **auto-detect** (cuda if a GPU is visible,
+else cpu); it used to default to a hardcoded `cuda` and crashed outright on a
+CPU-only box. Switching the embedder changes the vector width (1024 → 1536), so
+any FalkorDB store or `memory_cache: true` snapshot built on the other arm is
+invalid.
+
 ## Faithfulness boundary
 
 | Category | Items |
 |---|---|
-| Verbatim | whole `graphiti_core` (@ 4f62cfe); Graphiti's construction pipeline (entity/fact/temporal/community extraction, resolution, edge invalidation); BGE reranker (`BAAI/bge-reranker-v2-m3`); `COMBINED_HYBRID_SEARCH_CROSS_ENCODER` recipe; retrieve_k=20; internal graph LLM gpt-4o-mini; paper's FACTS/ENTITIES context template (§3) |
+| Verbatim | whole `graphiti_core` (@ 4f62cfe); Graphiti's construction pipeline (entity/fact/temporal/community extraction, resolution, edge invalidation); BGE reranker (`BAAI/bge-reranker-v2-m3`); `COMBINED_HYBRID_SEARCH_CROSS_ENCODER` recipe; retrieve_k=20 (§4); internal graph LLM `gpt-4o-mini-2024-07-18`, the paper's dated pin (faithful arm); paper's FACTS/ENTITIES context template (§3) |
 | Integration adaptations (not algorithm) | **FalkorDB Lite** backend instead of the paper's Neo4j — full-text search is RediSearch, not Neo4j Lucene BM25 (a retrieval-backend difference; graph construction is backend-agnostic and identical); **BGE-m3 embedder** supplied via Graphiti's public `EmbedderClient` extension point (`BGEM3Embedder` in `memo.py`) since graphiti_core ships no local embedder — the paper used BGE-m3, which is not in the OSS embedder list; longmemeval (per message) / dynamicmem (per app-log entry, hipporag2's `app_log_to_passage` text) episode mappings — the paper only ran LoCoMo/LongMemEval conversations; answering via the shared QA agent; a process-wide model cache in `memo.py` so the BGE-m3 and reranker weights load once per process rather than once per user (a plain cached factory — Graphiti accepts injected clients, so nothing is monkeypatched); context compose replicated here (a Zep-service feature, not in OSS Graphiti) |
 | Upstream quirks preserved | Graphiti's last-n-message context window (paper n=4) and all prompts/thresholds untouched; episode `source=message` auto-extracts the speaker as an entity |
 

@@ -193,6 +193,39 @@ baselines/harness/hipporag2/
 | Not installed, so unavailable | the vLLM / offline-transformers LLM + OpenIE backends (vendored but `vllm`/`outlines` are not deps — see Setup); the chroma / milvus / qdrant vector-store backends (lazy imports, un-installed; the default parquet store is what runs) |
 | Upstream quirks preserved | `embedding_model/__init__.py` and `llm/__init__.py` import every backend eagerly (hence gritlm/boto3/litellm in the deps); internal OpenIE LLM cost is not tracked by `common.tokens` (same caveat as amem/zep/simplemem/lightmem) |
 
+## Model configuration (two arms)
+
+Every model this baseline touches is a config parameter, so it runs in two arms:
+
+| | paper (arXiv 2502.14802 §4.4) | default arm (`config.example.yaml`) | unified arm (`config.unified.yaml`) |
+|---|---|---|---|
+| internal LLM (`hipporag2_llm_model`) | **Llama-3.3-70B-Instruct** | `gpt-4o-mini` | `gpt-5-mini` |
+| embedder (`embedding`) | **nvidia/NV-Embed-v2** (7B) | `text-embedding-3-small` | **unchanged** |
+| QA passages (`top_k`) | top-5 | 5 | 5 |
+
+**hipporag2 is the one baseline whose default arm is NOT its paper's setup, and
+that is deliberate.** §4.4 specifies Llama-3.3-70B-Instruct for NER/OpenIE and
+triple filtering, and nvidia/NV-Embed-v2 as the retriever — a 70B instruct model
+and a 7B embedder, both local, both needing GPU infrastructure this repo's
+API-based harness does not have. The defaults are the runnable API equivalents
+instead. `gpt-4o-mini` is defensible as a stand-in: the paper itself uses it as
+the alternative QA reader (§4.4, Appendix C Table 8), and it is what the other
+six baselines build memory with, so the fleet stays comparable. Point the two
+keys at the paper's models if you have the hardware — `llm_name` and
+`embedding_model_name` reach HippoRAG unchanged.
+
+A second thing `hipporag2_llm_model` fixes: the key did not exist before, so
+HippoRAG read the frame's `llm_model` — the SHARED QA-agent model. That is why
+hipporag2 was the only baseline building memory with `gpt-5-mini` while the
+other six used `gpt-4o-mini`. It was an accident of plumbing, not a choice. A
+`null` value still reproduces that old behaviour for archived configs.
+
+HippoRAG already passes `temperature=1` — the only value the gpt-5 family
+accepts — so this is the one baseline that could always run a gpt-5 model. The
+shim in [`../model_config.py`](../model_config.py) is installed anyway, for the
+`max_tokens` → `max_completion_tokens` rename and so all seven baselines
+normalise identically.
+
 ## Notes
 
 - `HippoRAGMemo` runs on all four datasets via dispatch on `recorder.init`

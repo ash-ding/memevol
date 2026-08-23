@@ -49,12 +49,12 @@ expects — a missing key OR an unknown key aborts the run before anything
 executes; a `null` value counts as listed.
 
 Worth calling out: `amem_llm_model` (default `gpt-4o-mini`, A-mem's own
-default — its `OpenAIController` hardcodes `temperature=0.7` +
-`max_tokens=1000`, which the gpt-5 family rejects, so keep a 4-series
-model); `retrieve_k` (default 10, upstream default); `llm_model` /
-`judge_model` (default `gpt-5-mini` — shared QA agent + judge, baseline
-convention). `progressive`, `sampling_seed`, and `memory_cache` behave as
-documented inline in `config.example.yaml`.
+default) and `amem_embedding_model` (default `all-MiniLM-L6-v2`, the
+paper's local 384-dim index) — see **Model configuration** below;
+`retrieve_k` (default 10, upstream default); `llm_model` / `judge_model`
+(default `gpt-5-mini` — shared QA agent + judge, baseline convention).
+`progressive`, `sampling_seed`, and `memory_cache` behave as documented
+inline in `config.example.yaml`.
 
 **Sizing is config-file only** (there is no sizing CLI surface either).
 `progressive: false` (default) REQUIRES a `single_stage` block — ONE
@@ -66,11 +66,44 @@ whole-split). `progressive: true` sizes from a `stages` block (overrides
 the family `DEFAULT_STAGES`). See `config.example.yaml` — it documents
 every key.
 
+## Model configuration (two arms)
+
+Every model this baseline touches is a config parameter, so it runs in two arms:
+
+| | faithful arm (`config.example.yaml`) | unified arm (`config.unified.yaml`) |
+|---|---|---|
+| internal LLM (`amem_llm_model`) | `gpt-4o-mini` — A-mem's own default | `gpt-5-mini` |
+| embedder (`amem_embedding_model`) | `all-MiniLM-L6-v2`, local, 384-dim — the paper's | `text-embedding-3-small`, API, 1536-dim |
+
+**The faithful arm is the default**, and it is what the faithfulness table
+below and every number in this README describe. The unified arm puts all seven
+baselines on one LLM and one embedder so the comparison against the main method
+is like-for-like — it is a deliberate deviation from the paper, and its numbers
+must not be quoted as A-mem's published result.
+
+Both arms leave `src/` **byte-identical** — the provenance `diff` above still
+passes, because nothing under `src/` is edited. Two boundary levers in
+[`../model_config.py`](../model_config.py) make that possible:
+
+- **the embedder.** A-mem builds its own SentenceTransformer inside
+  `SimpleEmbeddingRetriever` with no injection point, so the shared factory
+  patches that constructor. It memoizes local weights across users (a fresh
+  MemoClass is built per user) and returns an API-backed `.encode()`-compatible
+  adapter for a `text-embedding-*` name.
+- **the LLM.** A-mem's `OpenAIController` hardcodes `temperature=0.7` and
+  `max_tokens=1000`, which the gpt-5 family rejects — so before this, A-mem
+  could not run a gpt-5 model at all. The shim drops the rejected params and
+  renames `max_tokens` → `max_completion_tokens` at the OpenAI-SDK boundary.
+
+A-mem holds its index in a plain numpy array sized from the embeddings, so no
+dimension knob has to move with the embedder. A `memory_cache: true` gauntlet
+snapshot taken at 384-dim is still invalid under the 1536-dim arm.
+
 ## Faithfulness boundary
 
 | Category | Items |
 |---|---|
-| Verbatim | whole `src/memory_layer.py`; locomo note unit `"Speaker {X}says : {text}"` + session date (missing-space quirk preserved); keywords-rewrite prompt + JSON schema; `retrieve_k=10`; `evo_threshold=100`; internal gpt-4o-mini |
+| Verbatim | whole `src/memory_layer.py`; locomo note unit `"Speaker {X}says : {text}"` + session date (missing-space quirk preserved); keywords-rewrite prompt + JSON schema; `retrieve_k=10`; `evo_threshold=100`; internal gpt-4o-mini (faithful arm) |
 | Integration adaptations (not algorithm) | longmemeval (per message) / dynamicmem (per app-log entry, hipporag2's `app_log_to_passage` text) ingestion mapping — A-mem only defined LoCoMo; answering via the shared QA agent; per-note `print` flood redirected to devnull |
 | Upstream quirks preserved | `find_related_memories_raw` neighbor-cap loop behavior; `"says :"` spacing |
 

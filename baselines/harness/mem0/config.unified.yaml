@@ -1,0 +1,53 @@
+# =============================================================================
+# mem0 — THE UNIFIED ARM.
+# Launch: uv run --project baselines/harness/mem0 python baselines/harness/mem0/run.py \
+#             --config baselines/harness/mem0/config.unified.yaml
+#
+# The fleet runs in two arms. The FAITHFUL arm (config.example.yaml) gives each
+# method its own published models — and config.paper.yaml additionally pins the
+# paper's gpt-4o-mini ANSWERER. The UNIFIED arm below puts every baseline on ONE
+# LLM (gpt-5-mini) and ONE embedder (text-embedding-3-small) so the comparison
+# against the main method is like-for-like.
+#
+# DEVIATION FROM THE PAPER (this file only): Mem0 publishes its extractor on
+# gpt-4o-mini. Its embedder is already text-embedding-3-small, so mem0 is one of
+# only two baselines whose embedder does not change between arms.
+#
+# HOW IT RUNS AT ALL: Mem0's OpenAI provider sends temperature + max_tokens,
+# which the gpt-5 family rejects. baselines/harness/model_config.py normalises
+# both away at the OpenAI-SDK boundary.
+#
+# EXACT CONFIG (always on): the YAML must list EVERY key below — and ONLY
+# those keys (a null value counts as listed). A missing key OR an unknown
+# key aborts the run, naming the problem; sizing (single_stage/stages) is
+# checked to the leaf. Validated by common.config.validate_exact_config.
+# =============================================================================
+
+
+dataset: locomo                # which benchmark: dynamicmem | locomo | longmemeval_s
+split: test                    # test | search (search = the training split used during evolution)
+progressive: false             # false = ONE single pass (sized by single_stage); true = staged stage1->2->3 gauntlet
+sampling_seed: 42              # seeds the sampled subset (both paths; a no-op at whole-split)
+memory_cache: rebuild             # cross-stage Phase-1 memory reuse (gauntlet only)
+
+# --- UNIFIED models ---------------------------------------------------------
+mem0_llm_model: gpt-5-mini     # UNIFIED (paper: gpt-4o-mini) — Mem0's extractor/updater LLM, which
+                               # decides ADD / UPDATE / DELETE per fact. This IS the method.
+embedding_model: text-embedding-3-small   # UNIFIED — already Mem0's default (API, 1536-dim)
+base_url: null                 # OpenAI-compatible base URL for Mem0's internal LLM (null = OpenAI default)
+add_batch_size: 20             # messages per Memory.add() extraction call
+infer: true                    # true = LLM fact extraction (the method)
+top_k: 10                      # Memory.search hits per query. PAPER (arXiv 2504.19413): s=10
+threshold: 0.0                 # min similarity for a hit (0 = keep all top_k)
+
+# --- shared eval (baseline convention) --------------------------------------
+llm_model: gpt-5-mini          # shared QA agent — answers using Mem0's retrieved memory units
+judge_model: gpt-5-mini        # LLM-as-judge model scoring predicted vs reference answers
+max_sample_concurrent: 3       # asyncio concurrency across users/samples
+
+# --- Sizing (config-file only). BOTH keys must be present; the inactive one
+#     is null. Every leaf field in the active block must be listed. ---
+single_stage:
+  n_conversations: null        # locomo: null = all conversations in the split
+  n_qa: null                   # null = all QA per conversation
+stages: null

@@ -65,8 +65,46 @@ config comment names the paper's value:
 | `long_term_knowledge_capacity` | 100 | 100 |
 | recency time constant | `RECENCY_TAU_HOURS = 24` | µ = 1e7 s ≈ 2778 h |
 
-The embedder is not a constructor argument in this build: `utils.get_embedding`
-hardcodes `all-MiniLM-L6-v2` behind a process-global cache.
+## Model configuration (two arms)
+
+Every model this baseline touches is a config parameter, so it runs in two arms:
+
+| | faithful arm (`config.example.yaml`) | unified arm (`config.unified.yaml`) |
+|---|---|---|
+| internal LLM (`memoryos_llm_model`) | `gpt-4o-mini` — the paper's headline backbone (Tables 1-2) | `gpt-5-mini` |
+| embedder (`memoryos_embedding_model`) | `all-MiniLM-L6-v2`, local, 384-dim — **the code's, not the paper's** | `text-embedding-3-small`, API, 1536-dim |
+
+**The paper names no embedding model.** §4.1's implementation details cover the
+hardware and every STM/MTM/LPM capacity but never state an embedder, so the
+default above comes from the vendored code (`utils.get_embedding`'s default
+argument) — the only evidence there is. Recorded here so the value is not
+mistaken for a paper claim.
+
+**The faithful arm is the default** (and `config.paper.yaml` additionally pins
+the paper's gpt-4o-mini answerer). The unified arm puts all seven baselines on
+one LLM and one embedder so the comparison against the main method is
+like-for-like — it is a deliberate deviation from the paper, and its numbers
+must not be quoted as MemoryOS's published result.
+
+Both arms leave `src/` **byte-identical** — no vendored file is edited. Two
+boundary levers in [`../model_config.py`](../model_config.py) make that
+possible:
+
+- **the embedder.** MemoryOS has no embedder constructor argument in this
+  build: `utils.get_embedding` carries `all-MiniLM-L6-v2` as a DEFAULT
+  ARGUMENT, behind a process-global cache. So the name the vendored code
+  requests is never the configured one, and dispatching on it (the way amem and
+  simplemem work) cannot help. Instead `memo.py::_seed_embedder` pre-fills that
+  cache under the requested name with whatever `get_embedder()` returns — so
+  MemoryOS is the one baseline that needs **no** global constructor patch, just
+  one dict entry. No dimension knob is needed
+  — MemoryOS sizes its FAISS indexes from the embedding array itself
+  (`dim = embeddings_np.shape[1]`), so a 1536-dim API embedder drops straight
+  in. A `memory_cache: true` snapshot built at 384-dim is still invalid.
+- **the LLM.** MemoryOS's vendored `chat_completion` hardcodes `temperature`
+  and `max_tokens`, which the gpt-5 family rejects — so before this, MemoryOS
+  could not run a gpt-5 model at all. The shim drops the rejected params and
+  renames `max_tokens` → `max_completion_tokens` at the OpenAI-SDK boundary.
 
 ## Run
 
