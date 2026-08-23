@@ -126,10 +126,18 @@ Scores are single-sample sanity signals, NOT benchmark numbers.
 
 Build dominates: **2 gpt-4o-mini calls per ingested note** (analyze_content +
 process_memory evolution), plus per query 1 gpt-4o-mini keyword rewrite + 1
-gpt-5-mini QA + 1 gpt-5-mini judge. A-mem's internal gpt-4o-mini calls do NOT
-flow through `common.tokens` (same caveat as HippoRAG), so the build-side
-figures below are STRUCTURAL estimates (~1.5k in / ~0.33k out per note, ±50%);
-the gpt-5-mini QA/judge side is calibrated from the smoke runs' tracked usage.
+gpt-5-mini QA + 1 gpt-5-mini judge. A-mem's internal gpt-4o-mini calls are now
+MEASURED, not estimated: `memo.py` installs `common.openai_usage`, which
+captures the SDK calls its `LLMController` makes (no edit under `src/`, so the
+README's byte-identity claim still holds). They appear in `token_usage.json`
+under the `build` phase (the keyword rewrite under `retrieve`).
+
+The figures below predate that and remain STRUCTURAL estimates (~1.5k in /
+~0.33k out per note, ±50%) until re-measured on a full run; the gpt-5-mini
+QA/judge side is calibrated from the smoke runs' tracked usage. What still
+cannot be counted is the local **all-MiniLM-L6-v2** embedder — not an API
+call, so no usage object exists; `run_record.json` names it with its device,
+and `phase_seconds` is the only cost figure that covers it.
 
 Build is **serial + blocking** (A-mem is synchronous), and
 `consolidate_memories` re-embeds the whole accumulated corpus every 100

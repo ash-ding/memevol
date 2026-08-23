@@ -41,6 +41,8 @@ from typing import Dict, List
 
 from common.memo_class import MemoClass
 from common.store_cache import DiskStoreCache
+
+from common.openai_usage import install as _install_openai_usage
 from baselines.harness.hipporag2.memo import app_log_to_passage
 from baselines.harness.model_config import (
     install_embedder_factory, install_openai_param_normalisation,
@@ -74,6 +76,14 @@ install_embedder_factory()
 install_openai_param_normalisation()
 
 from lightmem.memory.lightmem import LightMemory  # noqa: E402  (vendored, byte-identical)
+
+# LightMem's memory managers build their own `openai` clients (5 files under
+# src/); the SDK-boundary patch captures them without editing any of them.
+_install_openai_usage()
+ensure_sentence_transformers()     # ST is imported eagerly by the vendored pipeline
+install_embedding_cache()          # share the embedder across per-user systems
+install_eager_attention()          # LLMlingua-2 segmenter needs eager output_attentions (transformers>=5)
+LightMemory = import_lightmemory()  # vendored, byte-identical
 
 # LightMem logs verbosely at INFO per add_memory/retrieve call; pin its logger to
 # WARNING + a NullHandler (console-only integration adaptation; the algorithm is

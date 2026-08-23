@@ -117,10 +117,16 @@ Output ONLY a JSON object:
                     what="Judge",
                 )
                 # Lazy-import to match Agent.ask pattern; tracker may be None.
-                from common.tokens import GLOBAL_TOKEN_TRACKER
-                if GLOBAL_TOKEN_TRACKER is not None and usage:
+                # Judge calls are forced to the `judge` phase rather than
+                # inheriting the ambient one: judging is evaluation overhead
+                # and must never land in a cost claim, even when a caller
+                # scores inside a build/answer block.
+                from common.tokens import GLOBAL_TOKEN_TRACKER, JUDGE
+                if GLOBAL_TOKEN_TRACKER is not None:
                     try:
-                        await GLOBAL_TOKEN_TRACKER.update(model_name=self.model, usage=usage)
+                        GLOBAL_TOKEN_TRACKER.update(
+                            model_name=self.model, usage=usage, phase_name=JUDGE
+                        )
                     except Exception as tracker_exc:
                         log.debug(f"token tracker update failed: {tracker_exc}")
                 raw = raw or ""

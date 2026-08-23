@@ -44,6 +44,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from common.memo_class import MemoClass
+from common.openai_usage import install as _install_openai_usage
 from baselines.harness.hipporag2.memo import app_log_to_passage
 from baselines.harness.model_config import (
     install_openai_param_normalisation, resolve_device,
@@ -62,6 +63,14 @@ if str(_SRC) not in sys.path:
 # here: Graphiti accepts an injected EmbedderClient, so zep configures its
 # embedder directly (see _ensure) rather than patching a constructor.
 install_openai_param_normalisation()
+
+# Graphiti calls the OpenAI SDK directly from 7 files under src/. Patching the
+# SDK boundary captures its graph-construction traffic with ZERO edits under
+# src/ (byte-identity per the README's `diff -r`).
+_install_openai_usage()
+
+_st_shim.ensure_src_on_path()          # `import graphiti_core` -> vendored copy
+_st_shim.ensure_sentence_transformers()   # before any graphiti cross_encoder import
 
 from graphiti_core import Graphiti  # noqa: E402
 from graphiti_core.driver.falkordb_driver import FalkorDriver  # noqa: E402

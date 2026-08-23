@@ -13,7 +13,7 @@ Steps:
      (progressive), the single_stage single pass, or the sanity-size smoke
      run, all inside THIS container (promotion/elimination decisions
      included; the host no longer orchestrates stages).
-  3. evaluate_memo writes /out/<stage>/{score.json,token_usage.json,traces/},
+  3. evaluate_memo writes /out/<stage>/{score.json,token_usage.json,run_record.json,traces/},
      /out/stages.json and the reached-stage root copies; this runner
      additionally writes /out/metrics.json (evaluate_memo's return dict —
      raw_score/score_max/per_user_stddev/tokens/stage/eliminated) for the

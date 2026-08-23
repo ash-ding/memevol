@@ -12,6 +12,10 @@ The base class handles (all unchanged from the prior DynamicMem_Workflow):
     orchestrator's sanity gate inspects)
   - `save_full_traces` (one JSON per user under traces/)
   - per-user isolation (fresh MemoClass instance per user)
+  - LLM cost accounting: each hook call runs inside a `common.tokens.phase`
+    block (build / retrieve / answer / judge) so tokens are attributed to
+    what they were spent on, and memory tokens are measured differentially
+    at prompt assembly (see `_measure_memory_tokens`)
 
 To add a new benchmark, subclass `BaseWorkflow` and override the hooks listed
 under "subclass hooks" below. `DynamicMemWorkflow` in
@@ -30,6 +34,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Type
 
+from common import tokens
 from common.memo_class import MemoClass
 from common.logger import get_logger
 from common.recorder import Basic_Recorder
@@ -183,8 +188,14 @@ class BaseWorkflow(ABC):
             expect.update(extra_meta)
         loaded = mc.load_memo(self.memory_cache_dir, key, expect,
                               memo_factory=self._new_memo)
+        # Cache hits spend NO build tokens — true for this run, misleading if
+        # read as the harness's build cost. The tallies ride out in the stage
+        # metrics so a 0 is never mistaken for a free memory system.
         if loaded is not None:
+            self.build_cache_hits += 1
             log.info(f"[memcache] hit: {key}")
+        else:
+            self.build_cache_misses += 1
         return loaded
 
     def _cache_save(self, memo, key: str, extra_meta: Optional[Dict] = None) -> None:
@@ -242,6 +253,11 @@ class BaseWorkflow(ABC):
         # skipped, so Phase 1 is built fresh once per run.
         self.memory_cache_read: bool = True
         self.harness_fingerprint: str = ""
+        # Build-cache tallies (see `_cache_load`) — a cached build spends no
+        # tokens, so cost readers need to know how much of the build was
+        # actually paid for during THIS run.
+        self.build_cache_hits = 0
+        self.build_cache_misses = 0
         # Lazy-constructed Judge (per common.metric.Judge). Subclasses can
         # override `_make_judge` to customize prompt / score range.
         self._judge_instance = None
@@ -355,6 +371,82 @@ class BaseWorkflow(ABC):
           {"locomo_lexical": {...}}.
         """
         return {}
+
+    # ---- Memory tokens (how much the memory added to the QA prompt) ----
+    #
+    # Measured DIFFERENTIALLY: tokens(prompt with the retrieved memory) minus
+    # tokens(the same prompt built with nothing retrieved). That is exactly
+    # what the memory contributed as it was actually rendered, and it needs no
+    # special case per benchmark — each prompt module joins and templates its
+    # payload differently, so tokenizing the raw `retrieved` payload would
+    # drift from what really landed in the prompt. Costs one extra prompt
+    # build per query: pure string work, no API call.
+
+    _memory_token_warned = False
+
+    @staticmethod
+    def _prompt_text(prompt: List[Dict]) -> str:
+        """Flatten a chat prompt to the text whose tokens we count."""
+        return "\n\n".join(str(m.get("content", "")) for m in prompt if m.get("content"))
+
+    def _measure_memory_tokens(self, recorder: Basic_Recorder,
+                               with_memory: str, without_memory: str) -> Optional[int]:
+        """Tally one query's memory tokens onto `recorder`; returns the count.
+
+        Counted against the QA model's encoding. The tally denominator is
+        queries that were PROMPTED (retrieval returned and a prompt was
+        built) — the memory cost was genuinely incurred even if the QA call
+        then failed. `memory_tokens_answered_n` records the stricter
+        denominator alongside, so both readings stay recoverable.
+
+        Never raises: a benchmark whose prompt builder rejects an empty
+        payload degrades to an unmeasured step (logged once), not a failed
+        evaluation.
+        """
+        try:
+            delta = (tokens.count_text_tokens(with_memory, self.model)
+                     - tokens.count_text_tokens(without_memory, self.model))
+        except Exception as exc:
+            if not type(self)._memory_token_warned:
+                type(self)._memory_token_warned = True
+                log.warning(
+                    f"memory-token measurement unavailable for "
+                    f"{type(self).__name__} ({type(exc).__name__}: {exc}); "
+                    f"memory_tokens will be reported as 0"
+                )
+            return None
+        recorder.memory_tokens_total = getattr(recorder, "memory_tokens_total", 0) + delta
+        recorder.memory_tokens_n = getattr(recorder, "memory_tokens_n", 0) + 1
+        return delta
+
+    @staticmethod
+    def _stamp_memory_tokens(recorder: Basic_Recorder, memory_tokens: Optional[int]) -> None:
+        """Record this step's memory tokens in the trace.
+
+        Written onto the step dict AFTER `log_qa_step` rather than through it:
+        the hook's signature is implemented by every benchmark, and per-step
+        cost is not something each of them should have to thread through.
+        """
+        if memory_tokens is None or not recorder.steps:
+            return
+        recorder.steps[-1]["memory_tokens"] = memory_tokens
+
+    def _no_memory_prompt_text(self, qa: Dict, qa_metadata: Dict) -> Optional[str]:
+        """The same QA prompt with NOTHING retrieved — the differential's
+        baseline. None when the benchmark's builder can't render it."""
+        try:
+            return self._prompt_text(self.build_qa_prompt(
+                qa["query"], {}, qa_metadata, reference=qa.get("reference", ""),
+            ))
+        except Exception as exc:
+            if not type(self)._memory_token_warned:
+                type(self)._memory_token_warned = True
+                log.warning(
+                    f"{type(self).__name__}.build_qa_prompt rejects an empty "
+                    f"retrieved payload ({type(exc).__name__}: {exc}) — memory "
+                    f"tokens cannot be measured differentially for this benchmark"
+                )
+            return None
 
     def _make_judge(self):
         """Construct the judge for this workflow. Override to customize
@@ -517,7 +609,14 @@ class BaseWorkflow(ABC):
             log.info(f"[Phase 1] User {user_tag} memory loaded from cache "
                      f"({time.time() - t1:.1f}s)")
         else:
-            await self._phase1_update(memo, init_data)
+            # Wrapped at the CALL SITE, not inside `_phase1_update`: benchmarks
+            # override that method (LoCoMo's init_data is a conversation dict,
+            # not a list) and an override does not inherit a phase block living
+            # in the base implementation. A real simplemem/LoCoMo run filed
+            # 151k build tokens under `other` before this moved out here.
+            # Everything spent inside is the cost of HAVING the memory.
+            with tokens.phase(tokens.BUILD):
+                await self._phase1_update(memo, init_data)
             t1_elapsed = time.time() - t1
             item_count = self._phase1_item_count(init_data)
             log.info(
@@ -549,7 +648,8 @@ class BaseWorkflow(ABC):
             retrieve_recorder.init = self.build_query_recorder_init(init_data, qa)
 
             try:
-                retrieved = await memo.retrieve_memory_for_query(retrieve_recorder)
+                with tokens.phase(tokens.RETRIEVE):
+                    retrieved = await memo.retrieve_memory_for_query(retrieve_recorder)
             except Exception as exc:
                 # Per-QA failure isolation: log a score=0 step and continue
                 # to the next QA — a single bad query must not silently
@@ -591,14 +691,25 @@ class BaseWorkflow(ABC):
             system_msg = prompt[0]["content"]
             user_msg = prompt[1]["content"]
 
+            # Memory tokens: this prompt minus the same prompt with nothing
+            # retrieved. Measured here, at assembly, because this is the one
+            # point where what the memory contributed is fully rendered.
+            baseline = self._no_memory_prompt_text(qa, qa_metadata)
+            memory_tokens = (
+                None if baseline is None
+                else self._measure_memory_tokens(
+                    recorder, self._prompt_text(prompt), baseline)
+            )
+
             full_prompt = f"{system_msg}\n\n{user_msg}" if system_msg else user_msg
             try:
-                answer = await memo.use_memory_to_answer(retrieve_recorder, retrieved, full_prompt)
-                if answer is None:
-                    agent.messages = [{"role": "system", "content": system_msg}]
-                    answer = await agent.ask(
-                        user_msg, with_history=False, reasoning_effort=self.reasoning_effort
-                    )
+                with tokens.phase(tokens.ANSWER):
+                    answer = await memo.use_memory_to_answer(retrieve_recorder, retrieved, full_prompt)
+                    if answer is None:
+                        agent.messages = [{"role": "system", "content": system_msg}]
+                        answer = await agent.ask(
+                            user_msg, with_history=False, reasoning_effort=self.reasoning_effort
+                        )
             except Exception as exc:
                 # QA-agent transport failure (retries already exhausted in
                 # common.llm). Mirror the retrieve-error path: record a
@@ -622,14 +733,24 @@ class BaseWorkflow(ABC):
                     retrieved_memory=retrieved,
                     relevant_context=relevant_context,
                 )
+                self._stamp_memory_tokens(recorder, memory_tokens)
                 if qa_tracker:
                     await qa_tracker.increment()
                 continue
 
-            score, judge_reason = await self.judge(
-                qa["query"], answer, qa.get("reference", ""),
-                qa_metadata=qa_metadata,
-            )
+            recorder.memory_tokens_answered_n = getattr(
+                recorder, "memory_tokens_answered_n", 0) + (memory_tokens is not None)
+
+            # Wrapped at the CALL SITE, not inside common.metric.Judge:
+            # benchmarks override `judge` (LongMemEval dispatches per
+            # question_type; DynamicMem uses its own TCE judge, which does not
+            # go through common.metric at all), and the call site is the one
+            # place all of them pass through.
+            with tokens.phase(tokens.JUDGE):
+                score, judge_reason = await self.judge(
+                    qa["query"], answer, qa.get("reference", ""),
+                    qa_metadata=qa_metadata,
+                )
 
             await self.log_qa_step(
                 recorder=recorder,
@@ -642,6 +763,7 @@ class BaseWorkflow(ABC):
                 retrieved_memory=retrieved,
                 relevant_context=relevant_context,
             )
+            self._stamp_memory_tokens(recorder, memory_tokens)
 
             if qa_tracker:
                 await qa_tracker.increment()
@@ -706,6 +828,9 @@ class BaseWorkflow(ABC):
                 "reward": float(getattr(rec, "reward", 0.0)),
                 "failure_info": getattr(rec, "failure_info", None),
                 "n_qa": len(steps),
+                # Per-user memory cost; per-step values live in steps[].memory_tokens.
+                "memory_tokens_total": getattr(rec, "memory_tokens_total", 0),
+                "memory_tokens_n_queries": getattr(rec, "memory_tokens_n", 0),
                 "steps": steps,
             }
             safe = user_id.replace("/", "_").replace("\\", "_") or "unknown"

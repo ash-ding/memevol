@@ -35,6 +35,8 @@ from typing import Dict, List, Optional, Tuple
 
 from common.memo_class import MemoClass
 from common.store_cache import DiskStoreCache
+
+from common.openai_usage import install as _install_openai_usage
 from baselines.harness.hipporag2.memo import app_log_to_passage
 from baselines.harness.model_config import (
     install_embedder_factory, install_openai_param_normalisation,
@@ -65,6 +67,16 @@ install_openai_param_normalisation()
 
 from simplemem.text.system import SimpleMemSystem  # noqa: E402  (vendored, byte-identical)
 from simplemem.core.models.memory_entry import Dialogue, MemoryEntry  # noqa: E402
+
+# SimpleMem's llm_client.py builds its own `openai` client; the SDK-boundary
+# patch captures its calls without editing the vendored file.
+_install_openai_usage()
+ensure_sentence_transformers()     # embedding.py imports ST eagerly
+install_embedding_cache()          # share the ~0.6B Qwen3 embedder across per-user systems
+# Import the vendored simplemem chain (which pulls in lancedb) with HF `datasets`
+# active, so lancedb's import-time `from datasets import Dataset` resolves to the
+# HF library, not memevol's `benchmarks/` package.
+SimpleMemSystem, Dialogue, MemoryEntry = import_simplemem_system()   # vendored, byte-identical
 
 OUTPUTS_DIR = Path(__file__).resolve().parent / "outputs"
 

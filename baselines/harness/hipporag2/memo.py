@@ -51,6 +51,14 @@ from baselines.harness.model_config import install_openai_param_normalisation
 # rename, and so all seven baselines normalise identically.
 install_openai_param_normalisation()
 
+from common.openai_usage import install as _install_openai_usage
+
+# HippoRAG's OpenIE / triple extraction and its OpenAI embedder run through the
+# SDK inside the venv-installed package (until #23 vendors it). Patching the
+# SDK boundary is what separates its internal calls from the shared QA agent —
+# they use the SAME model (cfg["llm_model"]), so the model name never could.
+_install_openai_usage()
+
 OUTPUTS_DIR = Path(__file__).resolve().parent / "outputs"
 
 

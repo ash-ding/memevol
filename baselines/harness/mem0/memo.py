@@ -37,6 +37,8 @@ from typing import Any, Dict, List, Optional
 
 from common.memo_class import MemoClass
 from common.store_cache import DiskStoreCache
+
+from common.openai_usage import install as _install_openai_usage
 from baselines.harness.hipporag2.memo import app_log_to_passage
 from baselines.harness.model_config import install_openai_param_normalisation
 
@@ -54,6 +56,11 @@ install_openai_param_normalisation()
 _SRC = str(Path(__file__).resolve().parent / "src")
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
+
+# mem0 runs its LLM and its OpenAI embedder through the SDK from the
+# venv-installed package (until #23 vendors it); the SDK-boundary patch
+# captures both.
+_install_openai_usage()
 
 # Must be set BEFORE importing mem0: the flag is read at module import time
 # (mem0/memory/telemetry.py), and with it on, every Memory() additionally opens a

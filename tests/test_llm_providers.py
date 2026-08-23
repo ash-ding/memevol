@@ -326,8 +326,13 @@ def test_agent_ask_claude_tracks_tokens():
     finally:
         tokens_mod.GLOBAL_TOKEN_TRACKER = old
     assert answer == "answer"
-    stats = tracker.summary()["claude-opus-4-6"]
+    summary = tracker.summary()
+    stats = summary["by_model"]["claude-opus-4-6"]
     assert stats["prompt_tokens"] == 11 and stats["completion_tokens"] == 7
+    assert stats["calls"] == 1
+    # No phase in scope here (no workflow around the call), so the usage lands
+    # in the `other` bucket rather than being attributed to build/answer.
+    assert summary["by_model_phase"]["claude-opus-4-6"]["other"]["calls"] == 1
     # "/low" suffix parsed off the model and delivered as effort via extra_body
     assert fake.calls[0]["extra_body"] == {"output_config": {"effort": "low"}}
 

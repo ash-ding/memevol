@@ -149,6 +149,15 @@ implementation was ported verbatim from it and differential-tested against it
 (6010 values, zero mismatches) — so the numbers below stand unchanged. Compare
 only against the **unweighted** mean: it is what the papers' "Avg." is.
 
+> **The token figure is an UNDERCOUNT and is not comparable to a current
+> run.** It was measured before `common.openai_usage` existed, when mem0's own
+> LLM and OpenAI-embedder calls did not reach `common.tokens` — only the
+> shared QA + judge did. Runs from now on capture them under the `build` /
+> `retrieve` phases, so the number WILL rise. (2026-08-14)
+
+Scored with `baselines/harness/score_paper_metrics.py`, which recomputes the
+papers' metrics — the shared judge is binary and is not what they report.
+
 | category | our F1 | paper F1 | paper BLEU-1 | n |
 |---|---|---|---|---|
 | single-hop | 46.7 | 38.7 | 27.1 | 202 |

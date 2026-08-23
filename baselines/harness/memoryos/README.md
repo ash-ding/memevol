@@ -136,6 +136,17 @@ implementation was ported verbatim from it and differential-tested against it
 (6010 values, zero mismatches) — so the numbers below stand unchanged. Compare
 only against the **unweighted** mean: it is what the papers' "Avg." is.
 
+> **The token figure is an UNDERCOUNT and is not comparable to a current
+> run.** It was measured before `common.openai_usage` existed, when MemoryOS's
+> internal LLM calls (its own `openai` client in the vendored `utils.py`) did
+> not reach `common.tokens` at all — only the shared QA + judge did. Runs from
+> now on capture those calls under the `build` phase, so the number WILL rise,
+> and the "cost profile also reproduces" reading below needs re-measuring
+> before it can be trusted. (2026-08-14)
+
+Scored with `baselines/harness/score_paper_metrics.py`, which recomputes the
+papers' metrics — the shared judge is binary and is not what they report.
+
 | category | our F1 | paper F1 | paper BLEU-1 | n |
 |---|---|---|---|---|
 | single-hop | **33.7** | **35.3** | 25.2 | 202 |

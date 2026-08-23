@@ -161,6 +161,29 @@ class _FakeST:
         self.kwargs = kwargs
 
 
+# The fake module below is installed into sys.modules. Under pytest the whole
+# suite shares one process, so leaving it there makes OTHER files import a
+# `sentence_transformers` whose `SentenceTransformer` is a plain function —
+# tests/test_run_record.py then does `SentenceTransformer.__new__(...)` and dies
+# with `TypeError: function.__new__(X)`. Restore whatever was (or was not) there.
+try:
+    import pytest
+
+    @pytest.fixture(autouse=True, scope="module")
+    def _restore_sentence_transformers():
+        had = "sentence_transformers" in sys.modules
+        prev = sys.modules.get("sentence_transformers")
+        yield
+        if had:
+            sys.modules["sentence_transformers"] = prev
+        else:
+            sys.modules.pop("sentence_transformers", None)
+        mc._model_cache.clear()
+        mc._factory_installed = False
+except ImportError:      # zero-dependency runner path — no pytest available
+    pass
+
+
 def _install_fake_sentence_transformers():
     """Reset model_config's global patch state and install a fake ST module."""
     module = types.ModuleType("sentence_transformers")
