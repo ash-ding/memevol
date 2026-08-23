@@ -314,6 +314,25 @@ class BaseWorkflow(ABC):
         """Call `recorder.log_step(...)` with the benchmark-specific field
         names. DynamicMem maps `relevant_context` to `relevant_app_logs`."""
 
+    def aggregate_extra_metrics(self, recorder_list: List[Any]) -> Dict[str, Any]:
+        """Benchmark-specific aggregate metrics, merged into score.json under
+        `extra_metrics`. Default: none.
+
+        This is the extension point for anything a single benchmark wants to
+        report that is NOT the promotion signal — the shared score-summary
+        builder (`common.evaluate._build_score_json`) stays benchmark-agnostic,
+        so per-benchmark reporting never turns into a special case inside it.
+
+        Contract for overrides:
+        - REPORTING ONLY. `benchmark_eval_score` is the promotion signal and is
+          computed from the judge; nothing returned here may feed back into it.
+        - Must never raise. A reporting metric that crashes must not take down
+          an otherwise-valid eval — return {} instead (the caller also guards).
+        - Return a JSON-serializable dict keyed by a namespace you own, e.g.
+          {"locomo_lexical": {...}}.
+        """
+        return {}
+
     def _make_judge(self):
         """Construct the judge for this workflow. Override to customize
         prompt template / score range / model — e.g. for benchmark-specific

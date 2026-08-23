@@ -182,6 +182,16 @@ against the same harness):
 | **[LoCoMo](benchmarks/locomo/)** | Multi-session two-person conversations (~154 QA each after filtering) | Two-phase; binary CORRECT/WRONG judge (community-standard); QA **categories 1–4 only** (cat-5 adversarial excluded — the data carries no gold answers for them) | 6 conv search / 4 test |
 | **[LongMemEval](benchmarks/longmemeval/)** | 500 questions, each with its own haystack of ~48 chat sessions (the `s` variant) | Two-phase, 1 QA per question; binary yes/no judge (paper) | 300 search / 200 test (stratified by question type) |
 
+**Reported-alongside metrics.** A benchmark may emit extra reporting metrics
+into `score.json` under `extra_metrics`, via the
+`BaseWorkflow.aggregate_extra_metrics` hook (default: none, so the shared
+score-summary builder stays benchmark-agnostic). These are **reporting only** —
+the promotion signal in `benchmark_eval_score` always comes from the judge.
+LoCoMo uses this for `locomo_lexical`: per-category token-F1 / BLEU-1 plus
+`*_mean_unweighted` and `*_mean_weighted`. Compare only the **unweighted** mean
+against a published "Avg." — LoCoMo's own mix is ~55% single-hop / ~6%
+open-domain, so the weighted mean is a materially different number.
+
 The data files are **not** in the repo (~360 MB total). Fetch them with:
 
 ```bash
