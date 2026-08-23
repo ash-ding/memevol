@@ -1,4 +1,4 @@
-"""Tests for the MemoryOS harness baseline (shim, init→dialogue-page mapping,
+"""Tests for the MemoryOS harness baseline (imports, init→dialogue-page mapping,
 vendored-package identity, hooks). Zero-dependency runner (no pytest in the
 venvs) — memoryos's OWN venv (heavy imports: torch/sentence-transformers/faiss):
 
@@ -14,12 +14,13 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
-def test_st_shim_coexists_with_memevol_datasets():
-    from baselines.harness.memoryos._st_shim import ensure_sentence_transformers
-    ensure_sentence_transformers()
-    ensure_sentence_transformers()   # idempotent
+def test_sentence_transformers_coexists_with_memevol_benchmarks():
+    # Regression guard for the name clash that once needed a sys.modules shim:
+    # sentence-transformers eagerly imports HF `datasets`, which collided with
+    # memevol's own top-level `datasets/` package. That package was renamed to
+    # `benchmarks/` (2026-08-07), so both must now import plainly, side by side.
     import sentence_transformers      # noqa: F401
-    from benchmarks.locomo.env import extract_sessions   # memevol's datasets
+    from benchmarks.locomo.env import extract_sessions
     assert callable(extract_sessions)
 
 
@@ -27,7 +28,7 @@ def test_vendored_package_is_the_paper_not_memos():
     # On PyPI, `memoryos` is MemTensor's MemOS (module `memos`) — a DIFFERENT
     # system. Benchmarking it here would silently mis-attribute the numbers.
     from baselines.harness.memoryos import memo as m
-    src = Path(m.__file__).resolve().parent / "vendor" / "memoryos"
+    src = Path(m.__file__).resolve().parent / "src" / "memoryos"
     assert (src / "mid_term.py").exists(), src
     assert (src / "long_term.py").exists(), src
     assert "memos" not in str(m.Memoryos.__module__), m.Memoryos.__module__

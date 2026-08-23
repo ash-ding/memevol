@@ -26,7 +26,23 @@ dependencies = [
     "sentence-transformers>=3.2.1",   # huggingface text_embedder
     "llmlingua==0.2.2",               # llmlingua-2 topic segmenter
     "qdrant-client==1.15.1",          # qdrant retriever
-    "transformers",                   # embedder + llmlingua-2
+    # embedder + llmlingua-2. PINNED <5 deliberately: LightMem's topic segmenter
+    # reads per-layer `outputs.attentions[8..11]` off the LLMlingua-2 model. Up to
+    # 4.x, requesting `output_attentions=True` on an sdpa module auto-falls back to
+    # the manual (eager) attention path; v5.0.0 removed that fallback and returns an
+    # EMPTY attentions tuple instead, so the segmenter dies with `IndexError: tuple
+    # index out of range`. Verified in-env: 4.57.6 -> 12 layers (even with
+    # attn_implementation="sdpa"), 5.14.1 -> 0. 4.57.6 is the LAST 4.x, not an old
+    # one, so this costs nothing: re-locking moved exactly two packages
+    # (transformers 5.14.1 -> 4.57.6, huggingface-hub 1.26.0 -> 0.36.2) and dropped
+    # three transitive CLI deps. torch, sentence-transformers, tokenizers and numpy
+    # were all untouched.
+    # The alternative was monkeypatching AutoModelForTokenClassification.from_pretrained
+    # from memo.py; a declared constraint beats a runtime patch. Passing
+    # attn_implementation through config is NOT possible: LightMem's vendored
+    # LlmLingua2Compressor never forwards llmlingua's `model_config` kwarg, and
+    # fixing that would mean editing src/ (breaks byte-identity).
+    "transformers>=4.36,<5",
     "torch",
     "pydantic",                       # vendor configs
     "datasets",                       # HF datasets — sentence-transformers imports it eagerly

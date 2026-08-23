@@ -22,7 +22,7 @@ The one vendored file that is **not** byte-identical is
 the AutoMemory router (→ multimodal / evolver), so it is replaced with a minimal
 initializer that imports nothing (the baseline imports
 `simplemem.text.system.SimpleMemSystem` directly). All integration code lives in
-`memo.py` / `run.py` / `_st_shim.py`, never in `src/`.
+`memo.py` / `run.py`, never in `src/`.
 
 ## How it works
 
@@ -102,7 +102,7 @@ the new segment; `finalize` flushes its remainder).
 | Category | Items |
 |---|---|
 | Verbatim | whole `src/simplemem/{core,text}` (compression, hybrid retrieval, planning, reflection, answer prompts, LanceDB backend); `WINDOW_SIZE=40` / `OVERLAP_SIZE=2`; `SEMANTIC/KEYWORD/STRUCTURED_TOP_K=25/5/5`; internal LLM `gpt-4.1-mini`; faithful `Qwen/Qwen3-Embedding-0.6B` embedder |
-| Integration adaptations (not algorithm) | longmemeval (per message) / dynamicmem (per app-log entry, hipporag2's `app_log_to_passage` text) ingestion mapping — SimpleMem only defined LoCoMo; answering via the shared QA agent; `_st_shim.py` (sentence-transformers/lancedb vs memevol's `benchmarks/` shadow — same class of issue as amem, imported exactly once to avoid a pyarrow re-registration crash; + a process-wide embedder cache so the 0.6B weights load once, not per user); `src/simplemem/__init__.py` trimmed to keep multimodal/evolver off the import path; `use_streaming=false` (identical output, no console flood) |
+| Integration adaptations (not algorithm) | longmemeval (per message) / dynamicmem (per app-log entry, hipporag2's `app_log_to_passage` text) ingestion mapping — SimpleMem only defined LoCoMo; answering via the shared QA agent; `install_embedding_cache` in `memo.py` (a process-wide embedder cache so the 0.6B weights load once, not per user — SimpleMem builds its `EmbeddingModel` inside every `SimpleMemSystem`, with no injection point to pass a shared one, so the constructor is memoized; becomes a plain injected factory once #26 lands); the vendored chain imported exactly once at `memo.py` module scope, avoiding a pyarrow re-registration crash; `src/simplemem/__init__.py` trimmed to keep multimodal/evolver off the import path; `use_streaming=false` (identical output, no console flood) |
 | Kept at SimpleMem defaults (faithful path) | `enable_parallel_processing`/`enable_parallel_retrieval=true` (SimpleMem's shipped defaults, and the path its LoCoMo eval uses) — NOTE the serial and parallel build paths are **not** equivalent: the serial path feeds each window the previous window's entries as dedup context, the parallel path processes windows independently, so the parallel output is the faithful one. It is also the only real build parallelism (the async build hook body is synchronous + blocking, so users don't overlap under `max_sample_concurrent` and there is no thread-count multiplication). Tune via `max_parallel_workers` (16) / `max_retrieval_workers` (8) |
 | Known consequences | SimpleMem compresses source turns into `MemoryEntry` units that carry NO `app_log_id`, so DynamicMem evidence-citation scoring is disadvantaged (inherent to compression-first memory); LoCoMo is SimpleMem's home benchmark and its tuned `WINDOW_SIZE` — other datasets use the same size unless overridden |
 
@@ -116,8 +116,9 @@ the new segment; `finalize` flushes its remainder).
   `common.tokens` (same caveat as amem / HippoRAG), so only the shared QA/judge
   side appears in `token_usage.json`.
 - The faithful embedder (`Qwen/Qwen3-Embedding-0.6B`) is a ~0.6B local model:
-  it benefits from a GPU and downloads once from HuggingFace. `_st_shim` loads
-  it once per process and shares it across users.
+  it benefits from a GPU and downloads once from HuggingFace.
+  `install_embedding_cache` in `memo.py` loads it once per process and shares it
+  across users.
 - Build/retrieve are synchronous + blocking, so users don't overlap under
   `max_sample_concurrent` (a blocking hook body stalls the event loop). The
   real build speedup is SimpleMem's own window parallelism

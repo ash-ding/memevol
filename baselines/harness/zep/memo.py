@@ -20,8 +20,8 @@ The shared QA agent answers — `use_memory_to_answer` is NOT overridden (the pa
 uses a separate chat agent over the retrieved context; hipporag2/amem pattern).
 
 Backend: **FalkorDB Lite** (embedded, in-process, on-disk, no server), scoped per
-instance (`uuid` dbfilename + group_id) — see _st_shim / README faithfulness
-boundary for the Neo4j-Lucene vs RediSearch retrieval-backend deviation.
+instance (`uuid` dbfilename + group_id) — see the README faithfulness boundary
+for the Neo4j-Lucene vs RediSearch retrieval-backend deviation.
 
 Ingestion units (recorder.init dispatch, cf. hipporag2/amem):
   locomo ("conversation"): one episode per turn, "{speaker}: {text}" (message
@@ -33,29 +33,116 @@ Ingestion units (recorder.init dispatch, cf. hipporag2/amem):
 """
 from __future__ import annotations
 
+import asyncio
 import shutil
+import sys
 import tempfile
 import uuid
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from common.memo_class import MemoClass
 from baselines.harness.hipporag2.memo import app_log_to_passage
-from baselines.harness.zep import _st_shim
 
-_st_shim.ensure_src_on_path()          # `import graphiti_core` -> vendored copy
-_st_shim.ensure_sentence_transformers()   # before any graphiti cross_encoder import
+# `import graphiti_core` must resolve to the byte-identical vendored copy under
+# src/, not any pip-installed graphiti-core. Idempotent.
+_SRC = Path(__file__).resolve().parent / "src"
+if str(_SRC) not in sys.path:
+    sys.path.insert(0, str(_SRC))
 
 from graphiti_core import Graphiti  # noqa: E402
 from graphiti_core.driver.falkordb_driver import FalkorDriver  # noqa: E402
 from graphiti_core.nodes import EpisodeType  # noqa: E402
 from graphiti_core.llm_client import LLMConfig, OpenAIClient  # noqa: E402
+from graphiti_core.embedder.client import EmbedderClient, EmbedderConfig  # noqa: E402
+from graphiti_core.cross_encoder.bge_reranker_client import BGERerankerClient  # noqa: E402
 from graphiti_core.search.search_config_recipes import (  # noqa: E402
     COMBINED_HYBRID_SEARCH_CROSS_ENCODER,
 )
 
-from baselines.harness.zep._bge_embedder import BGEM3Embedder, CachedBGEReranker  # noqa: E402
+# --- Paper-faithful BGE-m3 embedder + cached BGE reranker --------------------
+#
+# The Zep paper (§4.1) uses BAAI's BGE-m3 for BOTH embedding and reranking.
+# graphiti_core ships a BGE *reranker* (cross_encoder/bge_reranker_client.py) but
+# NO local/sentence-transformers *embedder* (only openai/azure/gemini/voyage), so
+# the embedder is supplied through Graphiti's public `EmbedderClient` extension
+# point — integration code, NOT an edit to vendored graphiti_core. This mirrors
+# what the paper's authors must have done (BGE-m3 is not in graphiti's OSS list).
+#
+# A fresh ZepMemo is built per user, so both classes read their model from the
+# process-wide caches below: the ~2GB BGE-m3 weights and the BGE reranker load
+# ONCE per process, not once per user. Because Graphiti accepts injected clients,
+# this is a plain cached factory — nothing is monkeypatched, unlike the
+# lightmem/simplemem baselines whose vendored code builds its embedder internally
+# with no injection point.
+
+DEFAULT_EMBEDDER_MODEL = "BAAI/bge-m3"          # paper: BGE-m3, 1024-dim
+DEFAULT_RERANKER_MODEL = "BAAI/bge-reranker-v2-m3"   # graphiti's BGERerankerClient default
+
+# Process-wide model caches, keyed by (model_name, device).
+_embedder_cache: dict = {}
+_reranker_cache: dict = {}
+
+
+def get_bge_embedder(model_name: str, device: str | None = None):
+    """Cached SentenceTransformer for the BGE-m3 embedder. Constructed once per
+    (model_name, device)."""
+    key = (model_name, device)
+    if key not in _embedder_cache:
+        from sentence_transformers import SentenceTransformer
+        _embedder_cache[key] = SentenceTransformer(model_name, device=device)
+    return _embedder_cache[key]
+
+
+def get_bge_reranker(model_name: str, device: str | None = None):
+    """Cached CrossEncoder for the BGE reranker. Constructed once per
+    (model_name, device)."""
+    key = (model_name, device)
+    if key not in _reranker_cache:
+        from sentence_transformers import CrossEncoder
+        _reranker_cache[key] = CrossEncoder(model_name, device=device)
+    return _reranker_cache[key]
+
+
+class BGEM3Embedder(EmbedderClient):
+    """SentenceTransformer('BAAI/bge-m3') as a graphiti EmbedderClient. Encodes on
+    the ST model (cached, shared) in an executor so the async graph pipeline never
+    blocks. Embeddings are L2-normalized (graphiti retrieval uses cosine
+    similarity) and truncated to config.embedding_dim (default 1024 = BGE-m3's
+    native dim, so a no-op)."""
+
+    def __init__(self, model_name: str = DEFAULT_EMBEDDER_MODEL,
+                 device: str | None = None, config: EmbedderConfig | None = None):
+        self.config = config or EmbedderConfig()
+        self.model = get_bge_embedder(model_name, device=device)
+
+    def _encode(self, texts: list[str]) -> list[list[float]]:
+        vecs = self.model.encode(texts, normalize_embeddings=True)
+        dim = self.config.embedding_dim
+        return [list(map(float, v))[:dim] for v in vecs]
+
+    async def create(
+        self, input_data: str | list[str] | Iterable[int] | Iterable[Iterable[int]]
+    ) -> list[float]:
+        texts = [input_data] if isinstance(input_data, str) else list(input_data)  # type: ignore[list-item]
+        loop = asyncio.get_running_loop()
+        vecs = await loop.run_in_executor(None, self._encode, texts)
+        return vecs[0]
+
+    async def create_batch(self, input_data_list: list[str]) -> list[list[float]]:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._encode, input_data_list)
+
+
+class CachedBGEReranker(BGERerankerClient):
+    """graphiti's BGERerankerClient, but the CrossEncoder comes from the shared
+    cache above instead of being reconstructed per user. Behavior (the async
+    `rank`) is inherited byte-for-byte from the vendored client."""
+
+    def __init__(self, model_name: str = DEFAULT_RERANKER_MODEL, device: str | None = None):
+        self.model = get_bge_reranker(model_name, device=device)
 
 # The embedded FalkorDB Lite (redislite) store MUST live on a native POSIX
 # filesystem: redislite starts a redis-server bound to a UNIX SOCKET next to the
