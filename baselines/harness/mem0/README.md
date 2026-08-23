@@ -1,7 +1,43 @@
 # mem0 — LLM-extracted fact memory
 
 [Mem0](https://github.com/mem0ai/mem0) as a `MemoClass`, scored through the
-shared registry/workflow/judge path like every other baseline.
+shared registry/workflow/judge path like every other baseline. The baseline
+vendors and drives `mem0` directly.
+
+**Provenance**: `src/mem0/` is vendored VERBATIM (byte-identical) from
+<https://github.com/mem0ai/mem0> @ `12c47f524935692e27ad48d829f35fa1e4417181`
+(tag `v2.0.17`, the version previously pinned as `mem0ai==2.0.17`), pruned to the
+exercised slice — provenance lives here, not in per-file headers, to preserve
+byte-identity:
+
+    git -C <mem0-clone> archive 12c47f5 mem0 | tar -x -C /tmp/m0
+    diff -r /tmp/m0/mem0 src/mem0        # only src/mem0/__init__.py differs (see below)
+
+**Excluded** (upstream carries a very large provider surface; the baseline
+exercises one LLM, one embedder, one vector store):
+
+| excluded | why |
+|---|---|
+| `client/`, `proxy/`, `reranker/` | hosted-platform HTTP client, OpenAI-proxy shim, rerankers — none used |
+| `llms/` — 17 of 18 providers | only `llms/openai.py` is configured (`provider: openai`) |
+| `embeddings/` — 10 of 11 providers | only `embeddings/openai.py`; `mock.py` is kept because `utils/factory.py` imports it eagerly |
+| `vector_stores/` + `configs/vector_stores/` — 24 of 25 each | only `qdrant.py` (embedded, on-disk, per user) |
+| `utils/gcp_auth.py` | Vertex/GCP auth, unreachable from the exercised path |
+
+Everything kept is on the eager import closure of `from mem0 import Memory` plus
+those three factory-selected providers; the factory loads providers by dotted
+string, so an excluded provider is a config that raises rather than a silent
+fallback. `mem0/utils/` has no `__init__.py` upstream (namespace package) and is
+vendored that way.
+
+**The one file that is NOT byte-identical** is `src/mem0/__init__.py`: upstream
+reads its version from installed `mem0ai` metadata
+(`importlib.metadata.version("mem0ai")`), which raises `PackageNotFoundError` for
+a vendored copy, and eagerly imports the un-vendored `client/` subtree. It is
+replaced with a minimal initializer that inlines `__version__ = "2.0.17"` (read
+by `memory/telemetry.py`) and re-exports only `Memory`/`AsyncMemory`. The reason
+is restated in the file itself. All other integration code lives in `memo.py` /
+`run.py`, never in `src/`.
 
 ## What the method is
 
@@ -39,10 +75,25 @@ identical across baselines.
 
 ## Dependencies
 
-`mem0ai` is PINNED in `pyproject.toml` rather than vendored: it is a maintained
-package with a stable public API, and the pin is what makes a run reproducible
-(same reasoning as hipporag2's external install). The exercised path is Mem0's
-default stack — OpenAI LLM + OpenAI embedder + embedded Qdrant, no server.
+`mem0ai` is NOT a dependency — the source is vendored under `src/` (see
+Provenance), so `uv sync` alone is the whole setup. `pyproject.toml` carries only
+what the vendored slice imports: qdrant-client, pydantic, posthog (eagerly
+imported by `memory/telemetry.py` even with `MEM0_TELEMETRY=False`, which
+`memo.py` sets), plus openai/httpx from the shared-core block. Upstream's
+sqlalchemy / pytz / protobuf / spacy are not imported by the slice (protobuf
+arrives transitively via qdrant-client; spaCy only via the optional BM25
+lemmatization path, which falls back to the raw text when it is absent).
+
+The exercised path is Mem0's default stack — OpenAI LLM + OpenAI embedder +
+embedded Qdrant, no server.
+
+## Faithfulness boundary
+
+| Category | Items |
+|---|---|
+| Verbatim | the whole vendored slice (@ v2.0.17) except `__init__.py`: the ADD/UPDATE/DELETE fact-consolidation pipeline, extraction + update prompts (`configs/prompts.py`), scoring/BM25 path, Qdrant store, OpenAI LLM + embedder clients |
+| Integration adaptations (not algorithm) | `src/mem0/__init__.py` replaced (metadata version lookup + un-vendored `client/` import — see Provenance); embedded on-disk Qdrant + per-user instance for isolation rather than a shared server; `MEM0_TELEMETRY=False` set before import (upstream's telemetry store takes a process-global Qdrant lock that breaks concurrent users, and a benchmark should not phone home); batched `add()` (`add_batch_size`, Mem0's intended usage) instead of one call per turn; per-dataset ingestion-unit mappings (locomo folds speaker+date into content, longmemeval preserves roles, dynamicmem reuses hipporag2's `app_log_to_passage`); answering via the shared QA agent |
+| Upstream quirks preserved | all extraction/update prompts, thresholds and the `infer=True` default path untouched; excluded providers fail loudly (factory loads by dotted string) rather than falling back |
 
 ## Run
 

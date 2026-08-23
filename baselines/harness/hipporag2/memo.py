@@ -4,8 +4,9 @@ shared QA agent answers from those passages (fair 'HippoRAG-as-memory'
 comparison), and the per-dataset workflow judges/scores identically to the main
 method.
 
-HippoRAG API notes (verified against the installed `hipporag==2.0.0a4` package
-at /export/scratch_large/ding/code/HippoRAG/src/hipporag/HippoRAG.py):
+HippoRAG API notes (verified against the VENDORED `hipporag` package —
+`src/hipporag/HippoRAG.py`, version 2.0.0-alpha.4 @ c617143; see README.md for
+provenance. Previously an editable install of an external checkout):
   - `HippoRAG.index(docs=...)` IS additive across calls: it delegates to
     `EmbeddingStore.insert_strings`, which dedups by content hash and upserts
     only the genuinely-new strings (see embedding_store.py:63-90); OpenIE is
@@ -24,11 +25,22 @@ at /export/scratch_large/ding/code/HippoRAG/src/hipporag/HippoRAG.py):
 from __future__ import annotations
 
 import json
+import sys
 import uuid
 from pathlib import Path
 from typing import Dict, List
 
 from common.memo_class import MemoClass
+
+# `import hipporag` must resolve to the byte-identical vendored copy under src/,
+# not to an editable install of an external checkout (which is how this baseline
+# used to get the package — unpinned, unreproducible, absent on other machines).
+# Prepended, so the vendored copy wins even if one is installed in an ambient env.
+# (zep/memoryos pattern; no _st_shim.py needed — HF `datasets` no longer collides
+# since the top-level `datasets/` package became `benchmarks/`.)
+_SRC = str(Path(__file__).resolve().parent / "src")
+if _SRC not in sys.path:
+    sys.path.insert(0, _SRC)
 
 OUTPUTS_DIR = Path(__file__).resolve().parent / "outputs"
 

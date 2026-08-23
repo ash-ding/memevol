@@ -23,15 +23,35 @@ dependencies = [
     "rich",
     "tiktoken",
     # --- hipporag2-specific ---
-    # NOTE: the external `hipporag` pkg is NOT here — editable-installed post-sync
-    # (uv pip install -e $HIPPORAG_SRC). Lines below are HippoRAG's runtime deps.
-    "chromadb",
-    "langchain-chroma",
-    "finch-clust",
-    "networkx",
-    "nltk",
-    "rank_bm25",
-    "sentence-transformers>=3.2.1",   # BGE-m3 embedder + reranker
+    # The `hipporag` package itself is VENDORED under src/ (byte-identical @
+    # c617143 — see README.md), so it is NOT a dependency and there is no
+    # editable install: `uv sync` alone is sufficient. What follows are the
+    # runtime deps the vendored package actually imports, pinned as upstream's
+    # own setup.py pins them.
+    "torch==2.5.1",
+    "transformers==4.45.2",
+    "sentence-transformers>=3.2.1",   # embedding_model/Transformers.py (undeclared upstream)
+    "gritlm==1.0.2",                  # embedding_model/GritLM.py — eagerly imported
+    "litellm==1.73.1",                # llm/bedrock_llm.py — eagerly imported
+    "python_igraph==0.11.8",          # HippoRAG.py personalized-PageRank
+    "boto3",                          # llm/bedrock_mantle.py + embedding_model/Cohere.py (eager)
+    "pandas",                         # embedding_store.py
+    "pyarrow",                        # embedding_store.py parquet backend (the default)
+    "pydantic==2.10.4",
+    "tenacity==8.5.0",
+    "tiktoken==0.7.0",
+    "filelock",                       # llm/*.py + embedding_model/base.py caches
+    "packaging",                      # llm/openai_gpt.py
+    "requests",                       # embedding_model/VLLM.py
+    "tqdm",
+    # NOT included, deliberately:
+    #   vllm, outlines — only llm/vllm_offline.py, llm/transformers_offline.py and
+    #     information_extraction/openie_vllm_offline.py import them; none is on the
+    #     import path of the OpenAI-backed config this baseline runs. vllm also
+    #     hard-pins torch and is a multi-GB install.
+    #   networkx, scipy, einops, nest_asyncio — declared by upstream's setup.py but
+    #     imported nowhere in src/hipporag (they serve upstream's reproduce/ scripts).
+    #     scipy/numpy/openai/httpx are already in the shared-core block above.
 ]
 
 [tool.uv]
