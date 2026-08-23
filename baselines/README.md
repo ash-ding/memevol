@@ -28,7 +28,9 @@ baselines/
 ├── evolve/              # SEARCH-METHOD baselines — compared against forge ITSELF
 │   ├── alma/            #   LLM-meta-agent search loop (memevol's original method)
 │   │                    #     own pyproject.toml + .python-version + uv.lock + .venv/ (gitignored)
-│   ├── evolvemem/       #   (paper PDF; to be implemented under the conventions below)
+│   ├── evolvemem/       #   EvolveMem AutoResearch loop (arXiv:2605.13941) — STANDALONE
+│   │                    #     reproduction: vendored upstream/ @ db80b6a incl. its own runners.
+│   │                    #     Does NOT implement MemoClass; numbers not comparable with forge.
 │   └── memevolve/       #   (paper PDF; to be implemented under the conventions below)
 └── harness/             # READY-MADE MEMORY SYSTEMS — compared against forge's
     ├── eval_utility.py   #   EVOLVED HARNESSES. Shared runner: run_baseline()
@@ -275,6 +277,7 @@ cd baselines/harness/hipporag2 && uv run python run.py --config my_hr.yaml
 | Baseline | Kind | Approach | Optimization | Best for |
 |---|---|---|---|---|
 | **[evolve/alma](evolve/alma/)** | search method | LLM-meta-agent search loop | Yes — propose / select / evolve over harness code | Established baseline; the framework's "v1" memory-architecture search |
+| **[evolve/evolvemem](evolve/evolvemem/)** | **standalone reproduction** (not a contract baseline) | EvolveMem AutoResearch loop (arXiv:2605.13941): LLM diagnoses per-question failure logs and proposes guarded edits to a ~42-field retrieval config | Yes — but over a CONFIG, never over code | Reproduces the paper (59.1 F1 vs its reported 54.3) by running upstream's own runners on upstream's benchmark. **Implements no `MemoClass` and never calls `evaluate_memo`, so its numbers do NOT sit on the same axis as forge's or any harness baseline's — never table them together.** It also evolves over the full LoCoMo-10, held-out conversations included |
 | **[harness/hipporag2](harness/hipporag2/)** | ready-made harness | Graph-based RAG pipeline as retrieval memory (OpenIE → KG → PPR retrieval → passages; shared QA agent answers) | None (fixed pipeline) | Hand-designed memory architecture comparison point, multi-dataset |
 | **[harness/amem](harness/amem/)** | ready-made harness | A-mem agentic-notes memory (per-note LLM analysis + memory evolution → keyword-rewrite retrieval; shared QA agent answers) | None (fixed pipeline) | Agentic note-graph memory comparison point, multi-dataset |
 | **[harness/lightmem](harness/lightmem/)** | ready-made harness | LightMem compression + offline-update memory (LLMlingua-2 pre-compression → topic segmentation → LLM metadata/summary extraction → Qdrant index → per-entry LLM offline update; `LightMemory.retrieve` → passages; shared QA agent answers) | None (fixed pipeline) | Compression + offline-refinement memory comparison point, multi-dataset |
@@ -314,6 +317,39 @@ prior code, traces, and scores. alma runs the shared per-dataset workflows
 (including the official DynamicMem TCE v2 checkpoint protocol) AND the same
 `common.evaluate.evaluate_memo` evaluator forge runs in-container, so its numbers ARE
 comparable with forge.
+
+### evolve/evolvemem — standalone reproduction of the EvolveMem paper
+
+[EvolveMem](https://arxiv.org/abs/2605.13941), vendored whole from
+[aiming-lab/SimpleMem](https://github.com/aiming-lab/SimpleMem) @ `db80b6a` —
+the same commit `harness/simplemem` is pinned to — **including its own entry
+points**. A closed loop (EVALUATE → DIAGNOSE → PROPOSE → GUARD) optimises a
+~42-field retrieval configuration θ: an LLM reads per-question failure logs,
+proposes at most two field edits per round, and an elitist guard reverts
+regressions, explores on plateaus, and stops on convergence.
+
+```bash
+cd baselines/evolve/evolvemem/upstream
+python run_benchmark.py locomo --data ../../../../benchmarks/locomo/locomo10.json \
+    --initial weak --max-rounds 7 --embed-model BAAI/bge-base-en-v1.5
+```
+
+**This one is scoped differently from every other entry here, by owner decision
+(2026-08-15).** It is a reproduction of someone else's paper, not a baseline on
+this repo's contract: it implements no `MemoClass`, never calls
+`common.evaluate.evaluate_memo`, and evolves over the full LoCoMo-10 — held-out
+conversations included, with the adversarial category scored against
+`adversarial_answer`, which this repo's own LoCoMo drops. It reaches **F1 59.1**
+against the paper's reported 54.3.
+
+Consequences, both load-bearing: its numbers **must never be tabled next to a
+forge or harness-baseline number**, and everything under its
+`evolution_results/` is test-touching and cannot be used to tune anything. An
+earlier version did satisfy the evolve-baseline contract (θ-loading `MemoClass`
++ `evaluate_memo`) and scored 41.5 under this repo's rules; it lives in git
+history (PR #33, before 2026-08-15). See
+[evolve/evolvemem/README.md](evolve/evolvemem/README.md) for the trade-off and
+for what the adversarial category actually scores.
 
 ### harness/hipporag2 — graph-based RAG pipeline as retrieval memory
 
