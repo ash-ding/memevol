@@ -132,6 +132,48 @@ def test_adapter_fallback_handles_unlisted_shape_without_crashing():
     assert "<vector redacted" in body
 
 
+def test_adapter_fallback_never_leaks_config_or_secret_keys():
+    # An UNREGISTERED memo class carrying a secret-bearing ``config`` (as every
+    # MemoClass does) plus benign textual state and a ``keywords`` field. The
+    # fallback dumps ``__dict__``; it must keep the benign text and ``keywords``
+    # but NEVER render ``config`` / ``api_key`` / the secret value.
+    class SecretBearingMemo:
+        def __init__(self):
+            self.config = {"api_key": "sk-SECRETVALUE", "base_url": "http://x"}
+            self.api_key = "sk-SECRETVALUE"
+            self.auth_token = "sk-SECRETVALUE"
+            self.notes = "benign public state"
+            self.keywords = ["alpha", "beta"]
+
+    memo = SecretBearingMemo()
+    # An unregistered class resolves to the fallback (not a targeted adapter).
+    assert isinstance(resolve_adapter(memo, "mystery"), FallbackAdapter)
+
+    items = FallbackAdapter().extract(memo)
+    assert len(items) == 1
+    body = items[0].body
+
+    # Benign textual state and the keywords field survive.
+    assert "benign public state" in body
+    assert "keywords" in body
+    assert "alpha" in body and "beta" in body
+
+    # The secret value and the sensitive key names never appear.
+    assert "sk-SECRETVALUE" not in body
+    assert "api_key" not in body
+    assert "auth_token" not in body
+    assert "config" not in body
+
+    # redact_value's dict branch is belt-and-suspenders: even a nested dict
+    # carrying a sensitive key drops it while keeping siblings and ``keywords``.
+    rendered = render_text(redact_value(
+        {"api_key": "sk-SECRETVALUE", "keywords": ["k1"], "note": "keep me"}))
+    assert "sk-SECRETVALUE" not in rendered
+    assert "api_key" not in rendered
+    assert "keywords" in rendered and "k1" in rendered
+    assert "keep me" in rendered
+
+
 def test_resolve_adapter_falls_back_for_unknown_class():
     # An unregistered class name resolves to the never-crash fallback, proving
     # the registry keys on class name rather than sniffing shape.

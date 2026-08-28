@@ -44,6 +44,17 @@ _VECTOR_KEY_EXACT = {"embedding", "embeddings", "vector", "vectors", "vec"}
 _SKIP_FIELDS = {"retriever", "embeddings", "embedding_model_obj", "client",
                 "vector_store", "_client", "model"}
 
+#: Keys whose exact (lowercased) name marks them as holding secrets/config or a
+#: backend connection — NEVER rendered into a trace. ``config`` is the critical
+#: one: every ``MemoClass`` carries ``self.config`` (which can hold API keys /
+#: base-URLs / credentials), so any ``__dict__``-walking path must drop it.
+_SENSITIVE_KEY_EXACT = {"config", "api_key", "apikey", "token", "secret",
+                        "password", "passwd", "credential", "credentials",
+                        "auth", "database"}
+#: Suffixes that mark a key as secret-bearing. Deliberately NOT the bare
+#: substring ``key`` — that would drop legitimate fields such as ``keywords``.
+_SENSITIVE_KEY_SUFFIXES = ("_key", "_token", "_secret", "_password", "_credential")
+
 
 def is_vector_key(key: Any) -> bool:
     """True if a dict key names an embedding/vector field."""
@@ -53,6 +64,22 @@ def is_vector_key(key: Any) -> bool:
     if k in _VECTOR_KEY_EXACT:
         return True
     return any(k.endswith(suf) for suf in _VECTOR_KEY_SUFFIXES)
+
+
+def is_sensitive_key(key: Any) -> bool:
+    """True if a dict key names a secret / credential / config / connection
+    field that must never be rendered into a trace.
+
+    Exact-name matches plus ``*_key`` / ``*_token`` / ``*_secret`` /
+    ``*_password`` / ``*_credential`` suffixes only — never the bare substring
+    ``key``, so legitimate fields like ``keywords`` are preserved.
+    """
+    if not isinstance(key, str):
+        return False
+    k = key.lower()
+    if k in _SENSITIVE_KEY_EXACT:
+        return True
+    return any(k.endswith(suf) for suf in _SENSITIVE_KEY_SUFFIXES)
 
 
 def _is_numpy_array(value: Any) -> bool:
@@ -102,7 +129,7 @@ def redact_value(value: Any, _depth: int = 0) -> Any:
     if isinstance(value, dict):
         out: Dict[str, Any] = {}
         for k, v in value.items():
-            if is_vector_key(k):
+            if is_vector_key(k) or is_sensitive_key(k):
                 continue
             key = k if isinstance(k, str) else str(k)
             out[key] = redact_value(v, _depth + 1)
@@ -433,7 +460,7 @@ class FallbackAdapter(Adapter):
             for k, v in state.items():
                 if not isinstance(k, str) or k.startswith("_trace"):
                     continue
-                if k in _SKIP_FIELDS or is_vector_key(k):
+                if k in _SKIP_FIELDS or is_vector_key(k) or is_sensitive_key(k):
                     continue
                 safe[k] = redact_value(v)
             if safe:
