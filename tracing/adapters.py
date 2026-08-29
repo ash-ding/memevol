@@ -25,6 +25,43 @@ from typing import Any, Callable, Dict, List, Optional
 
 log = logging.getLogger("main")
 
+# ``faiss`` is a heavy, Singularity-only dependency — it is NOT importable in
+# the host env. Guard the import so the module always loads; a real
+# ``faiss.Index`` is recognised via ``isinstance`` when available, and by a
+# strict duck-type otherwise (round-1 Phase-B fix: a ``faiss.Index`` object
+# reached during a walk must redact to a placeholder, not fall to ``repr()``).
+try:  # pragma: no cover - depends on the runtime env
+    import faiss as _faiss  # type: ignore
+    _FAISS_INDEX = getattr(_faiss, "Index", None)
+except Exception:  # pragma: no cover - host env has no faiss
+    _faiss = None
+    _FAISS_INDEX = None
+
+
+def _is_faiss_index(value: Any) -> bool:
+    """True for a ``faiss.Index`` object (a pure vector store, no text).
+
+    Uses ``isinstance`` when faiss is importable, else a strict duck-type
+    (callable ``search`` + ``reconstruct`` and integer ``ntotal`` + ``d``) so a
+    stub mimicking the index type is still recognised in the host env.
+    """
+    if _FAISS_INDEX is not None:
+        try:
+            if isinstance(value, _FAISS_INDEX):
+                return True
+        except Exception:
+            pass
+    mod = (getattr(type(value), "__module__", "") or "").split(".")[0]
+    if mod == "faiss":
+        return True
+    return (
+        callable(getattr(value, "search", None))
+        and callable(getattr(value, "reconstruct", None))
+        and isinstance(getattr(value, "ntotal", None), int)
+        and isinstance(getattr(value, "d", None), int)
+    )
+
+
 # ---------------------------------------------------------------------------
 # Redaction — the safety core. Nothing vector-shaped or binary ever escapes.
 # ---------------------------------------------------------------------------
@@ -82,6 +119,27 @@ def is_sensitive_key(key: Any) -> bool:
     return any(k.endswith(suf) for suf in _SENSITIVE_KEY_SUFFIXES)
 
 
+#: Prefixes that mark a string VALUE (not just a key) as a credential. A
+#: defense-in-depth backstop for the ``state/`` walk so a secret stored under an
+#: innocuous key (not caught by :func:`is_sensitive_key`) is still dropped.
+_SECRET_VALUE_PREFIXES = ("sk-", "sk_", "ghp_", "gho_", "github_pat_", "xoxb-",
+                          "xoxp-", "AKIA", "ASIA", "AIza", "Bearer ",
+                          "-----BEGIN")
+
+
+def looks_like_secret_value(value: Any) -> bool:
+    """True if a *string value* looks like a credential/token/private key.
+
+    Conservative prefix match only (no entropy heuristic) so ordinary text is
+    never dropped. Complements :func:`is_sensitive_key` (key-based) for the
+    ``state/`` completeness walk, which descends into config dicts.
+    """
+    if not isinstance(value, str):
+        return False
+    v = value.strip()
+    return any(v.startswith(p) for p in _SECRET_VALUE_PREFIXES)
+
+
 def _is_numpy_array(value: Any) -> bool:
     mod = type(value).__module__
     return mod.split(".")[0] == "numpy" and type(value).__name__ == "ndarray"
@@ -93,8 +151,9 @@ def _is_torch_tensor(value: Any) -> bool:
 
 
 def looks_like_vector(value: Any) -> bool:
-    """True for numpy arrays, torch tensors, or long lists/tuples of numbers."""
-    if _is_numpy_array(value) or _is_torch_tensor(value):
+    """True for numpy arrays, torch tensors, faiss indexes, or long lists/tuples
+    of numbers — anything that is raw coefficients rather than text."""
+    if _is_numpy_array(value) or _is_torch_tensor(value) or _is_faiss_index(value):
         return True
     if isinstance(value, (list, tuple)) and len(value) > VECTOR_LEN_THRESHOLD:
         # bool is a Number subclass; require genuine numeric coefficients.
@@ -103,6 +162,8 @@ def looks_like_vector(value: Any) -> bool:
 
 
 def _vector_placeholder(value: Any) -> str:
+    if _is_faiss_index(value):
+        return f"<vector redacted: faiss ntotal={getattr(value, 'ntotal', '?')}>"
     if _is_numpy_array(value) or _is_torch_tensor(value):
         shape = getattr(value, "shape", None)
         return f"<vector redacted: shape={tuple(shape) if shape is not None else '?'}>"
