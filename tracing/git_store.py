@@ -123,6 +123,34 @@ class GitStore:
             log.warning("[tracing] git commit error: %r", exc)
             return None
 
+    def commit_paths(self, rel_paths: List[str], message: str) -> Optional[str]:
+        """Stage ONLY ``rel_paths`` (adds, modifications, and deletions within
+        those pathspecs) and commit. Returns the commit SHA, or None if nothing
+        was staged / the commit could not be made (never raises).
+
+        This is the per-section commit primitive: the two-section resolver
+        commits ``memory/`` and ``state/`` independently so an unchanged section
+        never appears in the other's diff. No ``--allow-empty``.
+        """
+        if not rel_paths:
+            return None
+        try:
+            self.ensure_repo()
+            # ``add -A -- <pathspecs>`` stages creates/updates/deletes limited to
+            # those paths, so a section commit never sweeps in the other section.
+            self._git("add", "-A", "--", *rel_paths)
+            proc = self._git("commit", "-q", "-m", message, check=False)
+            if proc.returncode != 0:
+                if "nothing to commit" not in (proc.stdout + proc.stderr):
+                    log.warning("[tracing] git commit_paths failed: %s",
+                                (proc.stdout + proc.stderr).strip())
+                return None
+            sha = self._git("rev-parse", "HEAD", check=False).stdout.strip()
+            return sha or None
+        except Exception as exc:  # never crash the eval on a trace failure
+            log.warning("[tracing] git commit_paths error: %r", exc)
+            return None
+
     # -- read helpers (used by the demo / tests / a future analysis agent) --
 
     def log_lines(self, *extra: str) -> List[str]:
