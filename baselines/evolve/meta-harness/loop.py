@@ -1,0 +1,306 @@
+"""The Meta-Harness outer search loop.
+
+Per iteration: a coding agent inspects the run's filesystem — prior harness
+code, scores, and execution traces — and writes new candidates; the loop
+import-checks them, scores each through the shared evaluator, and appends the
+results back into that same filesystem. No parent selection, no compressed
+feedback: the proposer decides what to read and what to change.
+
+Evolution runs on the SEARCH split only. `--status test` finalizes a named run
+with one held-out evaluation of the Pareto frontier and then freezes it.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import signal
+import time
+from pathlib import Path
+from typing import Any, Dict, List
+
+import evaluator
+import proposer
+import state
+from state import RunPaths
+
+BASELINE_ROOT = Path(__file__).resolve().parent
+SKILL_PATH = BASELINE_ROOT / "prompts" / "SKILL.md"
+BASELINE_HARNESSES = ("no_memory.py", "full_context.py")
+
+_interrupted = False
+
+
+def _install_signal_handlers() -> None:
+    def handler(_signum, _frame):
+        global _interrupted
+        _interrupted = True
+        print("\ninterrupted — finishing the current step, then stopping", flush=True)
+
+    signal.signal(signal.SIGINT, handler)
+    signal.signal(signal.SIGTERM, handler)
+
+
+def _elapsed(seconds: float) -> str:
+    minutes, secs = divmod(int(seconds), 60)
+    return f"{minutes}m{secs:02d}s" if minutes else f"{secs}s"
+
+
+def _log(msg: str) -> None:
+    print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+# --------------------------------------------------------------------------
+# task prompt
+# --------------------------------------------------------------------------
+
+def _task_prompt(paths: RunPaths, cfg: Dict[str, Any], iteration: int) -> str:
+    frontier = state.read_frontier(paths)
+    best = frontier.get("best")
+    best_line = (
+        f"{best['system']} at score {best['score']:.3f} "
+        f"(context cost {best['context_cost']:.0f} tok/query)"
+        if best else "none yet — the baselines are the only reference points"
+    )
+    return f"""Run iteration {iteration} of harness evolution.
+
+Benchmark: {cfg['dataset']} (search split). Current best: {best_line}.
+Propose {cfg['n_candidates']} new harnesses this iteration.
+
+## Where everything is
+
+Your working directory is the baseline root. Read anything under it.
+
+- `{paths.summary}` — every candidate evaluated so far
+- `{paths.frontier}` — best + Pareto front
+- `{paths.evals}/<system>/` — per-candidate artifacts:
+  `score.json`, `metrics.json`, `stages.json`, `traces/<user>.json`
+- `{paths.reports}/` — post-eval reports (write the missing ones)
+- `harnesses/` — every harness's source; write your new ones here
+- Write `pending_eval.json` to: `{paths.pending}`
+"""
+
+
+# --------------------------------------------------------------------------
+# candidates
+# --------------------------------------------------------------------------
+
+def _read_pending(paths: RunPaths, known: set) -> List[Dict[str, Any]]:
+    """Candidates the proposer registered — dropping any that is unusable."""
+    if not paths.pending.exists():
+        return []
+    try:
+        payload = json.loads(paths.pending.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        _log(f"  pending_eval.json is not valid JSON ({exc}) — skipping iteration")
+        return []
+
+    candidates = []
+    for entry in payload.get("candidates", []):
+        name = str(entry.get("name", "")).strip()
+        if not name:
+            continue
+        if name in known:
+            _log(f"  SKIP {name}: a system with that name was already evaluated")
+            continue
+        harness_file = paths.harnesses / f"{name}.py"
+        if not harness_file.exists():
+            _log(f"  SKIP {name}: {harness_file} does not exist")
+            continue
+        entry["name"] = name
+        candidates.append(entry)
+        known.add(name)
+    return candidates
+
+
+def _validate(candidates: List[Dict[str, Any]], paths: RunPaths) -> List[Dict[str, Any]]:
+    """Import-check each candidate in a throwaway process."""
+    valid = []
+    for candidate in candidates:
+        error = evaluator.import_check(paths.harnesses / f"{candidate['name']}.py")
+        if error is None:
+            _log(f"  OK   {candidate['name']}")
+            valid.append(candidate)
+        else:
+            _log(f"  FAIL {candidate['name']}: {error.splitlines()[-1][:160]}")
+            candidate["import_error"] = error
+    return valid
+
+
+async def _evaluate_all(
+    *, names: List[str], paths: RunPaths, cfg: Dict[str, Any], split: str,
+    out_root: Path, step_index: int,
+) -> Dict[str, Dict[str, Any]]:
+    """Score each named harness, at most `max_eval_concurrent` at a time."""
+    semaphore = asyncio.Semaphore(int(cfg["max_eval_concurrent"]))
+
+    async def one(name: str) -> tuple:
+        async with semaphore:
+            started = time.time()
+            _log(f"  evaluating {name} ...")
+            metrics = await evaluator.evaluate_candidate(
+                name=name,
+                harness_file=paths.harnesses / f"{name}.py",
+                out_dir=out_root / name,
+                dataset=cfg["dataset"], split=split, cfg=cfg,
+                step_index=step_index, timeout_s=int(cfg["eval_timeout"]),
+            )
+            score = evaluator.normalized_score(metrics)
+            note = f" [{metrics['error'][:80]}]" if metrics.get("error") else ""
+            _log(f"  {name}: score={score:.3f} ({_elapsed(time.time() - started)}){note}")
+            return name, metrics
+
+    return dict(await asyncio.gather(*(one(n) for n in names)))
+
+
+# --------------------------------------------------------------------------
+# phases
+# --------------------------------------------------------------------------
+
+async def _run_baselines(paths: RunPaths, cfg: Dict[str, Any]) -> None:
+    names = [n for n in cfg["baselines"] if (paths.harnesses / f"{n}.py").exists()]
+    missing = sorted(set(cfg["baselines"]) - set(names))
+    if missing:
+        raise FileNotFoundError(f"baseline harness file(s) not found: {missing}")
+
+    _log(f"phase 0: baselines {names}")
+    results = await _evaluate_all(
+        names=names, paths=paths, cfg=cfg, split="search",
+        out_root=paths.evals, step_index=0,
+    )
+    for name in names:
+        state.append_row(paths, state.summary_row(
+            iteration=0, system=name, metrics=results[name],
+        ))
+    state.rebuild_frontier(paths)
+
+
+async def _run_iteration(paths: RunPaths, cfg: Dict[str, Any], iteration: int,
+                         known: set) -> None:
+    best_before = state.best_score(paths)
+    _log(f"iteration {iteration}  (best so far {best_before:.3f})")
+
+    paths.pending.unlink(missing_ok=True)
+
+    started = time.time()
+    result = await proposer.propose(
+        agent=cfg["agent"], model=cfg["agent_model"],
+        system_prompt=SKILL_PATH.read_text(encoding="utf-8"),
+        task=_task_prompt(paths, cfg, iteration),
+        cwd=BASELINE_ROOT, log_dir=paths.proposer_logs, name=f"iter{iteration}",
+        timeout_s=int(cfg["propose_timeout"]), effort=cfg["agent_effort"],
+        auth=cfg["agent_auth"],
+    )
+    _log(f"  proposer finished in {_elapsed(time.time() - started)} "
+         f"(exit={result.exit_code}, {len(result.tools)} tool calls)")
+    if not result.ok:
+        _log(f"  proposer failed: {result.stderr.strip()[-300:]}")
+
+    candidates = _validate(_read_pending(paths, known), paths)
+    if not candidates:
+        _log("  no valid candidates — skipping to the next iteration")
+        return
+
+    results = await _evaluate_all(
+        names=[c["name"] for c in candidates], paths=paths, cfg=cfg, split="search",
+        out_root=paths.evals, step_index=iteration,
+    )
+    for candidate in candidates:
+        state.append_row(paths, state.summary_row(
+            iteration=iteration, system=candidate["name"],
+            metrics=results[candidate["name"]], candidate=candidate,
+            best_score=best_before,
+        ))
+    frontier = state.rebuild_frontier(paths)
+    best = frontier.get("best")
+    if best and best["score"] > best_before:
+        _log(f"  NEW BEST {best['system']} at {best['score']:.3f} "
+             f"(+{best['score'] - best_before:.3f})")
+
+
+async def evolve(paths: RunPaths, cfg: Dict[str, Any]) -> None:
+    """Baselines, then `iterations` propose/evaluate rounds on the search split."""
+    if state.is_finalized(paths):
+        raise SystemExit(
+            f"run '{paths.run_name}' is finalized — its test split is spent. "
+            f"Use a new run_name to keep evolving."
+        )
+    paths.mkdirs()
+    _log(f"meta-harness evolution  run={paths.run_name}  dataset={cfg['dataset']}  "
+         f"agent={cfg['agent']}/{cfg['agent_model']}  iterations={cfg['iterations']}")
+
+    known = {row["system"] for row in state.read_rows(paths)}
+    if not cfg["skip_baselines"]:
+        await _run_baselines(paths, cfg)
+        known |= set(cfg["baselines"])
+
+    start = state.last_iteration(paths) + 1
+    for offset in range(int(cfg["iterations"])):
+        if _interrupted:
+            break
+        await _run_iteration(paths, cfg, start + offset, known)
+
+    best = state.rebuild_frontier(paths).get("best")
+    if best:
+        _log(f"evolution complete — best {best['system']} at {best['score']:.3f}")
+    else:
+        _log("evolution complete — nothing scored")
+    _log(f"finalize once with: uv run python run.py --config <cfg> "
+         f"--status test --run-name {paths.run_name}")
+
+
+async def finalize(paths: RunPaths, cfg: Dict[str, Any]) -> None:
+    """One held-out evaluation of the Pareto frontier, then freeze the run.
+
+    The test split is touched exactly once per run: this function refuses to
+    run twice, and `evolve` refuses to run at all afterwards.
+    """
+    frontier = state.read_frontier(paths)
+    if not frontier.get("all"):
+        raise SystemExit(f"no search-split results for run '{paths.run_name}' — nothing to finalize")
+    if state.is_finalized(paths):
+        _log(f"run '{paths.run_name}' is already finalized:")
+        _log(json.dumps(json.loads(paths.finalized.read_text(encoding="utf-8"))
+                        .get("test_scores", {}), indent=2))
+        return
+
+    systems = sorted({e["system"] for e in frontier.get("_pareto", [])} | set(cfg["baselines"]))
+    _log(f"finalizing run={paths.run_name} on the TEST split: {systems}")
+    state.mark_finalizing(paths, systems)
+
+    out_root = paths.test_results(cfg["dataset"])
+    results = await _evaluate_all(
+        names=systems, paths=paths, cfg=cfg, split="test",
+        out_root=out_root, step_index=0,
+    )
+    scores = {name: evaluator.normalized_score(m) for name, m in results.items()}
+    state.mark_finalized(paths, scores)
+
+    _log("test results (mean reward, 0-1 — comparable with any forge harness):")
+    for name, score in sorted(scores.items(), key=lambda kv: -kv[1]):
+        _log(f"  {score:.3f}  {name}")
+    _log(f"artifacts: {out_root}")
+
+
+def fresh_start(paths: RunPaths) -> None:
+    """Delete this run's logs and every proposer-written harness."""
+    import shutil
+
+    candidates = [f for f in paths.harnesses.glob("*.py") if f.name not in BASELINE_HARNESSES]
+    for path in candidates:
+        path.unlink()
+    if paths.logs.exists():
+        shutil.rmtree(paths.logs)
+    _log(f"fresh start: cleared {len(candidates)} candidate file(s) and {paths.logs}")
+
+
+async def main(cfg: Dict[str, Any], run_name: str, fresh: bool) -> None:
+    _install_signal_handlers()
+    paths = RunPaths(root=BASELINE_ROOT, run_name=run_name)
+    if fresh:
+        fresh_start(paths)
+    paths.mkdirs()
+    if cfg["status"] == "search":
+        await evolve(paths, cfg)
+    else:
+        await finalize(paths, cfg)

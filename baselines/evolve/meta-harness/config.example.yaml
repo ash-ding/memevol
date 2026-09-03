@@ -1,0 +1,58 @@
+# =============================================================================
+# meta-harness (coding-agent harness search) — SEARCH-split evolution config.
+#
+#   cd baselines/evolve/meta-harness
+#   uv run python run.py --config config.example.yaml
+#
+# CLI flags override any key here (DEFAULT_CONFIG < this file < CLI).
+# STRICT-CONFIG (default on): with --config, EVERY key below must be present
+# (a null value counts as listed). Missing keys abort the run naming them.
+# Report held-out numbers with config.test.yaml, not this file.
+# =============================================================================
+
+strict_config: true
+
+# --- run ---------------------------------------------------------------------
+status: search           # search = evolve; test = finalize a run (config.test.yaml)
+dataset: dynamicmem      # dynamicmem | locomo | longmemeval_s
+run_name: null           # null = timestamped dir under logs/; name it to resume
+iterations: 10           # propose/evaluate rounds this invocation adds
+n_candidates: 3          # harnesses the proposer is asked for per iteration
+baselines:               # kept harnesses in harnesses/, evaluated in phase 0
+  - no_memory            #   floor: no memory at all
+  - full_context         #   ceiling on cost: stuff the window, no selection
+skip_baselines: false    # true to skip phase 0 when resuming a run
+
+# --- proposer: the coding agent that reads the run and writes harnesses -------
+agent: claude_code       # claude_code (`claude` CLI) | codex (`codex` CLI)
+agent_model: opus        # claude_code: opus | sonnet | <model id>
+                         # codex: e.g. gpt-5-codex
+agent_effort: high       # claude_code --effort: low|medium|high|xhigh|max
+                         # codex model_reasoning_effort: low|medium|high
+agent_auth: subscription # claude_code only. subscription drops ANTHROPIC_API_KEY
+                         # so the CLI uses `claude login` OAuth (upstream's
+                         # choice, avoids API rate limits); api_key keeps it.
+propose_timeout: 2400    # wall-clock cap per proposer session, seconds
+
+# --- evaluation (the shared common.evaluate.evaluate_memo path) --------------
+execution_model: gpt-5-mini   # QA agent answering from each harness's memory
+judge_model: gpt-5-mini       # LLM-as-judge scoring answers
+max_sample_concurrent: 3      # users/samples in flight within one candidate
+max_eval_concurrent: 2        # candidates evaluated in parallel
+eval_timeout: 50400           # wall-clock cap per candidate eval, seconds (14h)
+max_logs: null                # dynamicmem: cap logs per user; null = all
+progressive: true             # true = stage1->2->3 gauntlet (cheap candidates
+                              # die early); false = ONE pass sized by single_stage
+random_sample: false          # true = each iteration draws a different seeded
+                              # subset (seeded by sampling_seed + iteration)
+sampling_seed: 42
+memory_cache: true            # cross-stage Phase-1 memory reuse
+
+# --- sizing (config-file only; both keys required, the inactive one null) ----
+single_stage: null            # used when progressive: false — see config.test.yaml
+
+stages:                       # ACTIVE (progressive: true). dynamicmem fields.
+  sanity_check: {n_users: 1, n_checkpoints: 1, n_task_a: 1, n_task_c: 1}
+  stage1: {n_users: 2, n_checkpoints: 1, n_task_a: 5, n_task_c: 5, threshold: 0.05}
+  stage2: {n_users: 4, n_checkpoints: 3, n_task_a: 5, n_task_c: 5, threshold: 0.10}
+  stage3: {n_users: 6, n_checkpoints: 5, n_task_a: 5, n_task_c: 5}

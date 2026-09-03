@@ -64,10 +64,18 @@ baselines/*/*/outputs/
 baselines/*/*/logs/
 baselines/*/*/results/*_dryrun.json
 
-# --- meta-harness runtime artifacts ---
-baselines/meta-harness/archive/
-baselines/meta-harness/results/
-baselines/meta-harness/logs/
+# --- meta-harness baseline runtime artifacts ---
+# Per-run search filesystem (summary, frontier, proposer sessions, eval
+# artifacts) and held-out outputs. logs/ is already covered by the
+# baselines/*/*/logs/ rule above; results/ needs its own entry.
+baselines/evolve/meta-harness/results/
+baselines/evolve/meta-harness/smoke_*.yaml
+
+# Proposer-written harnesses are run artifacts; the two shipped baselines
+# (the calibration floor and ceiling) ARE tracked.
+baselines/evolve/meta-harness/harnesses/*
+!baselines/evolve/meta-harness/harnesses/no_memory.py
+!baselines/evolve/meta-harness/harnesses/full_context.py
 
 # --- forge runtime artifacts ---
 # Per-run workspaces (workspace/<run_id>/...) hold all generated harnesses,

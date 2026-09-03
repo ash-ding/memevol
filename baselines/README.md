@@ -31,6 +31,8 @@ baselines/
 │   ├── evolvemem/       #   EvolveMem AutoResearch loop (arXiv:2605.13941) — STANDALONE
 │   │                    #     reproduction: vendored upstream/ @ db80b6a incl. its own runners.
 │   │                    #     Does NOT implement MemoClass; numbers not comparable with forge.
+│   ├── meta-harness/    #   Meta-Harness coding-agent harness search (arXiv:2603.28052)
+│   │                    #     proposer = the `claude` OR `codex` CLI, driven as a subprocess
 │   └── memevolve/       #   (paper PDF; to be implemented under the conventions below)
 └── harness/             # READY-MADE MEMORY SYSTEMS — compared against forge's
     ├── eval_utility.py   #   EVOLVED HARNESSES. Shared runner: run_baseline()
@@ -110,11 +112,12 @@ directories (gitignored).
 
 ## Shared progressive sampling, seeding & memory cache
 
-Every baseline (`evolve/alma` and every `harness/*`) shares the same
+Every baseline (`evolve/alma`, `evolve/meta-harness`, and every `harness/*`)
+shares the same
 evaluation-sampling infrastructure as forge — the literal same `common/`
 modules forge uses — via two flags/keys plus a cross-stage memory cache.
-**alma** still exposes these as CLI flags layered over its config (see
-"Configuration"); **harness baselines** (2026-08-06) have NO CLI parameter
+**alma** and **meta-harness** still expose these as CLI flags layered over
+their config (see "Configuration"); **harness baselines** (2026-08-06) have NO CLI parameter
 surface at all — every one of these is a config-file key only, validated
 exactly by `common.config.validate_exact_config`:
 
@@ -133,7 +136,7 @@ exactly by `common.config.validate_exact_config`:
   the literal same function; only the ISOLATION wrapper differs (forge runs
   evaluate_memo inside a Singularity container, alma inside a plain
   subprocess, harness baselines call it directly in-process).
-- **`random_sample`** (alma only, CLI `--random_sample` — underscore,
+- **`random_sample`** (alma + meta-harness; alma's CLI `--random_sample` — underscore,
   `argparse.BooleanOptionalAction` so the negation is
   `--no-random_sample`; harness baselines have no step loop, so this
   isn't exposed there at all — not as a flag, not as a config key; default
@@ -177,14 +180,15 @@ committed (a link from a tracked file would be dead on a fresh clone).
 ## Configuration
 
 The two sides of `baselines/` resolve their config differently (2026-08-06):
-**alma** keeps the original layered scheme (it has a real CLI with runtime
-knobs like `--status`/`--steps`/`--memo_SHA`); every **harness baseline**
+**alma** and **meta-harness** keep the original layered scheme (both have a
+real CLI with runtime knobs like `--status`/`--steps`/`--run-name`); every
+**harness baseline**
 (`hipporag2`, `amem`, `lightmem`, `simplemem`, `zep`, `mem0`,
 `memoryos`) is now **config-file ONLY** — `run.py` takes exactly one flag,
 `--config <yaml>` (required), and there is no built-in `DEFAULT_CONFIG` to
 fall back to.
 
-### alma (evolve baseline) — layered, unchanged
+### alma + meta-harness (evolve baselines) — layered, unchanged
 
 - **[`common/config.py`](../common/config.py)** — `deep_merge(base, overlay)`
   (in-place recursive dict merge) + `resolve_config(defaults, config_path,
@@ -368,6 +372,7 @@ the embedder itself. In every case, switching arms invalidates vector stores and
 |---|---|---|---|---|
 | **[evolve/alma](evolve/alma/)** | search method | LLM-meta-agent search loop | Yes — propose / select / evolve over harness code | Established baseline; the framework's "v1" memory-architecture search |
 | **[evolve/evolvemem](evolve/evolvemem/)** | **standalone reproduction** (not a contract baseline) | EvolveMem AutoResearch loop (arXiv:2605.13941): LLM diagnoses per-question failure logs and proposes guarded edits to a ~42-field retrieval config | Yes — but over a CONFIG, never over code | Reproduces the paper (59.1 F1 vs its reported 54.3) by running upstream's own runners on upstream's benchmark. **Implements no `MemoClass` and never calls `evaluate_memo`, so its numbers do NOT sit on the same axis as forge's or any harness baseline's — never table them together.** It also evolves over the full LoCoMo-10, held-out conversations included |
+| **[evolve/meta-harness](evolve/meta-harness/)** | search method | Meta-Harness coding-agent harness search (arXiv:2603.28052): a `claude`/`codex` session reads prior harness code, scores and QA traces off the run's filesystem and writes new `MemoClass` candidates; no parent selection, no compressed feedback | Yes — propose / evaluate / log over harness code | Agentic-proposer comparison point for forge's own proposer; Pareto over (score, context cost) |
 | **[harness/hipporag2](harness/hipporag2/)** | ready-made harness | Graph-based RAG pipeline as retrieval memory (OpenIE → KG → PPR retrieval → passages; shared QA agent answers) | None (fixed pipeline) | Hand-designed memory architecture comparison point, multi-dataset |
 | **[harness/amem](harness/amem/)** | ready-made harness | A-mem agentic-notes memory (per-note LLM analysis + memory evolution → keyword-rewrite retrieval; shared QA agent answers) | None (fixed pipeline) | Agentic note-graph memory comparison point, multi-dataset |
 | **[harness/lightmem](harness/lightmem/)** | ready-made harness | LightMem compression + offline-update memory (LLMlingua-2 pre-compression → topic segmentation → LLM metadata/summary extraction → Qdrant index → per-entry LLM offline update; `LightMemory.retrieve` → passages; shared QA agent answers) | None (fixed pipeline) | Compression + offline-refinement memory comparison point, multi-dataset |
@@ -440,6 +445,52 @@ earlier version did satisfy the evolve-baseline contract (θ-loading `MemoClass`
 history (PR #33, before 2026-08-15). See
 [evolve/evolvemem/README.md](evolve/evolvemem/README.md) for the trade-off and
 for what the adversarial category actually scores.
+
+### evolve/meta-harness — coding-agent search over harness code
+
+[Meta-Harness](https://github.com/stanford-iris-lab/meta-harness)
+(arXiv:2603.28052) delegates diagnosis and proposal to a **coding agent** with
+filesystem access to the whole search history — every prior candidate's source,
+score, and execution traces, read with `grep`/`cat` rather than compressed into
+a prompt. There is no parent-selection rule and no summary channel. Each
+iteration the agent writes N harnesses into `harnesses/` plus a
+`pending_eval.json`; the loop import-checks them and scores each one through
+`common.evaluate.evaluate_memo` on the search split, then appends the results
+to the same filesystem the next iteration reads.
+
+The proposer backend is one config key: **`claude_code`** (the `claude` CLI) or
+**`codex`** (the `codex` CLI), both driven as stream-json subprocesses. Neither
+is a Python dependency — install and log into the one you use.
+
+```bash
+cd baselines/evolve/meta-harness && uv sync
+
+# search-split evolution, resumable under a fixed run name
+uv run python run.py --config config.example.yaml --run-name run1
+
+# same loop with Codex proposing
+uv run python run.py --config config.example.yaml --run-name run1     --agent codex --agent-model gpt-5-codex
+
+# ONE held-out evaluation of run1's Pareto frontier, then the run is frozen
+uv run python run.py --config config.test.yaml --run-name run1
+```
+
+Artifacts: `baselines/evolve/meta-harness/{logs/<run>/, results/<dataset>/test/}`.
+`logs/<run>/` IS the proposer's feedback channel — `evolution_summary.jsonl`,
+`frontier_val.json`, `evals/<system>/traces/`, and the agent's own sessions
+under `proposer/iter<N>/`. Two calibration harnesses ship tracked
+(`no_memory`, `full_context`); everything else there is proposer-written and
+gitignored.
+
+**Key difference from alma and forge**: alma's proposer is one LLM call over
+compressed feedback and forge's is an agentic CC SDK call inside a container;
+meta-harness's is a host-side agent CLI session whose only structure is "here
+is the run directory". Its candidates go through the SAME
+`evaluate_memo` gauntlet, so its scores ARE comparable with forge's. Evolution
+runs on `split: search` only; `--status test` spends the test split exactly once
+and writes `finalized.json`, after which the run refuses to evolve further. See
+[evolve/meta-harness/README.md](evolve/meta-harness/README.md) for the
+faithfulness boundary (one benchmark per run, the staged gauntlet).
 
 ### harness/hipporag2 — graph-based RAG pipeline as retrieval memory
 
@@ -818,10 +869,14 @@ convention set above, concretely:
    iteration evaluates on `status/split = search`. The test split is used
    exactly once, for the final frozen artifact — mirroring how forge's
    search never touches test data (`forge.heldout` is the only test entry).
-4. **Reference implementation**: [evolve/alma/](evolve/alma/) — its
+4. **Reference implementations**: [evolve/alma/](evolve/alma/) — its
    `run.py --status {search,test}` split handling, `eval_runner.py` →
    shared-workflow scoring, and `memo_archive/` artifact management are the
    patterns to mirror (by copying, not importing).
+   [evolve/meta-harness/](evolve/meta-harness/) is the same skeleton with an
+   AGENTIC proposer: `proposer.py` drives the `claude` or `codex` CLI as a
+   stream-json subprocess, and `state.py` shows a run whose test split is
+   locked behind an explicit finalization step.
 
 ## Shared foundation
 

@@ -1,0 +1,40 @@
+# meta-harness baseline — standalone uv project (coding-agent harness search).
+#
+#   cd baselines/evolve/meta-harness && uv sync   # -> .venv/ (CPython 3.12)
+#
+# Isolated per-baseline env (uv sync + committed uv.lock for reproducibility).
+# The shared-core block is the closure common/ + benchmarks/ need — duplicated
+# into every baseline pyproject on purpose (independence over DRY).
+#
+# The proposer is the `claude` or `codex` CLI, installed on the host and driven
+# as a subprocess: neither is a Python dependency.
+[project]
+name = "memevol-baseline-meta-harness"
+version = "0.0.0"
+description = "Meta-Harness coding-agent search over memory harnesses"
+requires-python = ">=3.12"
+dependencies = [
+    # --- shared core (common/ + benchmarks/) ---
+    "openai==1.107.3",
+    "anthropic[vertex]",
+    "python-dotenv",
+    "httpx",
+    "PyYAML",
+    "jsonschema",
+    "scipy",
+    "numpy",
+    "rich",
+    "tiktoken",
+    # --- available to proposed harnesses ---
+    "langchain-chroma",   # vector-store memory
+    "chromadb",
+    "networkx",           # graph memory
+    "rank-bm25",          # lexical retrieval
+    "huggingface-hub",    # chromadb default embedder download
+]
+
+[tool.uv]
+package = false   # this dir is an app env, not a buildable package
+
+[tool.ruff]
+exclude = ["harnesses"]   # proposer-written code is not style-gated
