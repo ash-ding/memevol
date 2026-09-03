@@ -252,5 +252,14 @@ Dispatch on the keys — a harness that handles all three runs on any dataset.
 `memory_tokens_per_query` — the tokens your memory adds to each QA prompt. The
 frontier is the Pareto front over both: a candidate that matches the best
 score at half the context cost is a win, and so is one that trades a little
-cost for a real score gain. `eliminated: true` means the staged gauntlet cut
-the candidate early (or it crashed — check `error`).
+cost for a real score gain. `eliminated: true` means the candidate never
+finished the gauntlet — check `error` for which of the three ways it went:
+
+- `import: ...` — it does not import. It was never run.
+- `sanity: ...` — it imported, then errored on real data during the one
+  sanity-sized pass every candidate takes before a full evaluation. Artifacts
+  are under `evals/<system>/sanity/`; read them before rewriting.
+- neither — the staged gauntlet cut it for scoring below a stage threshold.
+
+The first two mean you shipped broken code, not a weak idea. Prototyping
+(Step 2) is what keeps you out of them.

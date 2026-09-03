@@ -52,6 +52,8 @@ memory_cache: true            # cross-stage Phase-1 memory reuse
 single_stage: null            # used when progressive: false — see config.test.yaml
 
 stages:                       # ACTIVE (progressive: true). dynamicmem fields.
+                              # sanity_check sizes the pre-eval crash gate every
+                              # candidate takes (used whatever `progressive` is).
   sanity_check: {n_users: 1, n_checkpoints: 1, n_task_a: 1, n_task_c: 1}
   stage1: {n_users: 2, n_checkpoints: 1, n_task_a: 5, n_task_c: 5, threshold: 0.05}
   stage2: {n_users: 4, n_checkpoints: 3, n_task_a: 5, n_task_c: 5, threshold: 0.10}

@@ -22,12 +22,18 @@ One iteration:
    prior harness source, and the QA traces under `evals/<system>/traces/`, then
    writes `n_candidates` new harnesses into `harnesses/` and registers them in
    `pending_eval.json`.
-2. **Validate** — each candidate is import-checked in a throwaway process.
+2. **Gate** — two cheap checks before a candidate earns a real evaluation:
+   an import check in a throwaway process, then ONE `sanity_check`-sized pass
+   (`evaluate_memo(smoke=True)`). A harness fails sanity if any user errored or
+   only partly completed — forge's rule. Import-clean code routinely crashes on
+   first contact with real data, and this costs one tiny pass to find out.
 3. **Evaluate** — each survivor is scored through
    `common.evaluate.evaluate_memo` on the **search** split, one subprocess per
    candidate.
-4. **Log** — results are appended to the same filesystem the next iteration
-   reads. The Pareto front over (score up, context cost down) is recomputed.
+4. **Log** — every outcome is appended to the same filesystem the next
+   iteration reads, **rejections included** (marked `eliminated` with the
+   error, so the frontier skips them but the proposer sees them). The Pareto
+   front over (score up, context cost down) is recomputed.
 
 `--status test` finalizes a named run: one held-out evaluation of the Pareto
 frontier plus the baselines, after which the run is frozen against further
@@ -96,6 +102,7 @@ Per run, under `logs/<run_name>/`:
 | `evolution_summary.jsonl` | one row per evaluated candidate: score, delta, context cost, stage, hypothesis |
 | `frontier_val.json` | `best`, the `_pareto` front, and every system ranked |
 | `evals/<system>/` | `score.json`, `metrics.json`, `stages.json`, `traces/<user>.json` |
+| `evals/<system>/sanity/` | the pre-eval sanity pass — the first place to look when a candidate was rejected |
 | `proposer/iter<N>/` | the agent session: `system_prompt.txt`, `task_prompt.txt`, `events.jsonl`, `response.md`, `meta.json` |
 | `reports/` | proposer-written post-eval notes |
 | `finalized.json` | the test-split lock |

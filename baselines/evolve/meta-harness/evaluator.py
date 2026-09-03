@@ -49,8 +49,12 @@ async def evaluate_candidate(
     cfg: Dict[str, Any],
     step_index: int = 0,
     timeout_s: int = 14 * 3600,
+    smoke: bool = False,
 ) -> Dict[str, Any]:
-    """Run one candidate through the shared evaluator. Returns its metrics."""
+    """Run one candidate through the shared evaluator. Returns its metrics.
+
+    `smoke=True` runs ONE sanity_check-sized pass instead of the gauntlet —
+    the pre-eval crash gate (see `sanity_errors`)."""
     out_dir.mkdir(parents=True, exist_ok=True)
     for stale in ("metrics.json", "score.json"):
         (out_dir / stale).unlink(missing_ok=True)
@@ -70,6 +74,7 @@ async def evaluate_candidate(
         "--progressive" if cfg["progressive"] else "--no-progressive",
         "--random-sample" if cfg["random_sample"] else "--no-random-sample",
         "--memory-cache" if cfg["memory_cache"] else "--no-memory-cache",
+        "--smoke" if smoke else "--no-smoke",
     ]
     if cfg["max_logs"] is not None:
         cmd += ["--max-logs", str(cfg["max_logs"])]
@@ -109,6 +114,35 @@ def _kill(proc: "asyncio.subprocess.Process") -> None:
         proc.kill()
     except ProcessLookupError:
         pass
+
+
+def sanity_errors(run_dir: Path) -> Optional[str]:
+    """Verdict on a `smoke=True` run: None when the candidate ran clean, else
+    what went wrong.
+
+    Same rule forge's `_collect_sanity_errors` applies — a harness fails if any
+    user errored out (`invalid_users`) or any user only partly completed
+    (`failure_info`). Import-clean code can still crash the first time it sees
+    real data, and this is where that surfaces.
+    """
+    score_path = run_dir / "score.json"
+    if not score_path.exists():
+        return "sanity pass wrote no score.json (the subprocess never finished)"
+    try:
+        data = json.loads(score_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        return f"unreadable sanity score.json: {exc}"
+
+    errors = [
+        f"invalid user {iu.get('user_id', '?')}: {iu.get('error', '')}"
+        for iu in data.get("invalid_users", []) or []
+    ]
+    errors += [
+        f"user {uid} partial failure: {info}"
+        for uid, entry in (data.get("per_user", {}) or {}).items()
+        if (info := entry.get("failure_info"))
+    ]
+    return "; ".join(errors)[:800] if errors else None
 
 
 def import_check(harness_file: Path, timeout_s: int = 60) -> Optional[str]:

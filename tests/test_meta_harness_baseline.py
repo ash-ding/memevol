@@ -436,6 +436,93 @@ def test_read_metrics_falls_back_to_score_json_then_to_an_error():
     assert evaluator.normalized_score({"raw_score": 2.0, "score_max": 4}) == 0.5
 
 
+def test_sanity_errors_applies_forges_rule():
+    import evaluator
+
+    with tempfile.TemporaryDirectory() as tmp:
+        run_dir = Path(tmp)
+        # No score.json at all — the subprocess died before writing anything.
+        assert "no score.json" in evaluator.sanity_errors(run_dir)
+
+        def write(payload):
+            (run_dir / "score.json").write_text(json.dumps(payload), encoding="utf-8")
+
+        write({"per_user": {"u1": {"reward": 1.0, "failure_info": None}},
+               "invalid_users": []})
+        assert evaluator.sanity_errors(run_dir) is None      # clean run
+
+        write({"per_user": {}, "invalid_users": [{"user_id": "u1", "error": "boom"}]})
+        assert "boom" in evaluator.sanity_errors(run_dir)
+
+        # A user that only partly completed fails too, exactly as in forge.
+        write({"per_user": {"u1": {"reward": 0.5, "failure_info": "phase2 timeout"}},
+               "invalid_users": []})
+        assert "phase2 timeout" in evaluator.sanity_errors(run_dir)
+
+
+def test_smoke_flag_reaches_the_subprocess_argv():
+    import evaluator
+
+    seen = {}
+
+    async def fake_exec(*cmd, **kw):
+        seen["cmd"] = cmd
+        raise FileNotFoundError("not actually launching")
+
+    real, asyncio.create_subprocess_exec = asyncio.create_subprocess_exec, fake_exec
+    try:
+        cfg = {"execution_model": "m", "judge_model": "j", "max_sample_concurrent": 1,
+               "sampling_seed": 42, "progressive": True, "random_sample": False,
+               "memory_cache": True, "max_logs": None, "stages": None,
+               "single_stage": None}
+        with tempfile.TemporaryDirectory() as tmp:
+            for smoke, expected in ((True, "--smoke"), (False, "--no-smoke")):
+                try:
+                    asyncio.run(evaluator.evaluate_candidate(
+                        name="c", harness_file=Path(tmp) / "c.py", out_dir=Path(tmp) / "o",
+                        dataset="locomo", split="search", cfg=cfg, smoke=smoke))
+                except FileNotFoundError:
+                    pass
+                assert expected in seen["cmd"], (smoke, seen["cmd"])
+    finally:
+        asyncio.create_subprocess_exec = real
+
+
+def test_rejected_candidates_are_recorded_so_the_proposer_can_read_them():
+    """A candidate that fails a gate still gets a row — eliminated, so the
+    frontier skips it, but visible in the proposer's only feedback channel."""
+    import loop, state
+
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = _paths(tmp)
+        loop._reject(paths, 3, {"name": "broken", "hypothesis": "h"},
+                     "sanity", "user u1: KeyError('query')")
+
+        row = state.read_rows(paths)[-1]
+        assert row["system"] == "broken" and row["eliminated"] is True
+        assert row["score"] == 0.0 and "sanity:" in row["error"]
+        assert row["hypothesis"] == "h"
+        # Eliminated rows never reach the frontier.
+        assert state.rebuild_frontier(paths)["all"] == []
+
+
+def test_import_gate_rejects_and_records_without_running_anything():
+    import loop, state
+
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = _paths(tmp)
+        (paths.harnesses / "good.py").write_text(
+            (BASELINE_ROOT / "harnesses" / "no_memory.py").read_text(encoding="utf-8"),
+            encoding="utf-8")
+        (paths.harnesses / "bad.py").write_text("import nope_xyz\n", encoding="utf-8")
+
+        passed = loop._import_gate([{"name": "good"}, {"name": "bad"}], paths, 1)
+        assert [c["name"] for c in passed] == ["good"]
+        rows = state.read_rows(paths)
+        assert len(rows) == 1 and rows[0]["system"] == "bad"
+        assert rows[0]["error"].startswith("import:")
+
+
 def test_import_check_accepts_a_harness_and_reports_a_broken_one():
     import evaluator
 

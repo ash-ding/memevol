@@ -103,7 +103,7 @@ async def main(args: argparse.Namespace) -> None:
 
     metrics = await evaluate_memo(
         memo_class=harness_cls, dataset=args.dataset, split=args.split,
-        progressive=args.progressive, out_dir=out_dir,
+        progressive=args.progressive, smoke=args.smoke, out_dir=out_dir,
         qa_model=args.execution_model, judge_model=args.judge_model,
         stages=json.loads(args.stages) if args.stages else None,
         single_stage=json.loads(args.single_stage) if args.single_stage else None,
@@ -130,6 +130,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--max-sample-concurrent", type=int, default=3)
     p.add_argument("--max-logs", type=int, default=None)
     p.add_argument("--progressive", action=argparse.BooleanOptionalAction, default=True)
+    p.add_argument("--smoke", action=argparse.BooleanOptionalAction, default=False,
+                   help="ONE sanity_check-sized pass (artifacts at the out_dir root, "
+                        "no gauntlet, no memory cache) — the pre-eval crash gate.")
     p.add_argument("--random-sample", action=argparse.BooleanOptionalAction, default=False)
     p.add_argument("--sampling-seed", type=int, default=42)
     p.add_argument("--step-index", type=int, default=0)

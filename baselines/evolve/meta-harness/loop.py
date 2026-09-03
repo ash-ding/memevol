@@ -1,9 +1,10 @@
 """The Meta-Harness outer search loop.
 
 Per iteration: a coding agent inspects the run's filesystem — prior harness
-code, scores, and execution traces — and writes new candidates; the loop
-import-checks them, scores each through the shared evaluator, and appends the
-results back into that same filesystem. No parent selection, no compressed
+code, scores, and execution traces — and writes new candidates; the loop puts
+each through two cheap gates (import, then a sanity-sized pass), scores the
+survivors through the shared evaluator, and appends every outcome — rejections
+included — back into that same filesystem. No parent selection, no compressed
 feedback: the proposer decides what to read and what to change.
 
 Evolution runs on the SEARCH split only. `--status test` finalizes a named run
@@ -27,6 +28,11 @@ from state import RunPaths
 BASELINE_ROOT = Path(__file__).resolve().parent
 PROPOSER_SYSTEM = BASELINE_ROOT / "prompts" / "proposer_system.md"
 BASELINE_HARNESSES = ("no_memory.py", "full_context.py")
+
+# Wall-clock cap for the sanity gate. Deliberately NOT `eval_timeout`: a sanity
+# pass is a handful of QAs, so a candidate still running after this is hung, and
+# waiting out a 14-hour eval budget to learn that would defeat the gate.
+SANITY_TIMEOUT_S = 30 * 60
 
 _interrupted = False
 
@@ -113,18 +119,67 @@ def _read_pending(paths: RunPaths, known: set) -> List[Dict[str, Any]]:
     return candidates
 
 
-def _validate(candidates: List[Dict[str, Any]], paths: RunPaths) -> List[Dict[str, Any]]:
-    """Import-check each candidate in a throwaway process."""
-    valid = []
+def _reject(paths: RunPaths, iteration: int, candidate: Dict[str, Any],
+            gate: str, error: str) -> None:
+    """Record a candidate that never earned a full evaluation.
+
+    Rejections go into evolution_summary.jsonl like any other row (eliminated,
+    so the frontier ignores them) rather than being dropped: the proposer's only
+    feedback channel is this filesystem, and "the code you wrote does not run"
+    is exactly the kind of thing it needs to read next iteration.
+    """
+    _log(f"  FAIL {candidate['name']} [{gate}]: {error.splitlines()[-1][:160]}")
+    state.append_row(paths, state.summary_row(
+        iteration=iteration, system=candidate["name"], candidate=candidate,
+        metrics={"raw_score": 0.0, "score_max": 1, "eliminated": True,
+                 "error": f"{gate}: {error}"},
+    ))
+
+
+def _import_gate(candidates: List[Dict[str, Any]], paths: RunPaths,
+                 iteration: int) -> List[Dict[str, Any]]:
+    """Gate 1 — does the candidate import and expose a MemoClass?"""
+    passed = []
     for candidate in candidates:
         error = evaluator.import_check(paths.harnesses / f"{candidate['name']}.py")
         if error is None:
-            _log(f"  OK   {candidate['name']}")
-            valid.append(candidate)
+            passed.append(candidate)
         else:
-            _log(f"  FAIL {candidate['name']}: {error.splitlines()[-1][:160]}")
-            candidate["import_error"] = error
-    return valid
+            _reject(paths, iteration, candidate, "import", error)
+    return passed
+
+
+async def _sanity_gate(candidates: List[Dict[str, Any]], paths: RunPaths,
+                       cfg: Dict[str, Any], iteration: int) -> List[Dict[str, Any]]:
+    """Gate 2 — ONE sanity_check-sized pass before a candidate earns a real one.
+
+    Importing cleanly says nothing about surviving contact with real data. This
+    is upstream's terminal-bench `smoke_test` and forge's sanity gate: the cost
+    of finding out is one tiny pass instead of a full stage1, and it is what
+    makes the `sanity_check` block in the `stages` config do something.
+    """
+    semaphore = asyncio.Semaphore(int(cfg["max_eval_concurrent"]))
+
+    async def one(candidate: Dict[str, Any]) -> tuple:
+        async with semaphore:
+            name = candidate["name"]
+            run_dir = paths.evals / name / "sanity"
+            await evaluator.evaluate_candidate(
+                name=name, harness_file=paths.harnesses / f"{name}.py",
+                out_dir=run_dir, dataset=cfg["dataset"], split="search",
+                cfg=cfg, step_index=iteration, smoke=True,
+                timeout_s=SANITY_TIMEOUT_S,
+            )
+            return candidate, evaluator.sanity_errors(run_dir)
+
+    passed = []
+    for candidate, error in await asyncio.gather(*(one(c) for c in candidates)):
+        if error is None:
+            _log(f"  OK   {candidate['name']}")
+            passed.append(candidate)
+        else:
+            _reject(paths, iteration, candidate, "sanity", error)
+    return passed
 
 
 async def _evaluate_all(
@@ -196,9 +251,15 @@ async def _run_iteration(paths: RunPaths, cfg: Dict[str, Any], iteration: int,
     if not result.ok:
         _log(f"  proposer failed: {result.stderr.strip()[-300:]}")
 
-    candidates = _validate(_read_pending(paths, known), paths)
+    registered = _read_pending(paths, known)
+    if registered:
+        _log(f"  gating {len(registered)} candidate(s): import, then sanity")
+    candidates = await _sanity_gate(
+        _import_gate(registered, paths, iteration), paths, cfg, iteration
+    )
     if not candidates:
-        _log("  no valid candidates — skipping to the next iteration")
+        state.rebuild_frontier(paths)   # rejections are rows too
+        _log("  no candidate survived the gates — skipping to the next iteration")
         return
 
     results = await _evaluate_all(
