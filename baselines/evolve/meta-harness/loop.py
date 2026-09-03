@@ -25,7 +25,7 @@ import state
 from state import RunPaths
 
 BASELINE_ROOT = Path(__file__).resolve().parent
-SKILL_PATH = BASELINE_ROOT / "prompts" / "SKILL.md"
+PROPOSER_SYSTEM = BASELINE_ROOT / "prompts" / "proposer_system.md"
 BASELINE_HARNESSES = ("no_memory.py", "full_context.py")
 
 _interrupted = False
@@ -185,7 +185,7 @@ async def _run_iteration(paths: RunPaths, cfg: Dict[str, Any], iteration: int,
     started = time.time()
     result = await proposer.propose(
         agent=cfg["agent"], model=cfg["agent_model"],
-        system_prompt=SKILL_PATH.read_text(encoding="utf-8"),
+        system_prompt=PROPOSER_SYSTEM.read_text(encoding="utf-8"),
         task=_task_prompt(paths, cfg, iteration),
         cwd=BASELINE_ROOT, log_dir=paths.proposer_logs, name=f"iter{iteration}",
         timeout_s=int(cfg["propose_timeout"]), effort=cfg["agent_effort"],

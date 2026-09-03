@@ -298,6 +298,48 @@ def test_task_prompt_names_the_run_paths_the_proposer_must_use():
             assert str(path) in prompt
 
 
+# ---- the proposer prior ----
+
+def test_proposer_prior_is_a_plain_system_prompt_both_agents_can_read():
+    import loop
+
+    text = loop.PROPOSER_SYSTEM.read_text(encoding="utf-8")
+    assert loop.PROPOSER_SYSTEM.name == "proposer_system.md"
+    # Not a Claude Code skill: codex receives the identical bytes, so skill
+    # frontmatter would just be junk shipped to the model.
+    assert not text.startswith("---"), "skill frontmatter must not come back"
+
+
+def test_proposer_prior_forbids_the_runtime_cheat_paths():
+    """Nothing sandboxes this proposer, so the prompt is the only thing standing
+    between a candidate and the gold answers. Guard the rule's presence."""
+    import loop
+
+    text = loop.PROPOSER_SYSTEM.read_text(encoding="utf-8")
+    for gold in ("task_packs.json", "locomo10.json", "longmemeval_"):
+        assert gold in text, f"prior must name {gold} as off-limits at eval time"
+    assert "Never mention benchmark or dataset names" in text
+
+
+def test_proposer_prior_routes_llm_calls_through_common_llm():
+    import loop
+
+    text = loop.PROPOSER_SYSTEM.read_text(encoding="utf-8")
+    assert "common.llm.Agent" in text and "common.llm.Embedding" in text
+    # The load-bearing half: a raw client bypasses token accounting silently.
+    assert "import openai" in text and "max_retries" in text
+
+
+def test_proposer_prior_does_not_name_this_repo_harness_baselines():
+    """Pointing the proposer at the systems it is being compared against would
+    contaminate the comparison. Upstream names methods outside its own set."""
+    import loop
+
+    text = loop.PROPOSER_SYSTEM.read_text(encoding="utf-8")
+    for baseline in ("Mem0", "A-Mem", "HippoRAG", "Zep", "LightMem", "SimpleMem"):
+        assert baseline not in text, f"prior must not name the {baseline} baseline"
+
+
 # ---- baseline harnesses ----
 
 def test_baseline_harnesses_load_as_memoclass_subclasses():

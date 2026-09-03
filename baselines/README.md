@@ -875,8 +875,11 @@ convention set above, concretely:
    patterns to mirror (by copying, not importing).
    [evolve/meta-harness/](evolve/meta-harness/) is the same skeleton with an
    AGENTIC proposer: `proposer.py` drives the `claude` or `codex` CLI as a
-   stream-json subprocess, and `state.py` shows a run whose test split is
-   locked behind an explicit finalization step.
+   stream-json subprocess, `prompts/proposer_system.md` is the agent-neutral
+   prior both backends receive, and `state.py` shows a run whose test split is
+   locked behind an explicit finalization step. Note what it does NOT have:
+   forge's container. Its gold-data rule is a prompt instruction, not an
+   enforced bind list.
 
 ## Shared foundation
 

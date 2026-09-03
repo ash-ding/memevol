@@ -83,7 +83,7 @@ proposer.py       coding-agent driver: claude_code | codex, plus session logging
 evaluator.py      one launch.py subprocess per candidate + import checking
 launch.py         subprocess entry: load the MemoClass, call evaluate_memo
 state.py          evolution_summary / Pareto frontier / finalization lock
-prompts/SKILL.md  the proposer prior (upstream's skill, adapted to MemoClass)
+prompts/          proposer_system.md — the proposer prior (system prompt)
 harnesses/        kept baselines + the proposer's write target
 logs/<run>/       per-run search filesystem (gitignored)
 results/<ds>/test/  held-out artifacts (gitignored)
@@ -124,6 +124,16 @@ differs (a plain subprocess here). So `score` sits on the same 0-1 axis as any
 forge-evolved harness's `accuracy_<dataset>`, and the reported number is the
 `--status test` score.
 
+**The gold-data rule is honor-system.** forge runs its proposer inside a
+Singularity sandbox whose bind list makes the raw benchmark files unreachable
+at eval time. This proposer runs on the host with `bypassPermissions` /
+`danger-full-access` and its cwd inside the repo, so
+`benchmarks/dynamicmem/user_data/*/task_packs.json` (golden states),
+`locomo10.json` and `longmemeval_*.json` are all readable. The proposer prior
+forbids opening them at eval time and nothing else enforces it — upstream is
+unsandboxed too. If a candidate's score jumps implausibly, read its source
+before believing it.
+
 **Split discipline.** Evolution only ever evaluates on `split: search`. The
 test split is touched exactly once per run, by `--status test`, which writes
 `finalized.json` before it starts and refuses to run twice; `--status search`
@@ -139,7 +149,7 @@ What is upstream's, and what changed to fit this repo:
 |---|---|---|
 | proposer | coding agent with full filesystem access to prior code, scores, traces | same |
 | feedback | raw artifacts, no compressed summaries, no parent selection | same |
-| proposer prior | `.claude/skills/meta-harness/SKILL.md`, injected as system prompt | `prompts/SKILL.md`, same role and structure, rewritten for the `MemoClass` contract and the three benchmark shapes |
+| proposer prior | `.claude/skills/meta-harness/SKILL.md`, read whole and injected as the system prompt | `prompts/proposer_system.md`, injected the same way. Same section order; the CONTENT is a rewrite for the `MemoClass` contract — in particular the six rotation axes are mine (ingestion / representation / write policy / retrieval / ranking / rendering), not upstream's classifier-oriented ones. Not a Claude Code skill: `codex` reads the identical file, so it carries no skill frontmatter |
 | handoff | `pending_eval.json` written by the agent | same |
 | candidate artifact | a `MemorySystem` with `predict` / `learn_from_batch` | a `MemoClass` with `build_memory_from_data` / `retrieve_memory_for_query` — this repo's contract |
 | candidate dir | `agents/` | `harnesses/` |

@@ -1,8 +1,3 @@
----
-name: meta-harness
-description: Run one iteration of memory-harness evolution for the memevol benchmark suite.
----
-
 # Meta-Harness (memory-harness evolution)
 
 Run ONE iteration of harness evolution. Do all the work in this session — do
@@ -44,8 +39,10 @@ or regress.
 constants, rewrite with a genuinely new mechanism.
 
 **Combining is valid.** Take the write policy of one system and the retrieval
-of another, or draw on published designs (Mem0, A-Mem, HippoRAG, Zep, MemGPT,
-LightMem, ...) — as mechanisms to adapt, not as libraries to import.
+of another, or adapt a published mechanism from the retrieval and memory
+literature (query rewriting and decomposition, reciprocal-rank fusion, MMR
+diversity, temporal decay, hierarchical summarization, cross-encoder rerank)
+— as mechanisms to implement, not as libraries to import.
 
 Axes to rotate over: A=ingestion granularity, B=memory representation,
 C=write/update policy, D=retrieval algorithm, E=ranking & budget,
@@ -56,10 +53,30 @@ one axis, pick different ones.
 
 - **No dataset-specific hints.** Do not hardcode knowledge of particular
   users, conversations, questions or answers. Harnesses must be general.
-- **Never special-case the evaluation.** No reading gold fields off the
-  recorder, no reaching outside the harness file for answers.
+- **Never mention benchmark or dataset names** in harness code, prompts, or
+  comments. A harness dispatches on the SHAPE of `recorder.init`, never on
+  which benchmark it thinks it is running against.
 - General strategies ("prefer the most recent statement about a fact",
   "keep evidence ids with every stored unit") are fine — they transfer.
+
+### The raw dataset files are OFF-LIMITS at eval time
+
+A harness may only ever read what arrives on `recorder.init`. It must **never**
+open a benchmark file from disk while it runs. These hold the golden states and
+reference answers, and a harness that reads them is not doing retrieval, it is
+cheating — the resulting score is void:
+
+- `benchmarks/dynamicmem/user_data/*/task_packs.json` — golden states and
+  reference outputs (also `app_log_large.json`)
+- `benchmarks/locomo/locomo10.json`
+- `benchmarks/longmemeval/longmemeval_*.json`
+
+Reading them **now, while you propose**, to understand realistic data shapes is
+fine — that is reference use, and the traces under `evals/` are usually better
+for it anyway. Writing a harness that opens them at eval time is not. The same
+goes for anything else outside the harness file that carries answers: no
+network fetches for gold data, no reaching into another run's `score.json`.
+Nothing enforces this but you.
 
 ## WORKFLOW
 
@@ -181,10 +198,27 @@ The return dict is rendered into the QA prompt. `{"inline_memory_blocks":
 [str, ...]}` renders each block verbatim; any other shape is serialized as one
 JSON block. `{"passages": [...]}` is the safe generic choice.
 
-**You may call an LLM or an embedder from a harness** via
-`common.llm.Agent` / `common.llm.Embedding` — their tokens are tracked and
-show up as the candidate's cost. Everything the memevol project environment
-installs is importable; do not add dependencies.
+**You may call an LLM or an embedder from a harness**, but only through
+`common.llm.Agent` / `common.llm.Embedding`. They auto-track tokens into the
+candidate's cost; a raw `import openai` (or `anthropic`, or `httpx` against an
+API) does NOT, and silently reports your harness as far cheaper than it is —
+which corrupts the context-cost axis the frontier is built on. Both take an
+ambient concurrency gate, so fan out `await agent.ask(...)` freely without your
+own throttling:
+
+```python
+from common.llm import Agent, Embedding
+
+agent = Agent(system_prompt="...", model="gpt-5-mini")   # optional output_schema=
+answer = await agent.ask("...")
+```
+
+Do not set `max_retries` below its default of 5 — the API jitters under
+concurrency, and a lower value silently drops extraction work, leaving memory
+incomplete and the score unexplainably low.
+
+Everything the project environment installs is importable; do not add
+dependencies.
 
 ## `recorder.init` shapes
 
