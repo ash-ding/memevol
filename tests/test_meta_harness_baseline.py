@@ -330,6 +330,25 @@ def test_proposer_prior_routes_llm_calls_through_common_llm():
     assert "import openai" in text and "max_retries" in text
 
 
+def test_proposer_prior_fences_off_the_search_loop():
+    """Appendix D lists "what files it can and cannot modify" as core skill
+    content, and the proposer runs unsandboxed with write access to all of it."""
+    import loop
+
+    text = loop.PROPOSER_SYSTEM.read_text(encoding="utf-8")
+    assert "can and cannot modify" in text
+    for owned in ("loop.py", "evaluator.py", "state.py", "run.py"):
+        assert owned in text, f"prior must fence off {owned}"
+
+
+def test_effort_defaults_to_the_papers_setting_per_agent():
+    """Paper 4.1 runs the proposer at max reasoning; codex tops out at high."""
+    from proposer import DEFAULT_EFFORT
+
+    assert DEFAULT_EFFORT["claude_code"] == "max"
+    assert DEFAULT_EFFORT["codex"] == "high"
+
+
 def test_proposer_prior_does_not_name_this_repo_harness_baselines():
     """Pointing the proposer at the systems it is being compared against would
     contaminate the comparison. Upstream names methods outside its own set."""

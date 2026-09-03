@@ -50,7 +50,7 @@ DEFAULT_CONFIG = {
     # --- proposer (the coding agent that writes harnesses) ---
     "agent": "claude_code",         # claude_code | codex
     "agent_model": "opus",
-    "agent_effort": "high",         # claude: --effort; codex: model_reasoning_effort
+    "agent_effort": None,      # null = paper default per agent (see proposer.DEFAULT_EFFORT)
     "agent_auth": "subscription",   # subscription | api_key (claude_code only)
     "propose_timeout": 2400,
     # --- evaluation (shared evaluator, same knobs as alma) ---

@@ -26,7 +26,7 @@ skip_baselines: false
 
 agent: claude_code       # unused when status: test (no proposal happens)
 agent_model: opus
-agent_effort: high
+agent_effort: null
 agent_auth: subscription
 propose_timeout: 2400
 

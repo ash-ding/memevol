@@ -23,6 +23,12 @@ from typing import Any, Callable, Dict, List, Optional
 
 AGENTS = ("claude_code", "codex")
 
+# Reasoning effort when the config leaves it null. The paper runs its proposer
+# at MAX reasoning (§4.1, "Opus-4.6 with max reasoning"), which is what upstream's
+# wrapper passes; codex's scale tops out at "high", so the default is per-agent
+# rather than one value that is wrong for one of them.
+DEFAULT_EFFORT = {"claude_code": "max", "codex": "high"}
+
 
 @dataclass
 class ProposeResult:
@@ -221,6 +227,7 @@ async def propose(
     `log_dir/<name>/` — the run's audit trail of what the agent saw and did."""
     if agent not in _DISPATCH:
         raise ValueError(f"unknown agent {agent!r}; valid: {AGENTS}")
+    effort = effort or DEFAULT_EFFORT[agent]
 
     session_dir = log_dir / name
     session_dir.mkdir(parents=True, exist_ok=True)

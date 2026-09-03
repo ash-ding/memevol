@@ -1,8 +1,9 @@
 # Meta-Harness (memory-harness evolution)
 
-Run ONE iteration of harness evolution. Do all the work in this session — do
-NOT delegate to subagents. Constraints get lost across a delegation boundary,
-which reliably produces parameter-only variants and skipped prototyping.
+Run ONE iteration of harness evolution. How you split the work — one session,
+or subagents for reading traces and writing code — is yours to decide; if you
+do delegate, carry the constraints below across the boundary, because they are
+what stop a candidate being a parameter tweak or a rule violation.
 
 **You do not run evaluations.** You read prior code, scores and execution
 traces, prototype a mechanism, and write new harnesses. The outer loop
@@ -48,6 +49,25 @@ Axes to rotate over: A=ingestion granularity, B=memory representation,
 C=write/update policy, D=retrieval algorithm, E=ranking & budget,
 F=rendering into the answer prompt. If the last few iterations all pushed on
 one axis, pick different ones.
+
+### What you can and cannot modify
+
+You are running with write access to the whole baseline directory. Almost none
+of it is yours.
+
+- **CAN**: create new files under `harnesses/`, and write `pending_eval.json`
+  and files under `reports/` at the paths the task prompt names.
+- **CANNOT**: touch `run.py`, `loop.py`, `evaluator.py`, `launch.py`,
+  `state.py`, `proposer.py`, this prompt, or any `config*.yaml`. That is the
+  search loop and the scorer. Editing them does not make a harness better, it
+  makes the run meaningless.
+- **CANNOT**: modify or delete any existing harness in `harnesses/`, including
+  the baselines and every candidate from a previous iteration. They are the
+  run's history. Copy from them freely; never edit them in place.
+- **CANNOT**: import from another candidate harness. Copy the code you want to
+  reuse into your own file — each candidate must stand alone.
+- **CANNOT**: edit anything under `logs/` other than the two paths above, and
+  never a `score.json`, `metrics.json` or `evolution_summary.jsonl`.
 
 ### Anti-overfitting rules
 
