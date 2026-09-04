@@ -10,6 +10,7 @@ CLI is also closer to what coding agents are trained on than walking a tree.
     uv run python history.py top -k 10           # ranked by score
     uv run python history.py show <name>         # one harness: row, paths, code
     uv run python history.py diff <a> <b>        # code + results, side by side
+    uv run python history.py cost                # what the SEARCH itself cost
 
 `--run <name>` picks the run; without it, the most recently modified one under
 logs/ is used.
@@ -118,6 +119,35 @@ def cmd_diff(paths: RunPaths, args) -> None:
     print(body if body else "  (identical)")
 
 
+def cmd_cost(paths: RunPaths, _args) -> None:
+    """What the search itself cost. Proposer tokens never pass through
+    `common.llm`, so they are absent from the evaluator's token_usage.json --
+    this is the only place they are totalled."""
+    rows = state.read_proposer_usage(paths)
+    if not rows:
+        raise SystemExit(f"no proposer sessions recorded for run {paths.run_name!r}")
+
+    print(f"proposer sessions in run {paths.run_name}:")
+    for row in rows:
+        print(f"  iter {row['iteration']:>3}  {row['agent']}/{row['model']}"
+              f"  {row['input_tokens']:>12,} in  {row['output_tokens']:>8,} out"
+              f"  {row['duration_s']:>7.0f}s  tools {row['tool_calls']:>3}"
+              + (f"  ${row['cost_usd']:.4f}" if row["cost_usd"] else "")
+              + ("" if row["exit_code"] == 0 else f"  [exit {row['exit_code']}]"))
+
+    total = state.proposer_usage_total(paths)
+    print(f"\ntotal: {total['sessions']} session(s)"
+          f"  {total['input_tokens']:,} in  {total['output_tokens']:,} out"
+          f"  {total['duration_s']:.0f}s"
+          + (f"  ${total['cost_usd']:.2f}" if total["cost_usd"] else ""))
+    if total["cached_input_tokens"] or total["cache_read_input_tokens"]:
+        cached = total["cached_input_tokens"] + total["cache_read_input_tokens"]
+        print(f"  of which cached reads: {cached:,} "
+              f"({cached / max(total['input_tokens'], 1):.0%} of input)")
+    print("\nNot in the evaluator's token_usage.json: the proposer is a CLI "
+          "subprocess,\nso its tokens never reach common.tokens.")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description="Query a meta-harness run's history.")
     p.add_argument("--run", default=None, help="run name (default: most recent under logs/)")
@@ -137,6 +167,8 @@ def main() -> None:
     diff.add_argument("a")
     diff.add_argument("b")
     diff.set_defaults(fn=cmd_diff)
+
+    sub.add_parser("cost", help="what the search itself cost").set_defaults(fn=cmd_cost)
 
     args = p.parse_args()
     args.fn(_resolve_run(args.run), args)

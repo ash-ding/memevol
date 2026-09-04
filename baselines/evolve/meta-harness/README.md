@@ -91,8 +91,8 @@ launch.py         subprocess entry: load the MemoClass, call evaluate_memo
 state.py          evolution_summary / Pareto frontier / finalization lock
 history.py        CLI over a run's history: frontier / top / show / diff
 prompts/          proposer_system.md — the proposer prior (system prompt)
-harnesses/        kept baselines + the proposer's write target
-logs/<run>/       per-run search filesystem (gitignored)
+harnesses/        the two tracked baselines, seeded into every run
+logs/<run>/       per-run search filesystem, candidates included (gitignored)
 results/<ds>/test/  held-out artifacts (gitignored)
 ```
 
@@ -105,8 +105,15 @@ Per run, under `logs/<run_name>/`:
 | `evals/<system>/` | `score.json`, `metrics.json`, `stages.json`, `traces/<user>.json` |
 | `evals/<system>/sanity/` | the pre-eval sanity pass — the first place to look when a candidate was rejected |
 | `proposer/iter<N>/` | the agent session: `system_prompt.txt`, `task_prompt.txt`, `events.jsonl`, `response.md`, `meta.json` |
+| `harnesses/` | this run's harnesses: the seeded baselines plus every candidate |
+| `proposer_usage.jsonl` | one row per proposer session: tokens, duration, cost |
 | `reports/` | proposer-written post-eval notes |
 | `finalized.json` | the test-split lock |
+
+**Harnesses are per run.** Candidates live in `logs/<run>/harnesses/`, not in a
+shared directory, so concurrent or repeated runs never see each other's code and
+`--fresh` on one run cannot delete another's. The tracked `harnesses/` at the
+baseline root holds only the two baselines, copied into each run at start.
 
 `evals/` is the point of the design: it is what the proposer reads, and the
 traces are the highest-signal artifact in it.
@@ -121,6 +128,7 @@ uv run python history.py frontier          # Pareto front + best
 uv run python history.py top -k 10         # ranked by score
 uv run python history.py show <name>       # one harness: row, paths, artifacts
 uv run python history.py diff <a> <b>      # results + code diff
+uv run python history.py cost              # what the SEARCH itself cost
 ```
 
 `--run <name>` picks the run; without it the most recent under `logs/` is used.
@@ -194,7 +202,29 @@ Two adaptations worth calling out:
   with forge's; `progressive: false` with a `single_stage` block reproduces
   upstream's flat behavior.
 
-**Proposer spend is not tracked.** Tokens the proposer burns are reported by
+### Search cost
+
+Proposer tokens do not pass through `common.llm`, so they cannot reach
+`common.tokens` — the proposer is a CLI subprocess, and forge's containerized
+proposer has the same boundary. Both CLIs do report usage on their own event
+stream, so the numbers exist; `logs/<run>/proposer_usage.jsonl` keeps one row
+per session and `history.py cost` totals them:
+
+```
+proposer sessions in run smoke3:
+  iter   1  codex/(cli default)     795,508 in   13,202 out   340s  tools 35
+  iter   2  codex/(cli default)   2,319,397 in   21,338 out   576s  tools 49
+  iter   3  codex/(cli default)     731,413 in   11,529 out   281s  tools 31
+
+total: 3 session(s)  3,846,318 in  46,069 out  1197s
+  of which cached reads: 3,569,920 (93% of input)
+```
+
+Read that beside `results/<dataset>/test/<system>/token_usage.json`, which
+covers evaluation only. The two are separate meters by construction, not an
+oversight — but the search side is the larger one, so report both.
+
+**Proposer spend is not billed through this repo.** Tokens the proposer burns are reported by
 the agent CLI in `proposer/iter<N>/meta.json` and are **not** part of
 `common.tokens` accounting — the same boundary forge's containerized proposer
 has. This is the most expensive part of a run: the paper puts one Meta-Harness

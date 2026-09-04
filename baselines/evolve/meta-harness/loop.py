@@ -27,8 +27,6 @@ from state import RunPaths
 
 BASELINE_ROOT = Path(__file__).resolve().parent
 PROPOSER_SYSTEM = BASELINE_ROOT / "prompts" / "proposer_system.md"
-BASELINE_HARNESSES = ("no_memory.py", "full_context.py")
-
 # Wall-clock cap for the sanity gate. Deliberately NOT `eval_timeout`: a sanity
 # pass is a handful of QAs, so a candidate still running after this is hung, and
 # waiting out a 14-hour eval budget to learn that would defeat the gate.
@@ -80,15 +78,19 @@ Propose {cfg['n_candidates']} new harnesses this iteration.
 
 ## Where everything is
 
-Your working directory is the baseline root. Read anything under it.
+This run owns its own directory; other runs are none of your business.
 
+- `{paths.harnesses}/` — **every harness's source, and where your new ones go.**
+  This run's directory, not a shared one — read and copy from it freely.
 - `{paths.summary}` — every candidate evaluated so far
 - `{paths.frontier}` — best + Pareto front
 - `{paths.evals}/<system>/` — per-candidate artifacts:
   `score.json`, `metrics.json`, `stages.json`, `traces/<user>.json`
-- `{paths.reports}/` — post-eval reports (write the missing ones)
-- `harnesses/` — every harness's source; write your new ones here
+- `{paths.reports}/` — your notes, if you want them
 - Write `pending_eval.json` to: `{paths.pending}`
+
+Query it with `uv run python history.py --run {paths.run_name} <frontier|top|show|diff>`
+from `{BASELINE_ROOT}` (also your working directory).
 """
 
 
@@ -217,12 +219,29 @@ async def _evaluate_all(
 # phases
 # --------------------------------------------------------------------------
 
-async def _run_baselines(paths: RunPaths, cfg: Dict[str, Any]) -> None:
-    names = [n for n in cfg["baselines"] if (paths.harnesses / f"{n}.py").exists()]
-    missing = sorted(set(cfg["baselines"]) - set(names))
+def _seed_baselines(paths: RunPaths, cfg: Dict[str, Any]) -> None:
+    """Copy the tracked baseline harnesses into this run's own harness dir.
+
+    Every run gets its own copy so runs never share a directory: candidates from
+    one run are invisible to another, and `--fresh` cannot delete a sibling
+    run's work."""
+    import shutil
+
+    missing = []
+    for name in cfg["baselines"]:
+        src = paths.seed_harnesses / f"{name}.py"
+        if not src.exists():
+            missing.append(str(src))
+            continue
+        dst = paths.harnesses / f"{name}.py"
+        if not dst.exists():
+            shutil.copy2(src, dst)
     if missing:
         raise FileNotFoundError(f"baseline harness file(s) not found: {missing}")
 
+
+async def _run_baselines(paths: RunPaths, cfg: Dict[str, Any]) -> None:
+    names = list(cfg["baselines"])
     _log(f"phase 0: baselines {names}")
     results = await _evaluate_all(
         names=names, paths=paths, cfg=cfg, split="search",
@@ -252,8 +271,12 @@ async def _run_iteration(paths: RunPaths, cfg: Dict[str, Any], iteration: int,
         timeout_s=int(cfg["propose_timeout"]), effort=cfg["agent_effort"],
         auth=cfg["agent_auth"],
     )
+    usage = state.record_proposer_usage(
+        paths, iteration, cfg["agent"], cfg["agent_model"], result)
     _log(f"  proposer finished in {_elapsed(time.time() - started)} "
-         f"(exit={result.exit_code}, {len(result.tools)} tool calls)")
+         f"(exit={result.exit_code}, {len(result.tools)} tool calls, "
+         f"{usage['input_tokens']:,} in / {usage['output_tokens']:,} out"
+         + (f", ${usage['cost_usd']:.4f}" if usage["cost_usd"] else "") + ")")
     if not result.ok:
         # The reason usually arrives on the agent's event stream, not stderr.
         _log(f"  proposer FAILED: {result.failure}")
@@ -299,6 +322,7 @@ async def evolve(paths: RunPaths, cfg: Dict[str, Any]) -> None:
     _log(f"meta-harness evolution  run={paths.run_name}  dataset={cfg['dataset']}  "
          f"agent={cfg['agent']}/{cfg['agent_model']}  iterations={cfg['iterations']}")
 
+    _seed_baselines(paths, cfg)
     known = {row["system"] for row in state.read_rows(paths)}
     if not cfg["skip_baselines"]:
         await _run_baselines(paths, cfg)
@@ -325,6 +349,12 @@ async def evolve(paths: RunPaths, cfg: Dict[str, Any]) -> None:
         _log(f"evolution complete — best {best['system']} at {best['score']:.3f}")
     else:
         _log("evolution complete — nothing scored")
+    total = state.proposer_usage_total(paths)
+    if total["sessions"]:
+        _log(f"search cost: {total['sessions']} proposer session(s), "
+             f"{total['input_tokens']:,} in / {total['output_tokens']:,} out"
+             + (f", ${total['cost_usd']:.2f}" if total["cost_usd"] else "")
+             + f" ({paths.proposer_usage.name})")
     _log(f"finalize once with: uv run python run.py --config <cfg> "
          f"--status test --run-name {paths.run_name}")
 
@@ -363,15 +393,13 @@ async def finalize(paths: RunPaths, cfg: Dict[str, Any]) -> None:
 
 
 def fresh_start(paths: RunPaths) -> None:
-    """Delete this run's logs and every proposer-written harness."""
+    """Delete this run. Harnesses live inside it, so nothing else is touched —
+    a sibling run's candidates are unreachable from here by construction."""
     import shutil
 
-    candidates = [f for f in paths.harnesses.glob("*.py") if f.name not in BASELINE_HARNESSES]
-    for path in candidates:
-        path.unlink()
     if paths.logs.exists():
         shutil.rmtree(paths.logs)
-    _log(f"fresh start: cleared {len(candidates)} candidate file(s) and {paths.logs}")
+    _log(f"fresh start: removed {paths.logs}")
 
 
 async def main(cfg: Dict[str, Any], run_name: str, fresh: bool) -> None:

@@ -227,6 +227,99 @@ def test_frontier_keeps_the_pareto_front_and_drops_eliminated_rows():
         assert state.best_score(paths) == 0.60
 
 
+def test_harness_dirs_are_per_run_so_runs_cannot_collide():
+    """A shared candidate directory let one run see -- and --fresh delete --
+    another run's harnesses, and made cross-run name collisions possible."""
+    import loop
+    from state import RunPaths
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        a, b = RunPaths(root=root, run_name="a"), RunPaths(root=root, run_name="b")
+        assert a.harnesses != b.harnesses
+        assert a.harnesses.is_relative_to(a.logs)
+        # The tracked baselines live outside any run and seed all of them.
+        assert a.seed_harnesses == b.seed_harnesses == root / "harnesses"
+
+        a.mkdirs(); b.mkdirs()
+        a.seed_harnesses.mkdir(parents=True, exist_ok=True)
+        for name in ("no_memory", "full_context"):
+            (a.seed_harnesses / f"{name}.py").write_text("x = 1", encoding="utf-8")
+
+        cfg = {"baselines": ["no_memory", "full_context"]}
+        loop._seed_baselines(a, cfg)
+        assert {f.name for f in a.harnesses.glob("*.py")} == {"no_memory.py", "full_context.py"}
+
+        # A candidate in run a is invisible to run b, and --fresh on b spares it.
+        (a.harnesses / "candidate.py").write_text("x = 2", encoding="utf-8")
+        loop.fresh_start(b)
+        assert (a.harnesses / "candidate.py").exists()
+        assert not b.logs.exists()
+
+
+def test_seed_baselines_names_a_missing_baseline():
+    import loop
+    from state import RunPaths
+
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = RunPaths(root=Path(tmp), run_name="r"); paths.mkdirs()
+        paths.seed_harnesses.mkdir(parents=True, exist_ok=True)
+        try:
+            loop._seed_baselines(paths, {"baselines": ["nope"]})
+        except FileNotFoundError as exc:
+            assert "nope" in str(exc)
+            return
+    raise AssertionError("a missing baseline must abort the run")
+
+
+def test_proposer_usage_is_recorded_because_common_tokens_cannot_see_it():
+    """The proposer is a CLI subprocess, so its tokens never reach
+    common.tokens. Both CLIs report usage on their event stream; this is where
+    it is kept."""
+    import state
+
+    class _Session:
+        def __init__(self, **kw):
+            self.__dict__.update(kw)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = _paths(tmp)
+        state.record_proposer_usage(paths, 1, "codex", None, _Session(
+            usage={"input_tokens": 795508, "cached_input_tokens": 731520,
+                   "output_tokens": 13202, "reasoning_output_tokens": 3325},
+            exit_code=0, duration_s=340.2, tools=["a"] * 35, cost_usd=0.0))
+        state.record_proposer_usage(paths, 2, "claude_code", "opus", _Session(
+            usage={"input_tokens": 1000, "output_tokens": 200,
+                   "cache_read_input_tokens": 900},
+            exit_code=0, duration_s=60.0, tools=[], cost_usd=1.25))
+
+        rows = state.read_proposer_usage(paths)
+        assert [r["iteration"] for r in rows] == [1, 2]
+        assert rows[0]["model"] == "(cli default)"   # null model is recorded honestly
+        assert rows[0]["tool_calls"] == 35
+
+        total = state.proposer_usage_total(paths)
+        assert total["sessions"] == 2
+        assert total["input_tokens"] == 796508 and total["output_tokens"] == 13402
+        assert total["cost_usd"] == 1.25
+        # Cached reads are carried for context, never added on top of input.
+        assert total["cached_input_tokens"] == 731520
+        assert total["cache_read_input_tokens"] == 900
+
+
+def test_frontier_breaks_score_ties_by_the_cheaper_system():
+    import state
+
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = _paths(tmp)
+        for i, (name, cost) in enumerate([("pricey", 1562.0), ("cheap", 1245.2)]):
+            state.append_row(paths, state.summary_row(
+                iteration=i, system=name,
+                metrics={"raw_score": 0.875, "score_max": 1,
+                         "memory_tokens_per_query": cost, "eliminated": False}))
+        assert state.rebuild_frontier(paths)["best"]["system"] == "cheap"
+
+
 def test_summary_row_normalizes_score_against_score_max():
     import state
 

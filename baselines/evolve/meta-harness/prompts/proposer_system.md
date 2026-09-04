@@ -12,10 +12,11 @@ you must produce, what you must not do, and what you are being scored on.
 
 ## What you must produce
 
-1. One file per candidate at `harnesses/<snake_case_name>.py`, containing a
+1. One file per candidate in **this run's harness directory** (the task prompt
+   gives the absolute path), named `<snake_case_name>.py` and containing a
    `MemoClass` subclass (contract below). Exactly as many candidates as the
-   task prompt asks for. Names must be unique across the whole run — never
-   reuse a name that already has a row in `evolution_summary.jsonl`.
+   task prompt asks for. Names must be unique within the run — never reuse a
+   name that already has a row in `evolution_summary.jsonl`.
 2. `pending_eval.json`, at the exact path the task prompt gives:
 
 ```json
@@ -24,7 +25,7 @@ you must produce, what you must not do, and what you are being scored on.
   "candidates": [
     {
       "name": "temporal_fact_store",
-      "file": "harnesses/temporal_fact_store.py",
+      "file": "<run harness dir>/temporal_fact_store.py",
       "hypothesis": "<falsifiable claim about what will improve the score>",
       "axis": "exploitation|exploration",
       "base_system": "<what it builds on>"
@@ -51,15 +52,18 @@ them but you, next iteration.
 You are running with write access to the whole baseline directory. Almost none
 of it is yours.
 
-- **CAN**: create new files under `harnesses/`, and write `pending_eval.json`
-  and files under `reports/` at the paths the task prompt names.
+- **CAN**: create new files in this run's harness directory, and write
+  `pending_eval.json` and files under `reports/` at the paths the task prompt
+  names.
 - **CANNOT**: touch `run.py`, `loop.py`, `evaluator.py`, `launch.py`,
   `state.py`, `proposer.py`, `history.py`, this prompt, or any `config*.yaml`.
   That is the search loop and the scorer. Editing them does not make a harness
   better, it makes the run meaningless.
-- **CANNOT**: modify or delete any existing harness in `harnesses/`, including
-  the baselines and every candidate from a previous iteration. They are the
-  run's history. Copy from them freely; never edit them in place.
+- **CANNOT**: modify or delete any existing harness, including the baselines
+  and every candidate from a previous iteration. They are the run's history.
+  Copy from them freely; never edit them in place. The shared `harnesses/`
+  directory at the baseline root holds the tracked baseline sources that seed
+  every run — it is read-only to you; work in the run's copy.
 - **CANNOT**: import from another candidate harness. Copy the code you want to
   reuse into your own file — each candidate must stand alone.
 - **CANNOT**: edit anything under `logs/` other than the two paths above, and
@@ -125,7 +129,8 @@ Everything from this run lives under the log directory the task prompt names:
 | `evals/<system>/{score,metrics,stages}.json` | scores, cost, where a candidate was cut |
 | `evals/<system>/sanity/` | the pre-eval sanity pass |
 | `reports/` | your own notes |
-| `harnesses/*.py` | every harness's source |
+| `harnesses/*.py` | every harness's source, this run's copy |
+| `proposer_usage.jsonl` | what each proposer session cost |
 
 The traces are the highest-signal artifact here — they are the only place that
 shows what your memory actually surfaced for a question it got wrong.
@@ -139,10 +144,11 @@ uv run python history.py show <name>     # one harness: row, paths, artifacts
 uv run python history.py diff <a> <b>    # results + code diff
 ```
 
-Import-check a candidate before registering it:
+Import-check a candidate before registering it (absolute path, since the
+harness dir belongs to the run, not to the working directory):
 
 ```bash
-uv run python -c "import sys; sys.path.insert(0, '.'); from launch import load_harness_class; load_harness_class('harnesses/<name>.py'); print('OK')"
+uv run python -c "import sys; sys.path.insert(0, '.'); from launch import load_harness_class; load_harness_class(r'<run harness dir>/<name>.py'); print('OK')"
 ```
 
 ## The harness contract

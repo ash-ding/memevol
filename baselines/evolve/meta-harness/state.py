@@ -12,7 +12,9 @@ Layout under `logs/<run_name>/`:
     pending_eval.json         the proposer's handoff for this iteration
     finalized.json            test-evaluation lock
     proposer/<iterN>/         proposer session logs
+    proposer_usage.jsonl      what the SEARCH cost, one row per session
     evals/<system>/           per-candidate eval artifacts (score, traces)
+    harnesses/                this run's harnesses (baselines + candidates)
     reports/                  proposer-written post-eval notes
 """
 
@@ -66,7 +68,21 @@ class RunPaths:
 
     @property
     def harnesses(self) -> Path:
+        """This run's harnesses — baselines seeded in at start, candidates
+        written here. PER RUN on purpose: a shared directory lets one run see
+        (and `--fresh` delete) another run's candidates, and makes a name
+        collision across runs possible while each run's uniqueness check only
+        sees its own summary."""
+        return self.logs / "harnesses"
+
+    @property
+    def seed_harnesses(self) -> Path:
+        """The tracked baseline harnesses, copied into each run at start."""
         return self.root / "harnesses"
+
+    @property
+    def proposer_usage(self) -> Path:
+        return self.logs / "proposer_usage.jsonl"
 
     def test_results(self, dataset: str) -> Path:
         return self.root / "results" / dataset / "test"
@@ -166,7 +182,9 @@ def rebuild_frontier(paths: RunPaths) -> Dict[str, Any]:
          "iteration": r.get("iteration", 0)}
         for r in latest.values()
     ]
-    ranked = sorted(entries, key=lambda e: -e["score"])
+    # Ties on score are broken by the cheaper system: with two equal scores the
+    # one that spends fewer tokens per query is strictly the better harness.
+    ranked = sorted(entries, key=lambda e: (-e["score"], e["context_cost"]))
     frontier = {
         "updated_at": datetime.now().isoformat(timespec="seconds"),
         "best": ranked[0] if ranked else None,
@@ -214,3 +232,70 @@ def mark_finalized(paths: RunPaths, scores: Dict[str, float]) -> None:
     state["completed_at"] = datetime.now().isoformat(timespec="seconds")
     state["test_scores"] = {k: round(v, 4) for k, v in scores.items()}
     paths.finalized.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+
+# --------------------------------------------------------------------------
+# proposer_usage.jsonl — what the SEARCH itself cost
+# --------------------------------------------------------------------------
+# The proposer is a coding-agent CLI, so its tokens never pass through
+# `common.llm` and cannot reach `common.tokens` (forge's containerized proposer
+# has the same boundary). Both CLIs do report usage on their own event stream,
+# though, so the numbers exist — this is where they are kept, per session, next
+# to the evaluation costs they should be read beside. The paper puts one
+# iteration at roughly 10 MTok of proposer context (Table 1), which makes this
+# the larger half of a run's cost.
+
+_TOKEN_FIELDS = (
+    "input_tokens", "output_tokens",
+    "cached_input_tokens", "reasoning_output_tokens",        # codex
+    "cache_creation_input_tokens", "cache_read_input_tokens",  # claude
+)
+
+
+def record_proposer_usage(paths: RunPaths, iteration: int, agent: str,
+                          model: Optional[str], result: Any) -> Dict[str, Any]:
+    """Append one session's usage. Returns the row."""
+    usage = result.usage or {}
+    row: Dict[str, Any] = {
+        "iteration": iteration,
+        "agent": agent,
+        "model": model or "(cli default)",
+        "exit_code": result.exit_code,
+        "duration_s": round(result.duration_s, 1),
+        "tool_calls": len(result.tools),
+        "cost_usd": round(result.cost_usd, 4),
+    }
+    row.update({f: int(usage.get(f, 0) or 0) for f in _TOKEN_FIELDS})
+    paths.proposer_usage.parent.mkdir(parents=True, exist_ok=True)
+    with paths.proposer_usage.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(row) + "\n")
+    return row
+
+
+def read_proposer_usage(paths: RunPaths) -> List[Dict[str, Any]]:
+    if not paths.proposer_usage.exists():
+        return []
+    rows = []
+    for line in paths.proposer_usage.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return rows
+
+
+def proposer_usage_total(paths: RunPaths) -> Dict[str, Any]:
+    """Run totals. `input_tokens` already includes the cached reads both CLIs
+    report separately, so cached counts are carried for context, never added."""
+    rows = read_proposer_usage(paths)
+    total: Dict[str, Any] = {"sessions": len(rows), "cost_usd": 0.0, "duration_s": 0.0}
+    total.update({f: 0 for f in _TOKEN_FIELDS})
+    for row in rows:
+        total["cost_usd"] += float(row.get("cost_usd", 0.0))
+        total["duration_s"] += float(row.get("duration_s", 0.0))
+        for f in _TOKEN_FIELDS:
+            total[f] += int(row.get(f, 0))
+    total["cost_usd"] = round(total["cost_usd"], 4)
+    total["duration_s"] = round(total["duration_s"], 1)
+    return total
