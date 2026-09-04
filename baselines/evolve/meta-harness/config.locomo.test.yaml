@@ -23,6 +23,10 @@ baselines:
   - no_memory
   - full_context
 skip_baselines: false
+finalize_systems: best  # score ONLY the top system, plus the baselines. The
+                        # paper scores the whole Pareto frontier (pareto),
+                        # which is what yields an accuracy/context curve;
+                        # 'best' halves the cost and reports one point.
 
 agent: codex             # unused when status: test (no proposal happens)
 agent_model: gpt-5

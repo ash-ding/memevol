@@ -21,6 +21,7 @@ baselines:
   - no_memory            # floor: no memory at all
   - full_context         # ceiling on cost: stuff the window, no selection
 skip_baselines: false    # true when resuming — phase 0 is already recorded
+finalize_systems: pareto # only read by --status test; listed so strict config passes
 
 # --- proposer ----------------------------------------------------------------
 agent: codex             # codex (`codex` CLI) | claude_code (`claude` CLI)

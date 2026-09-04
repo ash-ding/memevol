@@ -23,6 +23,9 @@ baselines:
   - no_memory
   - full_context
 skip_baselines: false
+finalize_systems: pareto # pareto (the paper's rule: score the whole frontier)
+                         # | best (top system only — cheaper, no trade-off curve).
+                         # Baselines are always scored either way.
 
 agent: claude_code       # unused when status: test (no proposal happens)
 agent_model: opus

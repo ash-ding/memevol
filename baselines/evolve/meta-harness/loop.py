@@ -451,8 +451,17 @@ async def finalize(paths: RunPaths, cfg: Dict[str, Any]) -> None:
                         .get("test_scores", {}), indent=2))
         return
 
-    systems = sorted({e["system"] for e in frontier.get("_pareto", [])} | set(cfg["baselines"]))
-    _log(f"finalizing run={paths.run_name} on the TEST split: {systems}")
+    # The paper evaluates the whole Pareto frontier, which is what reports an
+    # accuracy/context trade-off curve. "best" trades that curve for a cheaper
+    # run: one system plus the baselines it is calibrated against.
+    if cfg["finalize_systems"] == "best":
+        best = frontier.get("best")
+        chosen = {best["system"]} if best else set()
+    else:
+        chosen = {e["system"] for e in frontier.get("_pareto", [])}
+    systems = sorted(chosen | set(cfg["baselines"]))
+    _log(f"finalizing run={paths.run_name} on the TEST split "
+         f"({cfg['finalize_systems']} + baselines): {systems}")
     state.mark_finalizing(paths, systems)
 
     out_root = paths.test_results(cfg["dataset"])

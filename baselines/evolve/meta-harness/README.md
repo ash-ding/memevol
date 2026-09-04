@@ -35,9 +35,11 @@ One iteration:
    error, so the frontier skips them but the proposer sees them). The Pareto
    front over (score up, context cost down) is recomputed.
 
-`--status test` finalizes a named run: one held-out evaluation of the Pareto
-frontier plus the baselines, after which the run is frozen against further
-evolution.
+`--status test` finalizes a named run: one held-out evaluation, after which the
+run is frozen against further evolution. `finalize_systems` picks what gets
+scored — `pareto` (the paper's rule: the whole frontier, which is what yields
+an accuracy/context trade-off curve) or `best` (the top system only, cheaper,
+one point). The baselines are scored either way; they are the calibration.
 
 ## Setup
 

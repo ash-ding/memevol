@@ -22,6 +22,7 @@ baselines:               # kept harnesses in harnesses/, evaluated in phase 0
   - no_memory            #   floor: no memory at all
   - full_context         #   ceiling on cost: stuff the window, no selection
 skip_baselines: false    # true to skip phase 0 when resuming a run
+finalize_systems: pareto # only read by --status test; listed so strict config passes
 
 # --- proposer: the coding agent that reads the run and writes harnesses -------
 agent: claude_code       # claude_code (`claude` CLI) | codex (`codex` CLI)

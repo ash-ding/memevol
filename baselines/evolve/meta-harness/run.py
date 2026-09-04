@@ -47,6 +47,11 @@ DEFAULT_CONFIG = {
     "n_candidates": 3,
     "baselines": ["no_memory", "full_context"],
     "skip_baselines": False,
+    # Which systems --status test scores, ALWAYS alongside the baselines.
+    # "pareto" is the paper's rule (a final test evaluation on the Pareto
+    # frontier); "best" scores only the top-scoring system, which is cheaper
+    # but reports no accuracy/context trade-off curve.
+    "finalize_systems": "pareto",   # pareto | best
     # --- proposer (the coding agent that writes harnesses) ---
     "agent": "claude_code",         # claude_code | codex
     "agent_model": "opus",
@@ -90,6 +95,9 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--iterations", type=int, default=None)
     p.add_argument("--agent", choices=list(AGENTS), default=None)
     p.add_argument("--agent-model", dest="agent_model", default=None)
+    p.add_argument("--finalize-systems", dest="finalize_systems",
+                   choices=["pareto", "best"], default=None,
+                   help="Which systems --status test scores, besides the baselines.")
     p.add_argument("--skip-baselines", dest="skip_baselines",
                    action=argparse.BooleanOptionalAction, default=None,
                    help="Skip the phase-0 baseline evaluations.")
@@ -120,6 +128,9 @@ def build_cfg(args: argparse.Namespace) -> dict:
 
     if cfg["agent"] not in AGENTS:
         raise ValueError(f"unknown agent {cfg['agent']!r}; valid: {list(AGENTS)}")
+    if cfg["finalize_systems"] not in ("pareto", "best"):
+        raise ValueError(
+            f"finalize_systems must be 'pareto' or 'best', got {cfg['finalize_systems']!r}")
     if cfg["status"] == "test" and not cfg["run_name"]:
         raise ValueError("--status test needs the run_name of the run to finalize")
     return cfg

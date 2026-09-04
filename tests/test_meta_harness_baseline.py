@@ -451,7 +451,8 @@ def test_finalize_evaluates_the_pareto_front_plus_baselines_exactly_once():
             evaluated.append((sorted(names), split))
             return {n: {"raw_score": 0.4, "score_max": 1} for n in names}
 
-        cfg = {"dataset": "locomo", "baselines": ["no_memory", "full_context"]}
+        cfg = {"dataset": "locomo", "baselines": ["no_memory", "full_context"],
+               "finalize_systems": "pareto"}
         real, loop._evaluate_all = loop._evaluate_all, fake_evaluate_all
         try:
             asyncio.run(loop.finalize(paths, cfg))
@@ -461,6 +462,41 @@ def test_finalize_evaluates_the_pareto_front_plus_baselines_exactly_once():
 
             asyncio.run(loop.finalize(paths, cfg))   # second call is a no-op
             assert len(evaluated) == 1
+        finally:
+            loop._evaluate_all = real
+
+
+def test_finalize_systems_best_scores_only_the_top_system_plus_baselines():
+    """The paper scores the whole Pareto frontier; `best` trades that curve for
+    a cheaper run. Baselines are scored either way — they are the calibration."""
+    import loop, state
+
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = _paths(tmp)
+        for i, (name, score, cost) in enumerate([
+            ("no_memory", 0.02, 0.0), ("top", 0.72, 1224.0),
+            ("cheap_but_worse", 0.40, 482.0),   # on the front, not the best
+        ]):
+            state.append_row(paths, state.summary_row(
+                iteration=i, system=name,
+                metrics={"raw_score": score, "score_max": 1,
+                         "memory_tokens_per_query": cost, "eliminated": False}))
+        state.rebuild_frontier(paths)
+
+        evaluated = []
+
+        async def fake_evaluate_all(*, names, split, **kw):
+            evaluated.append(sorted(names))
+            return {n: {"raw_score": 0.5, "score_max": 1} for n in names}
+
+        cfg = {"dataset": "locomo", "baselines": ["no_memory", "full_context"],
+               "finalize_systems": "best"}
+        real, loop._evaluate_all = loop._evaluate_all, fake_evaluate_all
+        try:
+            asyncio.run(loop.finalize(paths, cfg))
+            assert evaluated == [["full_context", "no_memory", "top"]]
+            # cheap_but_worse is on the Pareto front but is NOT the best system.
+            assert "cheap_but_worse" not in evaluated[0]
         finally:
             loop._evaluate_all = real
 
