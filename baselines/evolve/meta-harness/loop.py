@@ -127,9 +127,7 @@ def _read_pending(paths: RunPaths, known: set) -> Tuple[List[Dict[str, Any]], Op
         if name in known:
             _log(f"  SKIP {name}: a system with that name was already evaluated")
             continue
-        harness_file = paths.harnesses / f"{name}.py"
-        if not harness_file.exists():
-            _log(f"  SKIP {name}: {harness_file} does not exist")
+        if _resolve_candidate_file(paths, name, str(entry.get("file", ""))) is None:
             continue
         entry["name"] = name
         candidates.append(entry)
@@ -137,6 +135,47 @@ def _read_pending(paths: RunPaths, known: set) -> Tuple[List[Dict[str, Any]], Op
     if not candidates:
         return [], "pending_eval.json registered no usable candidate"
     return candidates, None
+
+
+def _resolve_candidate_file(paths: RunPaths, name: str, declared: str) -> Optional[Path]:
+    """Find a candidate's source wherever the proposer actually put it.
+
+    The run's harness directory is the contract, but an agent driving an
+    unfamiliar shell lands files in its working directory often enough to be
+    worth recovering from — the first full LoCoMo run left two harnesses at the
+    baseline root. A candidate whose code exists but sits one directory over is
+    a lost iteration for no reason, so it is MOVED into the run and evaluated.
+
+    Only paths under the baseline root are accepted, so a stray `file` field
+    cannot pull arbitrary code in from elsewhere on the machine.
+    """
+    import shutil
+
+    target = paths.harnesses / f"{name}.py"
+    if target.exists():
+        return target
+
+    guesses = [paths.harnesses / declared, Path(declared), BASELINE_ROOT / declared] if declared else []
+    guesses.append(BASELINE_ROOT / f"{name}.py")
+
+    searched = [target]
+    for guess in guesses:
+        guess = Path(guess)
+        if guess in searched:
+            continue
+        searched.append(guess)
+        try:
+            inside = guess.resolve().is_relative_to(BASELINE_ROOT.resolve())
+        except (OSError, ValueError):
+            continue
+        if inside and guess.is_file() and guess.suffix == ".py":
+            shutil.move(str(guess), str(target))
+            _log(f"  MOVED {name}: written to {guess}, belongs in the run dir")
+            return target
+
+    _log(f"  SKIP {name}: no source found. Looked in: "
+         + ", ".join(str(s) for s in searched))
+    return None
 
 
 def _reject(paths: RunPaths, iteration: int, candidate: Dict[str, Any],

@@ -132,6 +132,13 @@ shared directory, so concurrent or repeated runs never see each other's code and
 `--fresh` on one run cannot delete another's. The tracked `harnesses/` at the
 baseline root holds only the two baselines, copied into each run at start.
 
+A candidate the proposer writes somewhere else — its working directory, or the
+path named in `pending_eval.json`'s `file` field — is **moved into the run and
+evaluated** rather than dropped. Agents driving an unfamiliar shell misplace
+files often enough that losing an iteration over it is not worth it. Resolution
+never leaves the baseline directory, so a stray `file` field cannot pull in
+arbitrary code.
+
 `evals/` is the point of the design: it is what the proposer reads, and the
 traces are the highest-signal artifact in it.
 

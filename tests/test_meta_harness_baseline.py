@@ -501,6 +501,42 @@ def test_pending_eval_drops_unknown_files_and_duplicate_names():
         assert [c["name"] for c in kept] == ["good"] and error is None
 
 
+def test_a_candidate_written_to_the_wrong_directory_is_recovered():
+    """The first full LoCoMo run left two harnesses at the baseline root instead
+    of the run dir. Code that exists but sits one directory over should not cost
+    an iteration — it is moved into the run and evaluated."""
+    import loop
+
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = _paths(tmp)
+        stray = loop.BASELINE_ROOT / "_test_stray_harness.py"
+        stray.write_text("x = 1", encoding="utf-8")
+        try:
+            paths.pending.write_text(json.dumps({"candidates": [
+                {"name": "_test_stray_harness", "file": "_test_stray_harness.py"}]}),
+                encoding="utf-8")
+
+            kept, error = loop._read_pending(paths, known=set())
+            assert [c["name"] for c in kept] == ["_test_stray_harness"] and error is None
+            # Moved, not copied: the baseline root does not accumulate candidates.
+            assert (paths.harnesses / "_test_stray_harness.py").exists()
+            assert not stray.exists()
+        finally:
+            stray.unlink(missing_ok=True)
+
+
+def test_candidate_resolution_will_not_reach_outside_the_baseline():
+    """A stray `file` field must not pull arbitrary code off the machine."""
+    import loop
+
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = _paths(tmp)
+        outside = Path(tmp) / "outside.py"
+        outside.write_text("x = 1", encoding="utf-8")
+        assert loop._resolve_candidate_file(paths, "outside", str(outside)) is None
+        assert outside.exists(), "the outside file must be left alone"
+
+
 def test_pending_eval_accepts_a_utf8_bom():
     """PowerShell's Set-Content / Out-File write UTF-8 WITH a BOM by default.
     A strict utf-8 read rejects it, which threw away 16 written candidates
