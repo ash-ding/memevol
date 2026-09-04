@@ -173,6 +173,39 @@ def test_subscription_auth_keeps_the_eval_api_keys_out_of_the_proposer():
         os.environ.pop("OPENAI_API_KEY", None)
 
 
+def test_preflight_reports_a_bad_model_before_anything_is_evaluated():
+    """Model availability is account-scoped and not otherwise discoverable (a
+    ChatGPT-account codex login rejects gpt-5, gpt-5-codex and o3). Without this
+    check the run finds out only after phase 0 has spent evaluation tokens."""
+    import proposer as mod
+    from proposer import ProposeResult
+
+    calls = {}
+
+    async def fake_propose(**kw):
+        calls.update(kw)
+        return ProposeResult(exit_code=1, errors=[
+            "The 'gpt-5' model is not supported when using Codex with a ChatGPT account."])
+
+    real, mod.propose = mod.propose, fake_propose
+    try:
+        error = asyncio.run(mod.preflight(
+            agent="codex", model="gpt-5", cwd=Path("."), log_dir=Path("."), effort="high"))
+        assert error and "not supported" in error
+        # The real argv is exercised, so a bad effort or model is caught too.
+        assert calls["model"] == "gpt-5" and calls["effort"] == "high"
+        assert calls["name"] == "preflight"
+
+        async def ok_propose(**kw):
+            return ProposeResult(exit_code=0)
+
+        mod.propose = ok_propose
+        assert asyncio.run(mod.preflight(
+            agent="codex", model="gpt-5.5", cwd=Path("."), log_dir=Path("."))) is None
+    finally:
+        mod.propose = real
+
+
 def test_event_handlers_collect_text_tools_and_usage():
     from proposer import ProposeResult, _event_claude, _event_codex
 

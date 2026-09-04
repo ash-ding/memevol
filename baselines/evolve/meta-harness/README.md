@@ -49,6 +49,14 @@ The proposer is the **`claude` or `codex` CLI**, driven as a subprocess — not 
 Python dependency. Install and log into whichever one you set as `agent:`
 (`claude login` / `codex login`), and make sure it is on `PATH`.
 
+**Model availability is account-scoped**, and there is no way to enumerate it:
+a ChatGPT-account `codex login` rejects `gpt-5`, `gpt-5-codex` and `o3` with
+`"not supported when using Codex with a ChatGPT account"`, accepting only what
+the plan offers. So every search run **preflights the proposer** — one trivial
+turn with the real argv — before it evaluates anything, and aborts with the
+CLI's own error if that fails. Leaving `agent_model: null` sidesteps the whole
+question by using whatever the CLI is already configured with.
+
 ## Usage
 
 ```bash

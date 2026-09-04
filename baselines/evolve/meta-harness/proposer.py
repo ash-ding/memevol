@@ -276,6 +276,29 @@ async def _drive(
             pass
 
 
+async def preflight(
+    *, agent: str, model: Optional[str], cwd: Path, log_dir: Path,
+    effort: Optional[str] = None, auth: str = "subscription",
+    timeout_s: int = 180,
+) -> Optional[str]:
+    """Can this agent actually run? Returns None when yes, else why not.
+
+    One trivial turn with the real argv. A bad model id, an expired login or a
+    CLI that is not on PATH surfaces here in seconds — instead of after phase 0
+    has spent an hour of evaluation tokens on baselines whose run is then dead.
+    Model availability is account-scoped and not discoverable any other way: a
+    ChatGPT-account codex login rejects most model ids outright.
+    """
+    result = await propose(
+        agent=agent, model=model,
+        system_prompt="Connectivity check. Reply with exactly: OK",
+        task="Reply with exactly: OK",
+        cwd=cwd, log_dir=log_dir, name="preflight",
+        timeout_s=timeout_s, effort=effort, auth=auth,
+    )
+    return None if result.ok else result.failure
+
+
 async def propose(
     *,
     agent: str,

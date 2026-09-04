@@ -1,0 +1,62 @@
+# =============================================================================
+# meta-harness — full LoCoMo search run (10 iterations, search split).
+#
+#   cd baselines/evolve/meta-harness
+#   uv run python run.py --config config.locomo.yaml --run-name locomo1
+#
+# Resume the same run with the same command plus --skip-baselines.
+# Report the number with config.test.yaml (set dataset: locomo there first).
+# =============================================================================
+
+strict_config: true
+
+# --- run ---------------------------------------------------------------------
+status: search
+dataset: locomo
+run_name: null           # pass --run-name; candidates land in logs/<run>/harnesses/
+iterations: 10           # paper runs 20 (text classification) / 40 (math retrieval)
+n_candidates: 3          # ~30 candidates total, matching the paper's "roughly 60
+                         # harnesses over 20 iterations"
+baselines:
+  - no_memory            # floor: no memory at all
+  - full_context         # ceiling on cost: stuff the window, no selection
+skip_baselines: false    # true when resuming — phase 0 is already recorded
+
+# --- proposer ----------------------------------------------------------------
+agent: codex             # codex (`codex` CLI) | claude_code (`claude` CLI)
+agent_model: gpt-5.5      # VERIFIED against this codex login. A ChatGPT-account
+                         # login rejects gpt-5, gpt-5-codex and o3 outright —
+                         # model availability is account-scoped. null = let the
+                         # CLI use ~/.codex/config.toml. The run preflights this
+                         # before evaluating anything.
+agent_effort: null       # null = paper setting per agent (claude max / codex high)
+agent_auth: subscription # keeps the project's eval API key out of the proposer
+propose_timeout: 3600    # sessions ran 5-10 min in the smoke; history grows over
+                         # 10 iterations, so this is headroom, not a target
+
+# --- evaluation --------------------------------------------------------------
+execution_model: gpt-5-mini   # QA agent answering from each harness's memory
+judge_model: gpt-5-mini       # LLM-as-judge
+max_sample_concurrent: 3      # conversations in flight within one candidate
+max_eval_concurrent: 3        # candidates evaluated in parallel (= n_candidates,
+                              # so an iteration's evals run as one wave)
+eval_timeout: 14400           # 4h per candidate through the full gauntlet
+max_logs: null                # dynamicmem-only knob; null on LoCoMo
+progressive: true             # stage1->2->3, weak candidates cut early
+random_sample: false          # FIXED search set across iterations. The paper's
+                              # setup: feedback comes from one search set, and a
+                              # moving subset would make scores non-comparable
+                              # between iterations, which the frontier relies on.
+sampling_seed: 42
+memory_cache: true            # cross-stage Phase-1 memory reuse
+
+# --- sizing (LoCoMo family: n_conversations / n_qa) --------------------------
+single_stage: null            # unused when progressive: true
+
+stages:                       # the repo's shared DEFAULT_STAGES for LoCoMo —
+                              # same sizes forge and alma use, so scores stay
+                              # comparable. sanity_check sizes the pre-eval gate.
+  sanity_check: {n_conversations: 1, n_qa: 3}
+  stage1: {n_conversations: 2, n_qa: 20, threshold: 0.30}
+  stage2: {n_conversations: 4, n_qa: 40, threshold: 0.35}
+  stage3: {n_conversations: 6, n_qa: 60}

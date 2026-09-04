@@ -322,6 +322,23 @@ async def evolve(paths: RunPaths, cfg: Dict[str, Any]) -> None:
     _log(f"meta-harness evolution  run={paths.run_name}  dataset={cfg['dataset']}  "
          f"agent={cfg['agent']}/{cfg['agent_model']}  iterations={cfg['iterations']}")
 
+    # Before anything is evaluated: can the proposer run at all? Phase 0 costs
+    # real tokens, and a run whose proposer cannot start is dead on arrival.
+    _log(f"preflight: {cfg['agent']}/{cfg['agent_model'] or '(cli default)'} ...")
+    error = await proposer.preflight(
+        agent=cfg["agent"], model=cfg["agent_model"], cwd=BASELINE_ROOT,
+        log_dir=paths.proposer_logs, effort=cfg["agent_effort"], auth=cfg["agent_auth"],
+    )
+    if error:
+        raise SystemExit(
+            f"proposer preflight FAILED — nothing was evaluated.\n"
+            f"  {error}\n"
+            f"  session log: {paths.proposer_logs / 'preflight'}\n"
+            f"Check `agent_model` (model availability is account-scoped), that the "
+            f"`{cfg['agent']}` CLI is on PATH, and that its login is current."
+        )
+    _log("preflight OK")
+
     _seed_baselines(paths, cfg)
     known = {row["system"] for row in state.read_rows(paths)}
     if not cfg["skip_baselines"]:
