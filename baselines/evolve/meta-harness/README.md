@@ -89,6 +89,7 @@ proposer.py       coding-agent driver: claude_code | codex, plus session logging
 evaluator.py      one launch.py subprocess per candidate + import checking
 launch.py         subprocess entry: load the MemoClass, call evaluate_memo
 state.py          evolution_summary / Pareto frontier / finalization lock
+history.py        CLI over a run's history: frontier / top / show / diff
 prompts/          proposer_system.md — the proposer prior (system prompt)
 harnesses/        kept baselines + the proposer's write target
 logs/<run>/       per-run search filesystem (gitignored)
@@ -109,6 +110,20 @@ Per run, under `logs/<run_name>/`:
 
 `evals/` is the point of the design: it is what the proposer reads, and the
 traces are the highest-signal artifact in it.
+
+`history.py` is the query layer over that tree — Appendix D recommends one, so
+the proposer spends tokens on diagnosis rather than navigation. It is also the
+fastest way for you to see what a run did:
+
+```bash
+cd baselines/evolve/meta-harness
+uv run python history.py frontier          # Pareto front + best
+uv run python history.py top -k 10         # ranked by score
+uv run python history.py show <name>       # one harness: row, paths, artifacts
+uv run python history.py diff <a> <b>      # results + code diff
+```
+
+`--run <name>` picks the run; without it the most recent under `logs/` is used.
 
 ## Baseline harnesses
 
@@ -156,7 +171,7 @@ What is upstream's, and what changed to fit this repo:
 |---|---|---|
 | proposer | coding agent with full filesystem access to prior code, scores, traces | same |
 | feedback | raw artifacts, no compressed summaries, no parent selection | same |
-| proposer prior | `.claude/skills/meta-harness/SKILL.md`, read whole and injected as the system prompt | `prompts/proposer_system.md`, injected the same way. Same section order; the CONTENT is a rewrite for the `MemoClass` contract — in particular the six rotation axes are mine (ingestion / representation / write policy / retrieval / ranking / rendering), not upstream's classifier-oriented ones. Not a Claude Code skill: `codex` reads the identical file, so it carries no skill frontmatter |
+| proposer prior | `.claude/skills/meta-harness/SKILL.md`, read whole and injected as the system prompt | `prompts/proposer_system.md`, injected the same way. Written to Appendix D's rule — it constrains outputs and forbidden behavior and names the objectives, and does NOT prescribe a diagnosis procedure. The text-classification skill's mandatory read order, prototyping step and rotation axes are deliberately absent (the terminal-bench skill has none of them either). Not a Claude Code skill: `codex` reads the identical file, so it carries no skill frontmatter |
 | handoff | `pending_eval.json` written by the agent | same |
 | candidate artifact | a `MemorySystem` with `predict` / `learn_from_batch` | a `MemoClass` with `build_memory_from_data` / `retrieve_memory_for_query` — this repo's contract |
 | candidate dir | `agents/` | `harnesses/` |

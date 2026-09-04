@@ -1,156 +1,22 @@
 # Meta-Harness (memory-harness evolution)
 
-Run ONE iteration of harness evolution. How you split the work — one session,
-or subagents for reading traces and writing code — is yours to decide; if you
-do delegate, carry the constraints below across the boundary, because they are
-what stop a candidate being a parameter tweak or a rule violation.
+Run ONE iteration of harness evolution: read whatever you find useful in the
+run's history, then write new memory harnesses and register them.
 
-**You do not run evaluations.** You read prior code, scores and execution
-traces, prototype a mechanism, and write new harnesses. The outer loop
-(`run.py`) evaluates whatever you register and appends the results.
+**You do not run evaluations.** The outer loop (`run.py`) scores whatever you
+register and writes the results back into the history for the next iteration.
 
-## CRITICAL CONSTRAINTS
+How you go about it — what you read, in what order, whether you prototype,
+whether you delegate to subagents — is yours to decide. What follows is what
+you must produce, what you must not do, and what you are being scored on.
 
-- Implement exactly the number of new harnesses the task prompt asks for.
-- Never write "the frontier is optimal" or "stop iterating", and never abort
-  early. Always complete every step, prototyping included.
-- Mix exploitation (refine what works) and exploration (a mechanism nothing in
-  the run has tried).
+## What you must produce
 
-### Anti-parameter-tuning rules
-
-The most common failure mode is a candidate that is a parameter variant of an
-existing one. Check `evolution_summary.jsonl` for what has been tried — sweeps
-over top-k, chunk size, context budget or similarity metric almost always tie
-or regress.
-
-**Good candidates change a mechanism:**
-
-- a different retrieval algorithm (graph traversal, temporal decay, query
-  decomposition, diversity-aware selection, two-stage rerank)
-- a different memory representation (LLM-extracted facts, entity-centric
-  records, hierarchical summaries, event timelines, contradiction-resolved
-  state)
-- a different write policy (consolidate on ingest, update-in-place with
-  invalidation, keep raw plus derived views)
-- a different presentation of what is retrieved to the QA agent
-
-**Bad candidates just tune numbers.** If `build_memory_from_data` and
-`retrieve_memory_for_query` are structurally identical to the base except for
-constants, rewrite with a genuinely new mechanism.
-
-**Combining is valid.** Take the write policy of one system and the retrieval
-of another, or adapt a published mechanism from the retrieval and memory
-literature (query rewriting and decomposition, reciprocal-rank fusion, MMR
-diversity, temporal decay, hierarchical summarization, cross-encoder rerank)
-— as mechanisms to implement, not as libraries to import.
-
-Axes to rotate over: A=ingestion granularity, B=memory representation,
-C=write/update policy, D=retrieval algorithm, E=ranking & budget,
-F=rendering into the answer prompt. If the last few iterations all pushed on
-one axis, pick different ones.
-
-### What you can and cannot modify
-
-You are running with write access to the whole baseline directory. Almost none
-of it is yours.
-
-- **CAN**: create new files under `harnesses/`, and write `pending_eval.json`
-  and files under `reports/` at the paths the task prompt names.
-- **CANNOT**: touch `run.py`, `loop.py`, `evaluator.py`, `launch.py`,
-  `state.py`, `proposer.py`, this prompt, or any `config*.yaml`. That is the
-  search loop and the scorer. Editing them does not make a harness better, it
-  makes the run meaningless.
-- **CANNOT**: modify or delete any existing harness in `harnesses/`, including
-  the baselines and every candidate from a previous iteration. They are the
-  run's history. Copy from them freely; never edit them in place.
-- **CANNOT**: import from another candidate harness. Copy the code you want to
-  reuse into your own file — each candidate must stand alone.
-- **CANNOT**: edit anything under `logs/` other than the two paths above, and
-  never a `score.json`, `metrics.json` or `evolution_summary.jsonl`.
-
-### Anti-overfitting rules
-
-- **No dataset-specific hints.** Do not hardcode knowledge of particular
-  users, conversations, questions or answers. Harnesses must be general.
-- **Never mention benchmark or dataset names** in harness code, prompts, or
-  comments. A harness dispatches on the SHAPE of `recorder.init`, never on
-  which benchmark it thinks it is running against.
-- General strategies ("prefer the most recent statement about a fact",
-  "keep evidence ids with every stored unit") are fine — they transfer.
-
-### The raw dataset files are OFF-LIMITS at eval time
-
-A harness may only ever read what arrives on `recorder.init`. It must **never**
-open a benchmark file from disk while it runs. These hold the golden states and
-reference answers, and a harness that reads them is not doing retrieval, it is
-cheating — the resulting score is void:
-
-- `benchmarks/dynamicmem/user_data/*/task_packs.json` — golden states and
-  reference outputs (also `app_log_large.json`)
-- `benchmarks/locomo/locomo10.json`
-- `benchmarks/longmemeval/longmemeval_*.json`
-
-Reading them **now, while you propose**, to understand realistic data shapes is
-fine — that is reference use, and the traces under `evals/` are usually better
-for it anyway. Writing a harness that opens them at eval time is not. The same
-goes for anything else outside the harness file that carries answers: no
-network fetches for gold data, no reaching into another run's `score.json`.
-Nothing enforces this but you.
-
-## WORKFLOW
-
-### Step 0 — post-eval reports (write any that are missing)
-
-For each past iteration that has rows in `evolution_summary.jsonl` but no file
-in `reports/`, write one of at most 30 lines: what changed, what improved or
-regressed and why the traces suggest that, and one takeaway.
-
-### Step 1 — analyze
-
-Read, in this order:
-
-1. `evolution_summary.jsonl` — every candidate tried, its score, delta,
-   context cost, and hypothesis.
-2. `frontier_val.json` — `best` and the `_pareto` front over
-   (score up, context cost down).
-3. The source of the top systems in `harnesses/`.
-4. **Execution traces** — `evals/<system>/traces/<user>.json`. This is the
-   highest-signal artifact you have: each QA step records the query, the dict
-   your retrieval returned, the answer, and the judge's reasoning. Read losing
-   cases from the best system and ask what the memory failed to surface.
-   `evals/<system>/stages.json` shows where a candidate was eliminated.
-
-Then state one falsifiable hypothesis per candidate, each targeting a
-different mechanism.
-
-### Step 2 — prototype (MANDATORY)
-
-Before writing a final harness, exercise its core logic in isolation. Write a
-scratch script outside `harnesses/` (use a temp directory), feed it real data
-shapes pulled from the traces, compare two or three variants, and keep the
-best. Delete the scratch files afterwards. Candidates that skip this step
-usually ship a bug or a no-op.
-
-### Step 3 — implement
-
-For each candidate:
-
-1. Copy a strong existing harness from `harnesses/` to
-   `harnesses/<snake_case_name>.py`, then modify it. Copy-then-edit gets the
-   imports and the lifecycle right.
-2. Implement the mechanism your hypothesis calls for.
-3. **Self-critique:** re-read the file. Is this a new mechanism, or the base
-   with different constants? If the latter, rewrite it.
-4. Import-check it:
-   `uv run python -c "import sys; sys.path.insert(0, '.'); from launch import load_harness_class; load_harness_class('harnesses/<name>.py'); print('OK')"`
-
-Names must be unique across the whole run — never overwrite a harness that
-already has a row in `evolution_summary.jsonl`.
-
-### Step 4 — register the candidates
-
-Write `pending_eval.json` at the exact path the task prompt gives:
+1. One file per candidate at `harnesses/<snake_case_name>.py`, containing a
+   `MemoClass` subclass (contract below). Exactly as many candidates as the
+   task prompt asks for. Names must be unique across the whole run — never
+   reuse a name that already has a row in `evolution_summary.jsonl`.
+2. `pending_eval.json`, at the exact path the task prompt gives:
 
 ```json
 {
@@ -159,7 +25,7 @@ Write `pending_eval.json` at the exact path the task prompt gives:
     {
       "name": "temporal_fact_store",
       "file": "harnesses/temporal_fact_store.py",
-      "hypothesis": "<falsifiable claim>",
+      "hypothesis": "<falsifiable claim about what will improve the score>",
       "axis": "exploitation|exploration",
       "base_system": "<what it builds on>"
     }
@@ -167,7 +33,117 @@ Write `pending_eval.json` at the exact path the task prompt gives:
 }
 ```
 
-Finish your reply with: `CANDIDATES: <name1>, <name2>, ...`
+Finish your reply with a line reading: `CANDIDATES: <name1>, <name2>, ...`
+
+Never write "the frontier is optimal" or "stop iterating", and never abort
+early — a search that returns nothing is a wasted iteration.
+
+Two design rules for what goes in a candidate: **one mechanism per candidate**
+(if you are tempted to add "and also...", that is a second candidate), and
+**mechanism-first** — target a failure mode you actually saw in the traces
+rather than adding changes speculatively.
+
+Notes you write for your future self are welcome in `reports/`; nothing reads
+them but you, next iteration.
+
+## What you can and cannot modify
+
+You are running with write access to the whole baseline directory. Almost none
+of it is yours.
+
+- **CAN**: create new files under `harnesses/`, and write `pending_eval.json`
+  and files under `reports/` at the paths the task prompt names.
+- **CANNOT**: touch `run.py`, `loop.py`, `evaluator.py`, `launch.py`,
+  `state.py`, `proposer.py`, `history.py`, this prompt, or any `config*.yaml`.
+  That is the search loop and the scorer. Editing them does not make a harness
+  better, it makes the run meaningless.
+- **CANNOT**: modify or delete any existing harness in `harnesses/`, including
+  the baselines and every candidate from a previous iteration. They are the
+  run's history. Copy from them freely; never edit them in place.
+- **CANNOT**: import from another candidate harness. Copy the code you want to
+  reuse into your own file — each candidate must stand alone.
+- **CANNOT**: edit anything under `logs/` other than the two paths above, and
+  never a `score.json`, `metrics.json` or `evolution_summary.jsonl`.
+
+## What a harness must never do
+
+**Do not hardcode knowledge of the data.** No particular users,
+conversations, questions or answers. A harness is general or it is worthless.
+Never mention a benchmark or dataset name in harness code, prompts, or
+comments — dispatch on the SHAPE of `recorder.init`, never on which benchmark
+you think you are running against. General strategies ("prefer the most recent
+statement about a fact", "keep evidence ids with every stored unit") are fine;
+they transfer.
+
+**Do not open a benchmark file from disk at eval time.** A harness may only
+read what arrives on `recorder.init`. These hold golden states and reference
+answers, and a harness that reads them is not doing retrieval, it is cheating —
+the resulting score is void:
+
+- `benchmarks/dynamicmem/user_data/*/task_packs.json` — golden states and
+  reference outputs (also `app_log_large.json`)
+- `benchmarks/locomo/locomo10.json`
+- `benchmarks/longmemeval/longmemeval_*.json`
+
+Reading them **now, while you propose**, to understand realistic data shapes is
+fine — that is reference use, and the traces under `evals/` are usually better
+for it anyway. The same goes for anything else outside the harness file that
+carries answers: no network fetches for gold data, no reaching into another
+run's `score.json`. Nothing enforces this but you.
+
+## What you are being scored on
+
+Two objectives, and the frontier is the Pareto front over both:
+
+- **`score`** — mean judge reward, 0-1, on the search split.
+- **`context_cost`** — `memory_tokens_per_query`, the tokens your memory adds
+  to each QA prompt.
+
+A candidate that matches the best score at half the context cost is a win, and
+so is one that trades a little cost for a real score gain.
+
+`eliminated: true` means a candidate never finished. `error` says which of
+three ways it went:
+
+- `import: ...` — it does not import. It was never run.
+- `sanity: ...` — it imported, then errored on real data during the one
+  sanity-sized pass every candidate takes before a full evaluation. Artifacts
+  are under `evals/<system>/sanity/`.
+- neither — the gauntlet cut it for scoring below a stage threshold.
+
+The first two mean broken code, not a weak idea.
+
+## The history, and how to query it
+
+Everything from this run lives under the log directory the task prompt names:
+
+| path | what it holds |
+|---|---|
+| `evolution_summary.jsonl` | one row per candidate: score, delta, context cost, hypothesis, error |
+| `frontier_val.json` | `best` and the `_pareto` front |
+| `evals/<system>/traces/<user>.json` | per-QA: the query, the dict your retrieval returned, the answer, the judge's reasoning |
+| `evals/<system>/{score,metrics,stages}.json` | scores, cost, where a candidate was cut |
+| `evals/<system>/sanity/` | the pre-eval sanity pass |
+| `reports/` | your own notes |
+| `harnesses/*.py` | every harness's source |
+
+The traces are the highest-signal artifact here — they are the only place that
+shows what your memory actually surfaced for a question it got wrong.
+
+`history.py` saves you some navigation:
+
+```bash
+uv run python history.py frontier        # Pareto front + best
+uv run python history.py top -k 10       # ranked by score
+uv run python history.py show <name>     # one harness: row, paths, artifacts
+uv run python history.py diff <a> <b>    # results + code diff
+```
+
+Import-check a candidate before registering it:
+
+```bash
+uv run python -c "import sys; sys.path.insert(0, '.'); from launch import load_harness_class; load_harness_class('harnesses/<name>.py'); print('OK')"
+```
 
 ## The harness contract
 
@@ -245,6 +221,7 @@ dependencies.
 Dispatch on the keys — a harness that handles all three runs on any dataset.
 
 **DynamicMem** (`"app_logs" in init`)
+
 - build: `{"app_logs": [{app_log_id, timestamp, app_name, api_name, request,
   response}, ...]}` — one checkpoint's new segment, 5 checkpoints per user.
 - retrieve: `{"app_logs": [...visible prefix...], "query": str}`. Queries are
@@ -254,32 +231,16 @@ Dispatch on the keys — a harness that handles all three runs on any dataset.
   the latest ingested value wins, not the first match.
 
 **LoCoMo** (`"conversation" in init`)
+
 - build: `{"conversation": {speaker_a, speaker_b, session_1..N,
   session_N_date_time}}`, each turn `{speaker, dia_id, text}`.
 - retrieve: `{"conversation": {...}, "query": str}`.
 
 **LongMemEval** (`"sessions" in init`)
+
 - build: `{"sessions": [{session_id, date, messages:[{role, content}]}, ...]}`
   — roughly 48 sessions per sample. `session_id` is positional and carries no
   gold signal, so retrieval has to be content-based.
 - retrieve: `{"sessions": [...], "query": str, "question_date": str}`.
   `question_date` is the reference time; temporal-reasoning and
   knowledge-update questions depend on it.
-
-## What a score means
-
-`score` is mean judge reward on 0-1 for the search split, `context_cost` is
-`memory_tokens_per_query` — the tokens your memory adds to each QA prompt. The
-frontier is the Pareto front over both: a candidate that matches the best
-score at half the context cost is a win, and so is one that trades a little
-cost for a real score gain. `eliminated: true` means the candidate never
-finished the gauntlet — check `error` for which of the three ways it went:
-
-- `import: ...` — it does not import. It was never run.
-- `sanity: ...` — it imported, then errored on real data during the one
-  sanity-sized pass every candidate takes before a full evaluation. Artifacts
-  are under `evals/<system>/sanity/`; read them before rewriting.
-- neither — the staged gauntlet cut it for scoring below a stage threshold.
-
-The first two mean you shipped broken code, not a weak idea. Prototyping
-(Step 2) is what keeps you out of them.

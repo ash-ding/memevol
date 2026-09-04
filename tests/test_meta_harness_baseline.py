@@ -318,7 +318,7 @@ def test_proposer_prior_forbids_the_runtime_cheat_paths():
     text = loop.PROPOSER_SYSTEM.read_text(encoding="utf-8")
     for gold in ("task_packs.json", "locomo10.json", "longmemeval_"):
         assert gold in text, f"prior must name {gold} as off-limits at eval time"
-    assert "Never mention benchmark or dataset names" in text
+    assert "benchmark or dataset name" in text
 
 
 def test_proposer_prior_routes_llm_calls_through_common_llm():
@@ -337,7 +337,7 @@ def test_proposer_prior_fences_off_the_search_loop():
 
     text = loop.PROPOSER_SYSTEM.read_text(encoding="utf-8")
     assert "can and cannot modify" in text
-    for owned in ("loop.py", "evaluator.py", "state.py", "run.py"):
+    for owned in ("loop.py", "evaluator.py", "state.py", "run.py", "history.py"):
         assert owned in text, f"prior must fence off {owned}"
 
 
