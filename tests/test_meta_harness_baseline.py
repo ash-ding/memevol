@@ -173,6 +173,48 @@ def test_subscription_auth_keeps_the_eval_api_keys_out_of_the_proposer():
         os.environ.pop("OPENAI_API_KEY", None)
 
 
+def test_codex_api_key_auth_stages_its_own_home_not_the_operators():
+    """Codex reads credentials from $CODEX_HOME. api_key auth points it at a
+    staged home so the full model catalogue is reachable (a ChatGPT-account
+    login refuses gpt-5 / gpt-5-codex / o3) WITHOUT rewriting ~/.codex."""
+    import json as _json
+    import os
+
+    from proposer import CODEX_HOME_DIR, _child_env
+
+    os.environ["OPENAI_API_KEY"] = "sk-oai-test"
+    try:
+        env = _child_env("codex", "api_key")
+        home = Path(env["CODEX_HOME"])
+        assert home == CODEX_HOME_DIR
+        # Never the operator's own codex home.
+        assert home != Path.home() / ".codex"
+        auth = _json.loads((home / "auth.json").read_text(encoding="utf-8"))
+        assert auth == {"auth_mode": "apikey", "OPENAI_API_KEY": "sk-oai-test"}
+
+        # subscription auth leaves CODEX_HOME alone entirely.
+        assert "CODEX_HOME" not in _child_env("codex", "subscription")
+    finally:
+        os.environ.pop("OPENAI_API_KEY", None)
+
+
+def test_api_key_auth_without_a_key_fails_loudly():
+    import os
+
+    from proposer import _child_env
+
+    saved = os.environ.pop("OPENAI_API_KEY", None)
+    try:
+        _child_env("codex", "api_key")
+    except ValueError as exc:
+        assert "OPENAI_API_KEY" in str(exc)
+        return
+    finally:
+        if saved:
+            os.environ["OPENAI_API_KEY"] = saved
+    raise AssertionError("api_key auth with no key must not fall through silently")
+
+
 def test_preflight_reports_a_bad_model_before_anything_is_evaluated():
     """Model availability is account-scoped and not otherwise discoverable (a
     ChatGPT-account codex login rejects gpt-5, gpt-5-codex and o3). Without this

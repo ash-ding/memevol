@@ -49,13 +49,22 @@ The proposer is the **`claude` or `codex` CLI**, driven as a subprocess — not 
 Python dependency. Install and log into whichever one you set as `agent:`
 (`claude login` / `codex login`), and make sure it is on `PATH`.
 
-**Model availability is account-scoped**, and there is no way to enumerate it:
-a ChatGPT-account `codex login` rejects `gpt-5`, `gpt-5-codex` and `o3` with
-`"not supported when using Codex with a ChatGPT account"`, accepting only what
-the plan offers. So every search run **preflights the proposer** — one trivial
-turn with the real argv — before it evaluates anything, and aborts with the
-CLI's own error if that fails. Leaving `agent_model: null` sidesteps the whole
-question by using whatever the CLI is already configured with.
+**Model availability follows `agent_auth`.** A ChatGPT-account `codex login`
+serves only what the plan offers and refuses the rest outright — measured on
+this repo: `gpt-5`, `gpt-5-codex` and `o3` all rejected, `gpt-5.5` fine. With
+`agent_auth: api_key` the same three all run. So if the model you want is
+refused, that is the auth mode talking, not the model.
+
+`api_key` needs no change to your own login. Codex reads credentials from
+`$CODEX_HOME` (`codex exec --help`: *"auth still uses CODEX_HOME"*), so the run
+stages its own at `.codex_home/` from `OPENAI_API_KEY` and points the
+subprocess there; `~/.codex` is untouched and stays whatever it was. That
+directory holds a live API key and is gitignored — keep it that way.
+
+Either way, every search run **preflights the proposer** — one trivial turn
+with the real argv — before evaluating anything, and aborts with the CLI's own
+error if it fails. That is what stops a wrong model id from costing you a phase
+0 you then throw away.
 
 ## Usage
 

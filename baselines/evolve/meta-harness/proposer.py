@@ -197,24 +197,62 @@ _DISPATCH: Dict[str, Dict[str, Callable]] = {
 # spawning anything, so without this they reach the proposer subprocess.
 _AGENT_API_KEYS = {"claude_code": "ANTHROPIC_API_KEY", "codex": "OPENAI_API_KEY"}
 
+# Where an api_key codex session keeps its credentials. Codex reads auth from
+# $CODEX_HOME (`codex exec --help`: "auth still uses CODEX_HOME"), so pointing
+# it at our own directory gives the proposer API-key auth WITHOUT touching the
+# operator's `~/.codex` login — which usually stays a ChatGPT account, and which
+# restricts the model set: a ChatGPT-account login refuses gpt-5, gpt-5-codex
+# and o3 outright, while the same ids work fine on an API key.
+CODEX_HOME_DIR = Path(__file__).resolve().parent / ".codex_home"
+
+
+def _stage_codex_api_home(api_key: str) -> Path:
+    """Write an api_key auth.json for codex and return the home to point at.
+
+    Format is what `codex login --with-api-key` produces:
+    {"auth_mode": "apikey", "OPENAI_API_KEY": "..."}.
+    """
+    CODEX_HOME_DIR.mkdir(parents=True, exist_ok=True)
+    auth_path = CODEX_HOME_DIR / "auth.json"
+    payload = {"auth_mode": "apikey", "OPENAI_API_KEY": api_key}
+    try:
+        if json.loads(auth_path.read_text(encoding="utf-8")) == payload:
+            return CODEX_HOME_DIR          # already current
+    except (OSError, json.JSONDecodeError):
+        pass
+    auth_path.write_text(json.dumps(payload), encoding="utf-8")
+    return CODEX_HOME_DIR
+
 
 def _child_env(agent: str, auth: str) -> Dict[str, str]:
     """Auth for the agent CLI.
 
     `subscription` removes the agent's API key from the child environment so it
     falls back to its own login (`claude login` OAuth / `codex login`), which is
-    what upstream does. That is not just a preference: proposer tokens are NOT
-    tracked by `common.tokens`, so a proposer that quietly picks up the project's
-    eval key spends real money nothing in this repo can account for — and the
-    paper puts one Meta-Harness iteration at ~10 MTok of proposer context
-    (Table 1), by far the most expensive part of a run.
+    what upstream does. `run.py` loads the project `.env`, so without this the
+    key the evaluator bills reaches the proposer, whose tokens `common.tokens`
+    cannot see.
 
-    `api_key` leaves the environment as-is, for deliberately billing the API.
+    `api_key` bills the API deliberately. For claude the key in the environment
+    is enough; codex instead reads credentials from $CODEX_HOME, so it gets a
+    staged home of its own — the operator's `~/.codex` login is left alone.
     """
     env = dict(os.environ)
     env.pop("CLAUDECODE", None)
+    key_var = _AGENT_API_KEYS[agent]
+
     if auth == "subscription":
-        env.pop(_AGENT_API_KEYS[agent], None)
+        env.pop(key_var, None)
+        return env
+
+    api_key = env.get(key_var, "")
+    if not api_key:
+        raise ValueError(
+            f"agent_auth: api_key needs {key_var} in the environment or the "
+            f"project .env — none found."
+        )
+    if agent == "codex":
+        env["CODEX_HOME"] = str(_stage_codex_api_home(api_key))
     return env
 
 

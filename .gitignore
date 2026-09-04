@@ -65,6 +65,10 @@ baselines/*/*/logs/
 baselines/*/*/results/*_dryrun.json
 
 # --- meta-harness baseline runtime artifacts ---
+# Staged codex credentials for agent_auth: api_key. CONTAINS AN API KEY —
+# this entry is load-bearing, never remove it.
+baselines/evolve/meta-harness/.codex_home/
+
 # Per-run search filesystem (summary, frontier, proposer sessions, eval
 # artifacts) and held-out outputs. logs/ is already covered by the
 # baselines/*/*/logs/ rule above; results/ needs its own entry.

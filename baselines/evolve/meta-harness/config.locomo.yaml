@@ -24,13 +24,16 @@ skip_baselines: false    # true when resuming — phase 0 is already recorded
 
 # --- proposer ----------------------------------------------------------------
 agent: codex             # codex (`codex` CLI) | claude_code (`claude` CLI)
-agent_model: gpt-5.5      # VERIFIED against this codex login. A ChatGPT-account
-                         # login rejects gpt-5, gpt-5-codex and o3 outright —
-                         # model availability is account-scoped. null = let the
-                         # CLI use ~/.codex/config.toml. The run preflights this
-                         # before evaluating anything.
+agent_model: gpt-5       # API-key auth reaches the full catalogue (verified:
+                         # gpt-5, gpt-5.1, o3 all run). A ChatGPT-account login
+                         # refuses all three — that restriction is the auth
+                         # mode's, not the model's.
 agent_effort: null       # null = paper setting per agent (claude max / codex high)
-agent_auth: subscription # keeps the project's eval API key out of the proposer
+agent_auth: api_key      # bills OPENAI_API_KEY from .env. Codex reads creds from
+                         # $CODEX_HOME, so the run stages its own at
+                         # .codex_home/ and your `codex login` is left alone.
+                         # Proposer spend lands in proposer_usage.jsonl only —
+                         # common.tokens cannot see a CLI subprocess.
 propose_timeout: 3600    # sessions ran 5-10 min in the smoke; history grows over
                          # 10 iterations, so this is headroom, not a target
 
