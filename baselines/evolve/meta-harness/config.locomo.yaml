@@ -45,21 +45,32 @@ max_eval_concurrent: 3        # candidates evaluated in parallel (= n_candidates
                               # so an iteration's evals run as one wave)
 eval_timeout: 14400           # 4h per candidate through the full gauntlet
 max_logs: null                # dynamicmem-only knob; null on LoCoMo
-progressive: true             # stage1->2->3, weak candidates cut early
+progressive: false            # ONE pass sized by single_stage — no gauntlet, no
+                              # promotion thresholds, no elimination. Every
+                              # candidate is scored on the same task set, and
+                              # no QA is answered twice (the staged path
+                              # re-ran stage1's QAs inside stage2 and stage3).
+                              # The pre-eval sanity gate still runs: it falls
+                              # back to the family default, 1 conv x 3 QAs.
 random_sample: false          # FIXED search set across iterations. The paper's
                               # setup: feedback comes from one search set, and a
                               # moving subset would make scores non-comparable
                               # between iterations, which the frontier relies on.
 sampling_seed: 42
-memory_cache: true            # cross-stage Phase-1 memory reuse
+memory_cache: true            # no cross-stage reuse to do with one stage; left
+                              # on so a resumed run can still reuse a snapshot
 
 # --- sizing (LoCoMo family: n_conversations / n_qa) --------------------------
-single_stage: null            # unused when progressive: true
+# ACTIVE block (progressive: false). 6 conversations is the WHOLE search split
+# (LoCoMo splits 10 as search=first 6, test=last 4), so this is every
+# conversation the search is allowed to see.
+single_stage:
+  n_conversations: 6          # the entire search split
+  n_qa: 60                    # per conversation -> 360 QA evaluations per
+                              # candidate. This is what stage3 used to run, so
+                              # scores stay comparable with the staged runs.
+                              # null = every QA instead (81-199 per conversation,
+                              # ~885 total): ~2.5x the cost, every candidate,
+                              # with no early elimination to absorb it.
 
-stages:                       # the repo's shared DEFAULT_STAGES for LoCoMo —
-                              # same sizes forge and alma use, so scores stay
-                              # comparable. sanity_check sizes the pre-eval gate.
-  sanity_check: {n_conversations: 1, n_qa: 3}
-  stage1: {n_conversations: 2, n_qa: 20, threshold: 0.30}
-  stage2: {n_conversations: 4, n_qa: 40, threshold: 0.35}
-  stage3: {n_conversations: 6, n_qa: 60}
+stages: null                  # unused when progressive: false

@@ -18,7 +18,7 @@ import json
 import signal
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import evaluator
 import proposer
@@ -98,15 +98,26 @@ from `{BASELINE_ROOT}` (also your working directory).
 # candidates
 # --------------------------------------------------------------------------
 
-def _read_pending(paths: RunPaths, known: set) -> List[Dict[str, Any]]:
-    """Candidates the proposer registered — dropping any that is unusable."""
+def _read_pending(paths: RunPaths, known: set) -> Tuple[List[Dict[str, Any]], Optional[str]]:
+    """Candidates the proposer registered, plus a reason if the handoff itself
+    was unusable.
+
+    Read as utf-8-SIG, not utf-8: the proposer writes this file with whatever
+    shell it has, and Windows PowerShell's Set-Content / Out-File emit a UTF-8
+    BOM by default. A strict utf-8 read rejects that outright, which silently
+    discarded 16 written candidates across 5 iterations of the first real run.
+    utf-8-sig strips a BOM when present and is identical to utf-8 when not.
+    """
     if not paths.pending.exists():
-        return []
+        return [], "the proposer wrote no pending_eval.json"
     try:
-        payload = json.loads(paths.pending.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        _log(f"  pending_eval.json is not valid JSON ({exc}) — skipping iteration")
-        return []
+        raw = paths.pending.read_text(encoding="utf-8-sig")
+        payload = json.loads(raw)
+    except (OSError, json.JSONDecodeError) as exc:
+        head = paths.pending.read_bytes()[:160]
+        _log(f"  pending_eval.json is unusable ({exc})")
+        _log(f"  first bytes: {head!r}")
+        return [], f"pending_eval.json could not be read: {exc}"
 
     candidates = []
     for entry in payload.get("candidates", []):
@@ -123,7 +134,9 @@ def _read_pending(paths: RunPaths, known: set) -> List[Dict[str, Any]]:
         entry["name"] = name
         candidates.append(entry)
         known.add(name)
-    return candidates
+    if not candidates:
+        return [], "pending_eval.json registered no usable candidate"
+    return candidates, None
 
 
 def _reject(paths: RunPaths, iteration: int, candidate: Dict[str, Any],
@@ -282,7 +295,7 @@ async def _run_iteration(paths: RunPaths, cfg: Dict[str, Any], iteration: int,
         _log(f"  proposer FAILED: {result.failure}")
         _log(f"  session log: {result.log_dir}")
 
-    registered = _read_pending(paths, known)
+    registered, handoff_error = _read_pending(paths, known)
     if registered:
         _log(f"  gating {len(registered)} candidate(s): import, then sanity")
     candidates = await _sanity_gate(
@@ -290,8 +303,16 @@ async def _run_iteration(paths: RunPaths, cfg: Dict[str, Any], iteration: int,
     )
     if not candidates:
         state.rebuild_frontier(paths)   # rejections are rows too
+        if not result.ok:
+            return result.failure
+        if handoff_error:
+            # Nothing was recorded, so the proposer cannot learn from this and
+            # will repeat it. Counts toward the consecutive-failure limit.
+            _log(f"  HANDOFF FAILED: {handoff_error}")
+            return handoff_error
+        # Gate rejections ARE recorded, so the next iteration can read them.
         _log("  no candidate survived the gates — skipping to the next iteration")
-        return None if result.ok else result.failure
+        return None
 
     results = await _evaluate_all(
         names=[c["name"] for c in candidates], paths=paths, cfg=cfg, split="search",

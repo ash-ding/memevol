@@ -4,7 +4,7 @@ meta-harness's OWN uv project:
 
     uv run --project baselines/evolve/meta-harness python tests/test_meta_harness_baseline.py
 """
-import asyncio, json, sys, tempfile, traceback
+import asyncio, codecs, json, sys, tempfile, traceback
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -497,17 +497,45 @@ def test_pending_eval_drops_unknown_files_and_duplicate_names():
             {"name": ""},            # unusable
         ]}), encoding="utf-8")
 
-        kept = loop._read_pending(paths, known={"already"})
-        assert [c["name"] for c in kept] == ["good"]
+        kept, error = loop._read_pending(paths, known={"already"})
+        assert [c["name"] for c in kept] == ["good"] and error is None
 
 
-def test_pending_eval_survives_malformed_json():
+def test_pending_eval_accepts_a_utf8_bom():
+    """PowerShell's Set-Content / Out-File write UTF-8 WITH a BOM by default.
+    A strict utf-8 read rejects it, which threw away 16 written candidates
+    across 5 iterations of the first real LoCoMo run."""
+    import loop
+
+    with tempfile.TemporaryDirectory() as tmp:
+        paths = _paths(tmp)
+        (paths.harnesses / "good.py").write_text("x = 1", encoding="utf-8")
+        paths.pending.write_bytes(
+            codecs.BOM_UTF8 + json.dumps({"candidates": [{"name": "good"}]}).encode())
+        assert paths.pending.read_bytes().startswith(codecs.BOM_UTF8)
+
+        kept, error = loop._read_pending(paths, known=set())
+        assert [c["name"] for c in kept] == ["good"] and error is None
+
+
+def test_an_unusable_handoff_is_reported_not_silently_skipped():
+    """A handoff the loop cannot read records nothing, so the proposer cannot
+    learn from it and will repeat it — it must count as a failure."""
     import loop
 
     with tempfile.TemporaryDirectory() as tmp:
         paths = _paths(tmp)
         paths.pending.write_text("{not json", encoding="utf-8")
-        assert loop._read_pending(paths, known=set()) == []
+        kept, error = loop._read_pending(paths, known=set())
+        assert kept == [] and error and "could not be read" in error
+
+        paths.pending.unlink()
+        kept, error = loop._read_pending(paths, known=set())
+        assert kept == [] and error and "no pending_eval.json" in error
+
+        paths.pending.write_text(json.dumps({"candidates": []}), encoding="utf-8")
+        kept, error = loop._read_pending(paths, known=set())
+        assert kept == [] and error and "no usable candidate" in error
 
 
 def test_task_prompt_names_the_run_paths_the_proposer_must_use():

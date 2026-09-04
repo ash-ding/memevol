@@ -36,6 +36,22 @@ you must produce, what you must not do, and what you are being scored on.
 
 Finish your reply with a line reading: `CANDIDATES: <name1>, <name2>, ...`
 
+Write `pending_eval.json` as **UTF-8 without a BOM**, and write files with
+Python rather than the shell. Your shell may be Windows PowerShell, whose
+`Set-Content` / `Out-File` add a BOM by default and whose quoting mangles
+heredocs — `python -c` behaves the same everywhere:
+
+```python
+import json, pathlib
+pathlib.Path(r"<pending path>").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+```
+
+**Your shell has no stdin.** A command that prompts (a PowerShell cmdlet
+missing a required parameter, an interactive editor, anything expecting a
+keypress) blocks until the session times out and costs you the whole
+iteration. Pass every argument explicitly, and never launch an interactive
+tool.
+
 Never write "the frontier is optimal" or "stop iterating", and never abort
 early — a search that returns nothing is a wasted iteration.
 
