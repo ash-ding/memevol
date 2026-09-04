@@ -1,0 +1,51 @@
+# =============================================================================
+# meta-harness — LoCoMo TEST-split finalization (the reported number).
+#
+#   uv run python run.py --config config.locomo.test.yaml --run-name locomo1
+#
+# One held-out evaluation of the run's Pareto frontier plus the baselines, on
+# the WHOLE test split with no staged elimination — the same shape as
+# forge.heldout with progressive=false. The run is frozen afterwards: it
+# refuses to evolve or to finalize again. Touch this once per reported number.
+#
+# Everything below matches config.example.yaml except status, progressive, and
+# the sizing block; keep the rest identical so the arms stay comparable.
+# =============================================================================
+
+strict_config: true
+
+status: test
+dataset: locomo
+run_name: null           # REQUIRED for status: test — set it, or pass --run-name
+iterations: 10           # unused when status: test (listed for completeness)
+n_candidates: 3
+baselines:
+  - no_memory
+  - full_context
+skip_baselines: false
+
+agent: codex             # unused when status: test (no proposal happens)
+agent_model: gpt-5
+agent_effort: null
+agent_auth: api_key
+propose_timeout: 2400
+
+execution_model: gpt-5-mini
+judge_model: gpt-5-mini
+max_sample_concurrent: 3
+max_eval_concurrent: 2
+eval_timeout: 50400
+max_logs: null
+progressive: false       # ONE full pass — no gauntlet, no elimination
+random_sample: false
+sampling_seed: 42
+memory_cache: true
+
+# ACTIVE sizing block (LoCoMo fields). Every leaf null = the WHOLE test split:
+# all 4 held-out conversations, every non-adversarial question in them (655 QAs
+# total). Same shape as forge.heldout — this is the number you report.
+single_stage:
+  n_conversations: null
+  n_qa: null
+
+stages: null
