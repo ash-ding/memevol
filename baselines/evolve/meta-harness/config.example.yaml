@@ -31,9 +31,13 @@ agent_effort: null       # null = the paper's setting per agent (claude: max,
                          # codex: high, its ceiling). Override with
                          # claude_code --effort low|medium|high|xhigh|max or
                          # codex model_reasoning_effort low|medium|high.
-agent_auth: subscription # claude_code only. subscription drops ANTHROPIC_API_KEY
-                         # so the CLI uses `claude login` OAuth (upstream's
-                         # choice, avoids API rate limits); api_key keeps it.
+agent_auth: subscription # subscription (recommended) removes this agent's API key
+                         # from the proposer's environment, so it uses its own
+                         # login (claude login / codex login) — upstream's choice.
+                         # run.py loads .env, so without this the project's EVAL
+                         # key reaches the proposer, and proposer tokens are not
+                         # tracked by common.tokens: that spend would be
+                         # invisible. api_key opts in to billing the API.
 propose_timeout: 2400    # wall-clock cap per proposer session, seconds
 
 # --- evaluation (the shared common.evaluate.evaluate_memo path) --------------

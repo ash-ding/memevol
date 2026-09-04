@@ -144,18 +144,33 @@ def test_agent_reported_failures_are_surfaced_not_swallowed():
     assert "exit code 7" in ProposeResult(exit_code=7).failure
 
 
-def test_subscription_auth_drops_the_api_key_only_for_claude():
+def test_subscription_auth_keeps_the_eval_api_keys_out_of_the_proposer():
+    """run.py loads .env, so both keys are in os.environ when the proposer
+    launches. Under subscription auth the agent must not be able to bill them —
+    proposer tokens are invisible to common.tokens."""
     import os
 
     from proposer import _child_env
 
-    os.environ["ANTHROPIC_API_KEY"] = "sk-test"
+    os.environ["ANTHROPIC_API_KEY"] = "sk-ant-test"
+    os.environ["OPENAI_API_KEY"] = "sk-oai-test"
     try:
-        assert "ANTHROPIC_API_KEY" not in _child_env("claude_code", "subscription")
-        assert _child_env("claude_code", "api_key")["ANTHROPIC_API_KEY"] == "sk-test"
-        assert _child_env("codex", "subscription")["ANTHROPIC_API_KEY"] == "sk-test"
+        claude_sub = _child_env("claude_code", "subscription")
+        assert "ANTHROPIC_API_KEY" not in claude_sub
+        # The OTHER agent's key stays: the evaluator needs it, and it is not an
+        # auth path for this agent.
+        assert claude_sub["OPENAI_API_KEY"] == "sk-oai-test"
+
+        codex_sub = _child_env("codex", "subscription")
+        assert "OPENAI_API_KEY" not in codex_sub
+        assert codex_sub["ANTHROPIC_API_KEY"] == "sk-ant-test"
+
+        # api_key mode is the deliberate opt-in to billing the API.
+        assert _child_env("claude_code", "api_key")["ANTHROPIC_API_KEY"] == "sk-ant-test"
+        assert _child_env("codex", "api_key")["OPENAI_API_KEY"] == "sk-oai-test"
     finally:
         os.environ.pop("ANTHROPIC_API_KEY", None)
+        os.environ.pop("OPENAI_API_KEY", None)
 
 
 def test_event_handlers_collect_text_tools_and_usage():

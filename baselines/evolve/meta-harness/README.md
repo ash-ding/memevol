@@ -194,11 +194,21 @@ Two adaptations worth calling out:
   with forge's; `progressive: false` with a `single_stage` block reproduces
   upstream's flat behavior.
 
-`agent_auth: subscription` reproduces upstream's choice of stripping
-`ANTHROPIC_API_KEY` so the `claude` CLI uses subscription OAuth. Proposer
-tokens are reported by the agent CLI in `proposer/iter<N>/meta.json` and are
-**not** part of `common.tokens` accounting — the same boundary forge's
-containerized proposer has.
+**Proposer spend is not tracked.** Tokens the proposer burns are reported by
+the agent CLI in `proposer/iter<N>/meta.json` and are **not** part of
+`common.tokens` accounting — the same boundary forge's containerized proposer
+has. This is the most expensive part of a run: the paper puts one Meta-Harness
+iteration at roughly 10 MTok of proposer context (Table 1), orders of magnitude
+above other text optimizers, which is the point of the method.
+
+That is why `agent_auth: subscription` (the default) matters. It removes the
+agent's own API key from the proposer's environment so the CLI falls back to
+`claude login` / `codex login`, reproducing upstream's choice. `run.py` loads
+the project `.env` before spawning anything, so without this the key you use
+for evaluation reaches the proposer and can be billed for work no cost figure
+in this repo will ever show. Set `agent_auth: api_key` only when you mean to
+pay per token — and expect that spend to appear on your API bill and nowhere
+else.
 
 ## License
 

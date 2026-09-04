@@ -192,15 +192,29 @@ _DISPATCH: Dict[str, Dict[str, Callable]] = {
 # drive loop
 # --------------------------------------------------------------------------
 
+# Keys the agent CLIs may authenticate with, which are ALSO the keys the
+# evaluator bills its QA and judge calls to. `run.py` loads .env before
+# spawning anything, so without this they reach the proposer subprocess.
+_AGENT_API_KEYS = {"claude_code": "ANTHROPIC_API_KEY", "codex": "OPENAI_API_KEY"}
+
+
 def _child_env(agent: str, auth: str) -> Dict[str, str]:
-    """Auth for the agent CLI. `subscription` drops ANTHROPIC_API_KEY so the
-    claude CLI falls back to `claude login` OAuth (upstream does the same, to
-    avoid API rate limits); `api_key` leaves the environment untouched. Codex
-    authenticates through its own login and ignores this."""
+    """Auth for the agent CLI.
+
+    `subscription` removes the agent's API key from the child environment so it
+    falls back to its own login (`claude login` OAuth / `codex login`), which is
+    what upstream does. That is not just a preference: proposer tokens are NOT
+    tracked by `common.tokens`, so a proposer that quietly picks up the project's
+    eval key spends real money nothing in this repo can account for — and the
+    paper puts one Meta-Harness iteration at ~10 MTok of proposer context
+    (Table 1), by far the most expensive part of a run.
+
+    `api_key` leaves the environment as-is, for deliberately billing the API.
+    """
     env = dict(os.environ)
     env.pop("CLAUDECODE", None)
-    if agent == "claude_code" and auth == "subscription":
-        env.pop("ANTHROPIC_API_KEY", None)
+    if auth == "subscription":
+        env.pop(_AGENT_API_KEYS[agent], None)
     return env
 
 
