@@ -104,6 +104,46 @@ def test_codex_argv_reads_the_prompt_from_stdin_after_overrides():
     assert payload.startswith("SYSTEM") and payload.rstrip().endswith("TASK")
 
 
+def test_a_null_model_lets_the_cli_use_its_own_default():
+    """Guessing a model id the account is not entitled to is how the first live
+    run died ("gpt-5-codex is not supported ... with a ChatGPT account")."""
+    from proposer import _cmd_claude, _cmd_codex
+
+    assert "--model" not in _cmd_codex(model=None, cwd=Path("/ws"), effort=None)
+    assert "--model" not in _cmd_claude(model=None, system_prompt_file=Path("s"), effort=None)
+    assert "--model" in _cmd_codex(model="gpt-5.5", cwd=Path("/ws"), effort=None)
+
+
+def test_agent_reported_failures_are_surfaced_not_swallowed():
+    """Both CLIs announce a refused turn on the event stream and say nothing on
+    stderr. Replays the events from the run that first hit this."""
+    from proposer import ProposeResult, _event_claude, _event_codex
+
+    refusal = json.dumps({"type": "error", "status": 400, "error": {
+        "type": "invalid_request_error",
+        "message": "The 'gpt-5-codex' model is not supported when using Codex "
+                   "with a ChatGPT account."}})
+
+    cx = ProposeResult(exit_code=1)
+    _event_codex({"type": "item.completed", "item": {
+        "type": "error", "message": "Model metadata for `gpt-5-codex` not found."}}, cx)
+    _event_codex({"type": "error", "message": refusal}, cx)
+    _event_codex({"type": "turn.failed", "error": {"message": refusal}}, cx)
+
+    # The nested provider error is unwrapped, the duplicate announcement deduped,
+    # and an error item is not miscounted as a tool call.
+    assert "not supported when using Codex" in cx.failure
+    assert cx.failure.count("not supported when using Codex") == 1
+    assert cx.tools == []
+
+    cc = ProposeResult(exit_code=1)
+    _event_claude({"type": "result", "is_error": True, "result": "credit balance too low"}, cc)
+    assert "credit balance too low" in cc.failure
+
+    # Nothing reported anywhere still says something usable.
+    assert "exit code 7" in ProposeResult(exit_code=7).failure
+
+
 def test_subscription_auth_drops_the_api_key_only_for_claude():
     import os
 

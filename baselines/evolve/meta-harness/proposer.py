@@ -40,24 +40,60 @@ class ProposeResult:
     duration_s: float = 0.0
     log_dir: Optional[str] = None
     stderr: str = ""
+    # Failures the agent reported through its own event stream. Both CLIs
+    # announce a bad model, an auth problem or a refused turn there and say
+    # NOTHING on stderr, so without this a failed session is silent.
+    errors: List[str] = field(default_factory=list)
 
     @property
     def ok(self) -> bool:
         return self.exit_code == 0
+
+    @property
+    def failure(self) -> str:
+        """Why the session failed, from whichever channel carried it. Deduped in
+        order — one refusal is typically announced twice (`error` then
+        `turn.failed`) and repeating it just buries the rest."""
+        if self.errors:
+            seen, unique = set(), []
+            for message in self.errors:
+                if message not in seen:
+                    seen.add(message)
+                    unique.append(message)
+            return "; ".join(unique)[:600]
+        if self.stderr.strip():
+            return self.stderr.strip()[-600:]
+        return f"exit code {self.exit_code} with no reported error"
+
+
+def _error_text(message: Any) -> str:
+    """Unwrap a provider error. Codex nests the upstream JSON error inside the
+    message string, so the readable sentence is two levels down."""
+    try:
+        payload = json.loads(message)
+    except (json.JSONDecodeError, TypeError):
+        return str(message)
+    if isinstance(payload, dict):
+        inner = payload.get("error")
+        if isinstance(inner, dict) and inner.get("message"):
+            return str(inner["message"])
+        if payload.get("message"):
+            return str(payload["message"])
+    return str(message)
 
 
 # --------------------------------------------------------------------------
 # claude_code
 # --------------------------------------------------------------------------
 
-def _cmd_claude(*, model: str, system_prompt_file: Path, effort: Optional[str]) -> List[str]:
+def _cmd_claude(*, model: Optional[str], system_prompt_file: Path,
+                effort: Optional[str]) -> List[str]:
     cmd = [
         "claude", "-p",
         # --verbose is REQUIRED alongside --output-format stream-json in -p mode.
         "--verbose",
         "--output-format", "stream-json",
         "--input-format", "stream-json",
-        "--model", model,
         # File-based system prompt: keeps a ~20 KB blob out of argv (where `ps`
         # would expose it) and leaves the exact prior next to the session log.
         "--system-prompt-file", str(system_prompt_file),
@@ -67,6 +103,10 @@ def _cmd_claude(*, model: str, system_prompt_file: Path, effort: Optional[str]) 
         "--setting-sources", "",
         "--strict-mcp-config",
     ]
+    # A null model means "whatever the CLI is configured to use" — safer than
+    # guessing an id the account may not be entitled to.
+    if model:
+        cmd += ["--model", model]
     if effort:
         cmd += ["--effort", str(effort)]
     return cmd
@@ -90,23 +130,26 @@ def _event_claude(event: dict, result: ProposeResult) -> None:
     elif etype == "result":
         result.usage = event.get("usage", {}) or {}
         result.cost_usd = float(event.get("total_cost_usd") or 0.0)
+        if event.get("is_error"):
+            result.errors.append(_error_text(event.get("result") or "agent reported is_error"))
 
 
 # --------------------------------------------------------------------------
 # codex
 # --------------------------------------------------------------------------
 
-def _cmd_codex(*, model: str, cwd: Path, effort: Optional[str]) -> List[str]:
+def _cmd_codex(*, model: Optional[str], cwd: Path, effort: Optional[str]) -> List[str]:
     cmd = [
         "codex", "exec",
         "--json",
         "--ephemeral",
         "--skip-git-repo-check",
         "--cd", str(cwd),
-        "--model", model,
         "--dangerously-bypass-approvals-and-sandbox",
         "--sandbox", "danger-full-access",
     ]
+    if model:
+        cmd += ["--model", model]
     if effort:
         cmd += ["-c", 'model_reasoning_effort="%s"' % effort]
     cmd += ["-"]  # prompt on stdin; must come after any -c override
@@ -120,12 +163,21 @@ def _stdin_codex(system_prompt: str, task: str) -> bytes:
 
 def _event_codex(event: dict, result: ProposeResult) -> None:
     etype = event.get("type", "")
-    if etype == "item.completed":
+    # A refused turn arrives as a top-level error, never on stderr.
+    if etype in ("error", "turn.failed"):
+        message = event.get("message") or (event.get("error") or {}).get("message", "")
+        result.errors.append(_error_text(message))
+    elif etype == "item.completed":
         item = event.get("item") or {}
-        if item.get("type") == "agent_message":
+        itype = item.get("type")
+        if itype == "agent_message":
             result.text += item.get("text") or ""
+        elif itype == "error":
+            # Some of these are warnings (unknown model metadata), so they are
+            # reported but do not by themselves decide success — the exit code does.
+            result.errors.append(_error_text(item.get("message", "")))
         else:
-            result.tools.append(f"{item.get('type', '')}({json.dumps(item)[:120]})")
+            result.tools.append(f"{itype}({json.dumps(item)[:120]})")
     elif etype == "turn.completed":
         result.usage = event.get("usage", {}) or {}
 
@@ -213,7 +265,7 @@ async def _drive(
 async def propose(
     *,
     agent: str,
-    model: str,
+    model: Optional[str],
     system_prompt: str,
     task: str,
     cwd: Path,
@@ -264,6 +316,7 @@ async def propose(
         "cost_usd": result.cost_usd,
         "usage": result.usage,
         "tools": result.tools,
+        "errors": result.errors,
         "stderr": result.stderr[-4000:],
     }, indent=2, default=str), encoding="utf-8")
     return result

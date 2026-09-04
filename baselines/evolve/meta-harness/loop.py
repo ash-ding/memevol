@@ -18,7 +18,7 @@ import json
 import signal
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import evaluator
 import proposer
@@ -33,6 +33,11 @@ BASELINE_HARNESSES = ("no_memory.py", "full_context.py")
 # pass is a handful of QAs, so a candidate still running after this is hung, and
 # waiting out a 14-hour eval budget to learn that would defeat the gate.
 SANITY_TIMEOUT_S = 30 * 60
+
+# Consecutive failed proposer sessions before the run gives up. Proposer
+# failures are almost always configuration (bad model id, expired login, CLI
+# not on PATH), which repeats identically on every iteration.
+MAX_PROPOSER_FAILURES = 2
 
 _interrupted = False
 
@@ -231,7 +236,8 @@ async def _run_baselines(paths: RunPaths, cfg: Dict[str, Any]) -> None:
 
 
 async def _run_iteration(paths: RunPaths, cfg: Dict[str, Any], iteration: int,
-                         known: set) -> None:
+                         known: set) -> Optional[str]:
+    """Returns None when the proposer session succeeded, else why it failed."""
     best_before = state.best_score(paths)
     _log(f"iteration {iteration}  (best so far {best_before:.3f})")
 
@@ -249,7 +255,9 @@ async def _run_iteration(paths: RunPaths, cfg: Dict[str, Any], iteration: int,
     _log(f"  proposer finished in {_elapsed(time.time() - started)} "
          f"(exit={result.exit_code}, {len(result.tools)} tool calls)")
     if not result.ok:
-        _log(f"  proposer failed: {result.stderr.strip()[-300:]}")
+        # The reason usually arrives on the agent's event stream, not stderr.
+        _log(f"  proposer FAILED: {result.failure}")
+        _log(f"  session log: {result.log_dir}")
 
     registered = _read_pending(paths, known)
     if registered:
@@ -260,7 +268,7 @@ async def _run_iteration(paths: RunPaths, cfg: Dict[str, Any], iteration: int,
     if not candidates:
         state.rebuild_frontier(paths)   # rejections are rows too
         _log("  no candidate survived the gates — skipping to the next iteration")
-        return
+        return None if result.ok else result.failure
 
     results = await _evaluate_all(
         names=[c["name"] for c in candidates], paths=paths, cfg=cfg, split="search",
@@ -277,6 +285,7 @@ async def _run_iteration(paths: RunPaths, cfg: Dict[str, Any], iteration: int,
     if best and best["score"] > best_before:
         _log(f"  NEW BEST {best['system']} at {best['score']:.3f} "
              f"(+{best['score'] - best_before:.3f})")
+    return None
 
 
 async def evolve(paths: RunPaths, cfg: Dict[str, Any]) -> None:
@@ -296,10 +305,20 @@ async def evolve(paths: RunPaths, cfg: Dict[str, Any]) -> None:
         known |= set(cfg["baselines"])
 
     start = state.last_iteration(paths) + 1
+    consecutive_failures = 0
     for offset in range(int(cfg["iterations"])):
         if _interrupted:
             break
-        await _run_iteration(paths, cfg, start + offset, known)
+        failure = await _run_iteration(paths, cfg, start + offset, known)
+        # A bad model id, an expired login or a missing CLI fails identically
+        # every time. Burning the whole iteration budget on it helps nobody.
+        consecutive_failures = consecutive_failures + 1 if failure else 0
+        if consecutive_failures >= MAX_PROPOSER_FAILURES:
+            raise SystemExit(
+                f"proposer failed {consecutive_failures} times in a row — stopping.\n"
+                f"Last error: {failure}\n"
+                f"Session logs: {paths.proposer_logs}"
+            )
 
     best = state.rebuild_frontier(paths).get("best")
     if best:
