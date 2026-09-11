@@ -171,7 +171,7 @@ class CachedBGEReranker(BGERerankerClient):
 # system temp dir (ext4 on WSL2, tmpfs/local on Linux); override via cfg["db_root"].
 # NOT the repo's outputs/ (that sits on /mnt/c under WSL).
 def _db_root(cfg: Dict) -> Path:
-    return Path(cfg.get("db_root") or tempfile.gettempdir()) / "zep_falkordb"
+    return Path(cfg["db_root"] or tempfile.gettempdir()) / "zep_falkordb"
 
 # Paper §3 context template (structure verbatim); the compose step is a Zep
 # service feature, replicated here because OSS Graphiti stops at search results.
@@ -284,6 +284,48 @@ def _format_context(edges: List[Any], nodes: List[Any]) -> str:
 
 
 class ZepMemo(MemoClass):
+    CONFIG_DEFAULTS = {
+        "retrieve_k": 20,          # PAPER §4: "retrieve the 20 most relevant edges (facts) and entity nodes"
+        "embedder": "bge-m3",      # bge-m3 (paper-faithful, local sentence-transformers) | openai
+        # PAPER §4.1: "the BGE-m3 models from BAAI for both reranking and
+        # embedding tasks". 1024-dim.
+        "embedder_model": "BAAI/bge-m3",
+        "reranker": "bge",         # bge (paper-faithful cross-encoder rerank) | openai
+        # PAPER §4.1 names the BGE-m3 family for reranking without pinning a
+        # checkpoint; this is that family's cross-encoder and graphiti's own
+        # BGERerankerClient default.
+        "reranker_model": "BAAI/bge-reranker-v2-m3",
+        # sentence-transformers device for BGE-m3 + reranker. None/"auto" =>
+        # cuda if a GPU is visible, else cpu. Pin with "cpu" / "cuda:1" if needed.
+        "device": None,
+        # Dir for the embedded FalkorDB Lite store; None => system temp. MUST be
+        # a native POSIX FS (redislite binds a unix socket) — do NOT point at
+        # /mnt/c or another DrvFs/9p mount under WSL.
+        "db_root": None,
+        # PAPER §4.1: "we utilize gpt-4o-mini-2024-07-18 for graph construction".
+        # The DATED snapshot is the paper's, and is what this pins — the undated
+        # `gpt-4o-mini` alias now resolves to a later snapshot, so it would
+        # silently stop reproducing the paper. Graphiti already drops
+        # temperature for the gpt-5 family but still sends max_tokens, which
+        # they reject; model_config renames it, so a gpt-5 model is runnable too.
+        "graph_llm_model": "gpt-4o-mini-2024-07-18",
+        # Graphiti "small" LLM for simpler prompts; None => same as
+        # graph_llm_model. The paper names no separate small model.
+        "graph_llm_small_model": None,
+    }
+    # UNIFIED arm: the graph-construction LLM and the embedder change (Graphiti's
+    # own OpenAIEmbedder — an injected EmbedderClient, no adapter). 1536-dim:
+    # any FalkorDB store or `memory_cache` snapshot built at 1024-dim is invalid.
+    # WHAT STAYS LOCAL: the reranker. bge-reranker-v2-m3 is a CROSS-ENCODER
+    # scoring (query, doc) pairs, so it has no API equivalent; Graphiti's
+    # OpenAIRerankerClient is an LLM-scoring reranker — a materially different
+    # retrieval algorithm — so the paper's cross-encoder is kept in BOTH arms
+    # (still the heaviest local cost in the fleet: ~570M params, k passes/query).
+    UNIFIED_OVERRIDES = {
+        "embedder": "openai",
+        "embedder_model": "text-embedding-3-small",
+        "graph_llm_model": "gpt-5-mini",
+    }
 
     def __init__(self, config=None):
         super().__init__(config)
@@ -307,32 +349,30 @@ class ZepMemo(MemoClass):
         self._falkor_db = AsyncFalkorDB(dbfilename=self._db_path)
         driver = FalkorDriver(falkor_db=self._falkor_db)
 
-        # Used to default to a hardcoded "cuda", which crashed outright on a
-        # CPU-only box; the config now defaults to null → auto-detect.
-        device = resolve_device(self.config.get("device"))
-        # Embedder: paper-faithful BGE-m3 (default) or OpenAI (fallback).
-        if self.config.get("embedder", "bge-m3") == "openai":
+        device = resolve_device(self.config["device"])   # None → cuda if visible, else cpu
+        # Embedder: paper-faithful BGE-m3 (default) or OpenAI (unified arm).
+        if self.config["embedder"] == "openai":
             from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
             embedder = OpenAIEmbedder(OpenAIEmbedderConfig(
-                embedding_model=self.config.get("embedder_model", "text-embedding-3-small")))
+                embedding_model=self.config["embedder_model"]))
         else:
-            embedder = BGEM3Embedder(self.config.get("embedder_model", "BAAI/bge-m3"), device=device)
+            embedder = BGEM3Embedder(self.config["embedder_model"], device=device)
 
-        graph_model = self.config.get("graph_llm_model", "gpt-4o-mini")
+        graph_model = self.config["graph_llm_model"]
         # Reranker: paper-faithful BGE cross-encoder (default) or OpenAI (fallback).
-        if self.config.get("reranker", "bge") == "openai":
+        if self.config["reranker"] == "openai":
             from graphiti_core.cross_encoder.openai_reranker_client import OpenAIRerankerClient
             cross_encoder = OpenAIRerankerClient(config=LLMConfig(model=graph_model))
         else:
             cross_encoder = CachedBGEReranker(
-                self.config.get("reranker_model", "BAAI/bge-reranker-v2-m3"), device=device)
+                self.config["reranker_model"], device=device)
 
         # Internal graph-construction LLM. Paper: gpt-4o-mini-2024-07-18 (4-series).
         # NOTE: Graphiti uses the openai SDK directly, so these calls do NOT flow
         # through common.tokens (same caveat as amem/hipporag2/simplemem/lightmem).
         llm_client = OpenAIClient(config=LLMConfig(
             model=graph_model,
-            small_model=self.config.get("graph_llm_small_model") or graph_model,
+            small_model=self.config["graph_llm_small_model"] or graph_model,
         ))
 
         self._graphiti = Graphiti(
@@ -360,7 +400,7 @@ class ZepMemo(MemoClass):
         query = recorder.init.get("query", "")
         if not query:
             return {}
-        k = int(self.config.get("retrieve_k", 20))   # paper: top-20 edges + nodes
+        k = int(self.config["retrieve_k"])   # paper: top-20 edges + nodes
         config = COMBINED_HYBRID_SEARCH_CROSS_ENCODER.model_copy(deep=True)
         config.limit = k
         results = await self._graphiti.search_(query, config=config, group_ids=[self._gid])

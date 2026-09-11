@@ -45,14 +45,12 @@ baselines/evolve/alma/memo_test/memo_test_*.py
 
 # Per-run eval outputs (score.json + traces + memory dumps)
 baselines/evolve/alma/results/
-baselines/harness/hipporag2/results/
-baselines/harness/amem/results/
-baselines/harness/lightmem/results/
-baselines/harness/lightmem/smoke_*.yaml
-baselines/harness/simplemem/results/
-baselines/harness/simplemem/smoke_*.yaml
-baselines/harness/zep/results/
-baselines/harness/zep/smoke_*.yaml
+# harness baselines: one directory per run under runs/ (+ the cross-run
+# memory cache and index.jsonl) — see baselines/harness/eval_harness.py
+baselines/harness/*/runs/
+baselines/harness/*/results/
+# local scratch configs (README convention)
+baselines/harness/*/smoke_*.yaml
 # evolvemem is a standalone reproduction: upstream's runner writes here, and
 # everything it produces is test-touching (it evolves over the full LoCoMo-10).
 baselines/evolve/evolvemem/upstream/evolution_results/
@@ -82,9 +80,3 @@ forge/logs/*
 # Built Singularity images (too large for git; stored on /export/scratch_large)
 containers/*.sif
 memevol_env/
-
-# mem0 / memoryos runtime artifacts (per-user Qdrant + MemoryOS stores)
-baselines/harness/mem0/results/
-baselines/harness/mem0/outputs/
-baselines/harness/memoryos/results/
-baselines/harness/memoryos/outputs/

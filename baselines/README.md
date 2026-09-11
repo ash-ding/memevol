@@ -33,7 +33,9 @@ baselines/
 │   │                    #     Does NOT implement MemoClass; numbers not comparable with forge.
 │   └── memevolve/       #   (paper PDF; to be implemented under the conventions below)
 └── harness/             # READY-MADE MEMORY SYSTEMS — compared against forge's
-    ├── eval_utility.py   #   EVOLVED HARNESSES. Shared runner: run_baseline()
+    ├── eval_harness.py  #   EVOLVED HARNESSES. THE one entrypoint (CLI + run_baseline())
+    ├── config.example.yaml   # the one shared frame config (identical for all seven)
+    ├── model_config.py  #   embedder factory + OpenAI param normalisation (two model arms)
     ├── hipporag2/       #   HippoRAG2 graph-RAG pipeline as retrieval memory
     │                    #     (vendored src/hipporag/ @ c617143)
     ├── amem/            #   A-mem agentic-notes memory as retrieval memory
@@ -54,7 +56,7 @@ baselines/
   (`build_memory_from_data` / `retrieve_memory_for_query` /
   `use_memory_to_answer`) that forge-evolved harnesses implement. Their unit
   of comparison is the harness artifact: they run through the SAME
-  per-dataset workflows via `baselines.harness.eval_utility.run_baseline`, so
+  per-dataset workflows via `baselines.harness.eval_harness.run_baseline`, so
   their scores sit on the same axis as any evolved harness's.
 
 ## Method-boundary conventions
@@ -72,7 +74,7 @@ bind every method here:
   search/self-improvement loop run on the **search split** only
   (`split: search` in a harness baseline's config, `--status search` for
   alma). The **test split** is touched exactly once per reported number
-  (`split: test`, the default in every harness `config.example.yaml` — same
+  (`split: test` in the shared `harness/config.example.yaml` — same
   data path as `forge.heldout`).
 - **Dependency direction is one-way.** Methods import `common/` (and
   `benchmarks/` / `baselines/registry.py`); `common/` NEVER imports a method;
@@ -105,8 +107,8 @@ then `uv run python tests/test_baselines_multidataset.py`.
 A baseline's OWN behavioral test (`tests/test_<name>_baseline.py`) runs in that
 baseline's own project (it needs that baseline's deps):
 `uv run --project baselines/<evolve|harness>/<name> python tests/test_<name>_baseline.py`.
-Every baseline writes artifacts under its own `logs/` and `results/`
-directories (gitignored).
+Every harness baseline writes one directory per run under its own `runs/`
+(gitignored — see **Run records** below); alma writes `logs/` + `results/`.
 
 ## Shared progressive sampling, seeding & memory cache
 
@@ -156,10 +158,10 @@ exactly by `common.config.validate_exact_config`:
 Surface per side:
 
 ```bash
-# harness (hipporag2 / amem / ... run.py) — exactly one flag, --config;
-# progressive / sampling_seed / stages / single_stage all live in the YAML
-cd baselines/harness/hipporag2 && uv run python run.py --config my_hr.yaml
-# my_hr.yaml: dataset: locomo, progressive: true, sampling_seed: 42, ...
+# harness (one shared entrypoint for all seven) — exactly one flag, --config;
+# harness / progressive / sampling_seed / stages / single_stage all live in the YAML
+uv run --project baselines/harness/hipporag2 python -m baselines.harness.eval_harness --config my_hr.yaml
+# my_hr.yaml: harness: hipporag2, dataset: locomo, progressive: true, sampling_seed: 42, ...
 
 # alma (evolve/alma/run.py) — has a step loop and a real CLI, so
 # random_sample applies and flags still layer over the config
@@ -180,9 +182,10 @@ The two sides of `baselines/` resolve their config differently (2026-08-06):
 **alma** keeps the original layered scheme (it has a real CLI with runtime
 knobs like `--status`/`--steps`/`--memo_SHA`); every **harness baseline**
 (`hipporag2`, `amem`, `lightmem`, `simplemem`, `zep`, `mem0`,
-`memoryos`) is now **config-file ONLY** — `run.py` takes exactly one flag,
-`--config <yaml>` (required), and there is no built-in `DEFAULT_CONFIG` to
-fall back to.
+`memoryos`) runs through **one shared entrypoint**,
+[`harness/eval_harness.py`](harness/eval_harness.py), which takes exactly one
+flag, `--config <yaml>`, and reads a config that carries the **evaluation frame
+only** — every method knob is a class-level default on the memo class.
 
 ### alma (evolve baseline) — layered, unchanged
 
@@ -219,44 +222,49 @@ cd baselines/evolve/alma && uv run python run.py \
     --config config.example.yaml --sampling_seed 7
 ```
 
-### harness baselines — config-file only, no CLI overrides
+### harness baselines — one frame config, method knobs on the class
 
-Every `harness/<name>/run.py` takes exactly one flag: `--config <yaml>`
-(required). There is no `DEFAULT_CONFIG`, so there is nothing to layer —
-the YAML you pass **is** the run's entire configuration, and it must list
-EXACTLY the keys that `run.py`'s `REQUIRED_KEYS` frozenset expects (dataset,
-split, progressive, sampling_seed, single_stage, stages, memory_cache, the
-method's own knobs, and the shared model/judge/concurrency keys):
+```bash
+# from the repo root, inside the TARGET baseline's own uv project (each has
+# its own venv, so --project is not optional)
+uv run --project baselines/harness/<name> python -m baselines.harness.eval_harness \
+    --config baselines/harness/config.example.yaml
+```
 
-- **[`common/config.py::validate_exact_config`](../common/config.py)** —
-  `validate_exact_config(cfg, required, context)`: `cfg` must be a mapping
-  that lists every key in `required` and NO OTHER keys. A `null` value
-  counts as listed. A missing key OR an unknown key (typo, stale setting)
-  aborts the run with a `ConfigCompletenessError` naming every problem at
-  once, before anything executes. The active sizing block (`single_stage`
-  when `progressive: false`, `stages` when `progressive: true`) is checked
-  to the LEAF via `common.evaluate.missing_sizing_config` — a null leaf
-  means "whole split" for that dimension, but the leaf must still be
-  *listed*.
-- **There is no `strict_config` knob here** — completeness is
-  unconditional (there's no `DEFAULT_CONFIG` to opt back into), so the flag
-  was removed entirely from every harness `config.example.yaml` /
-  `config.paper.yaml`.
-- **`config.example.yaml`** — each harness directory ships one, documenting
-  every required key inline; every one also ships a `config.unified.yaml`
-  (see **Two model arms** below), and two (`mem0`, `memoryos`) additionally
-  ship a `config.paper.yaml` reproducing the original paper's LoCoMo setup.
-  Copy one to start a real run instead of hand-assembling a config from scratch:
-  [`harness/hipporag2/config.example.yaml`](harness/hipporag2/config.example.yaml),
-  [`harness/amem/config.example.yaml`](harness/amem/config.example.yaml),
-  [`harness/lightmem/config.example.yaml`](harness/lightmem/config.example.yaml),
-  [`harness/simplemem/config.example.yaml`](harness/simplemem/config.example.yaml),
-  [`harness/zep/config.example.yaml`](harness/zep/config.example.yaml),
-  [`harness/mem0/config.example.yaml`](harness/mem0/config.example.yaml),
-  [`harness/memoryos/config.example.yaml`](harness/memoryos/config.example.yaml).
+[`harness/config.example.yaml`](harness/config.example.yaml) is the ONE config,
+identical for all seven baselines. It carries the **evaluation frame** and
+nothing else: `harness` (which memo class), `arm` (see **Two model arms**),
+`dataset`, `split`, `progressive`, `sampling_seed`, `single_stage`, `stages`,
+`memory_cache`, `llm_model`, `judge_model`, `max_sample_concurrent`, and an
+optional `run_name`. No method parameter appears in it.
+
+- **Method knobs live on the memo class**, declared ONCE as
+  `CONFIG_DEFAULTS` in `harness/<name>/memo.py` — with the comment that
+  justifies each value (paper section, upstream default, deliberate
+  deviation) next to it — plus `UNIFIED_OVERRIDES`, the model swap
+  `arm: unified` applies. The point of these baselines is to run each system
+  as its authors specified and get one number, not to tune it, so there is no
+  method-parameter surface in the documented path. Print a class's values
+  without reading source:
+  `uv run --project baselines/harness/<name> python -m baselines.harness.eval_harness --describe <name>`.
+- **Exact validation is unchanged** —
+  [`common/config.py::validate_exact_config`](../common/config.py): the YAML
+  must list every frame key and NO other key (a `null` value counts as
+  listed; a missing or unknown key — including a method knob typed at the top
+  level — aborts before anything runs, naming every problem at once). The
+  active sizing block is checked to the LEAF via
+  `common.evaluate.missing_sizing_config`.
+- **Ablation hatch (left out of the example on purpose)**: an optional
+  `memo:` block overrides individual class defaults, e.g.
+  `memo: {retrieve_k: 10}`. It is validated against that class's
+  `CONFIG_DEFAULTS`, so a typo still aborts. It exists so an ablation never
+  requires editing `memo.py` — which would silently change every later run.
+- **`config.paper.yaml`** — `mem0` and `memoryos` keep one: the record of the
+  run that produced the reproduction numbers in their READMEs (frame keys
+  only; the method runs at its faithful defaults).
 - **Sampling sizes are config-file only** across ALL baselines (and forge)
   — there is no `--stages` / `--stage-spec` JSON-string CLI flag anywhere,
-  and now no sizing CLI flag of any kind for harness baselines either. Both
+  and no sizing CLI flag of any kind for harness baselines. Both
   `stages:` (progressive) and `single_stage:` (one-shot) are native YAML
   mappings: `stages: {stage1: {...}, ...}` drives the gauntlet;
   `single_stage: {n_qa: null, ...}` sizes the single pass (required when
@@ -267,22 +275,44 @@ method's own knobs, and the shared model/judge/concurrency keys):
   alma, and every harness baseline.
 
 ```bash
-# harness baseline — copy the example, edit it, point --config at your copy
-cp baselines/harness/hipporag2/config.example.yaml baselines/harness/hipporag2/my_hr.yaml
-$EDITOR baselines/harness/hipporag2/my_hr.yaml   # e.g. change dataset:, sampling_seed:
-cd baselines/harness/hipporag2 && uv run python run.py --config my_hr.yaml
+# copy the shared example, edit it, point --config at your copy
+cp baselines/harness/config.example.yaml my_hr.yaml
+$EDITOR my_hr.yaml   # harness: hipporag2, dataset:, split:, sizing, ...
+uv run --project baselines/harness/hipporag2 python -m baselines.harness.eval_harness --config my_hr.yaml
+```
+
+### Run records
+
+Every run gets its own directory — nothing is ever overwritten, and every
+number carries what produced it:
+
+```
+baselines/harness/<name>/runs/                       (gitignored)
+├── index.jsonl                   one line per finished run: run_id, arm, dataset,
+│                                 split, raw_score, stage, tokens, wall_clock_s, git_sha
+├── latest                        the most recent run_id
+├── memory_cache/<dataset>/<split>/   cross-run Phase-1 memory cache (memory_cache: true)
+└── <run_id>/                     <YYYYMMDD_HHMMSS>_<dataset>_<split>, or `run_name`
+    ├── config.resolved.yaml      frame + the FULLY expanded memo config — the only
+    │                             place a run's method parameters (internal LLM,
+    │                             embedder, ...) are recorded; feeding it back as
+    │                             --config reproduces the run
+    ├── run.json                  harness, memo class, git sha, python, start/end,
+    │                             wall clock, exit status
+    ├── run.log                   the logger tape for this run
+    └── score.json  token_usage.json  stages.json  traces/  stage*/   (evaluate_memo, unchanged)
 ```
 
 ### Two model arms — faithful vs unified
 
 Every model a harness baseline touches — internal LLM, embedder, reranker,
-compressor — is a config parameter. That makes two arms expressible, and each
-baseline ships a config for both:
+compressor — is a class-level parameter, and the `arm:` frame key selects
+between two settings of them:
 
-| arm | file | what it is |
+| arm | where the values live | what it is |
 |---|---|---|
-| **faithful** | `config.example.yaml` | each method's own published models. **The default.** What every README's faithfulness table describes |
-| **unified** | `config.unified.yaml` | one LLM (`gpt-5-mini`) + one embedder (`text-embedding-3-small`) everywhere. The arm to compare against the main method |
+| **faithful** | `CONFIG_DEFAULTS` | each method's own published models. **The default.** What every README's faithfulness table describes |
+| **unified** | `CONFIG_DEFAULTS` + `UNIFIED_OVERRIDES` | one LLM (`gpt-5-mini`) + one embedder (`text-embedding-3-small`) everywhere. The arm to compare against the main method |
 
 The faithful defaults are deliberately NOT replaced: the local embedders are
 paper choices (zep's bge-m3, simplemem's Qwen3) and the READMEs make
@@ -292,7 +322,7 @@ config decision, and the two are directly comparable because everything else is
 held fixed.
 
 **Every faithful-arm model is traceable to a paper section**, cited inline in
-each `config.example.yaml`:
+each memo class's `CONFIG_DEFAULTS`:
 
 | baseline | internal LLM | embedder | source |
 |---|---|---|---|
@@ -456,18 +486,16 @@ wraps [HippoRAG2](https://github.com/OSU-NLP-Group/HippoRAG)'s pipeline:
   an end-to-end HippoRAG pipeline comparison.
 
 ```bash
-# OpenAI API embedding (no GPU needed) — config.example.yaml default
-cd baselines/harness/hipporag2 && uv run python run.py --config config.example.yaml
+# OpenAI API embedding (no GPU needed) — the class default
+uv run --project baselines/harness/hipporag2 python -m baselines.harness.eval_harness \
+    --config baselines/harness/config.example.yaml      # harness: hipporag2
 
-# Local GPU embedding (NVIDIA) — edit these keys in your config copy:
+# Local GPU embedding (NVIDIA) — override the class defaults in your config copy:
 #   dataset: longmemeval_s
-#   embedding: nvidia/NV-Embed-v2
-#   embedding_batch_size: 2
-#   embedding_dtype: float16
-uv run python run.py --config my_hr.yaml
+#   memo: {embedding: nvidia/NV-Embed-v2, embedding_batch_size: 2, embedding_dtype: float16}
 ```
 
-Artifacts: `baselines/harness/hipporag2/{outputs/, results/<dataset>/<split>/}`.
+Artifacts: `baselines/harness/hipporag2/{outputs/, runs/<run_id>/}`.
 
 ### harness/lightmem — compression + offline-update memory as retrieval memory
 
@@ -488,17 +516,13 @@ Artifacts: `baselines/harness/hipporag2/{outputs/, results/<dataset>/<split>/}`.
   "LightMem-as-memory" comparison.
 
 ```bash
-# faithful defaults (LLMlingua-2 pre-compress + topic-seg, MiniLM embedder; needs a GPU)
-cd baselines/harness/lightmem && uv run python run.py --config config.example.yaml
-
-# CPU (slow) — edit these keys in your config copy:
-#   dataset: dynamicmem
-#   llmlingua_device: cpu
-#   embedding_device: cpu
-uv run python run.py --config my_lightmem.yaml
+# faithful defaults (LLMlingua-2 pre-compress + topic-seg, MiniLM embedder; cuda
+# if a GPU is visible, else cpu — slow)
+uv run --project baselines/harness/lightmem python -m baselines.harness.eval_harness \
+    --config baselines/harness/config.example.yaml      # harness: lightmem
 ```
 
-Artifacts: `baselines/harness/lightmem/{outputs/, results/<dataset>/<split>/}`.
+Artifacts: `baselines/harness/lightmem/{outputs/, runs/<run_id>/}`.
 See [harness/lightmem/README.md](harness/lightmem/README.md) for the faithfulness
 boundary and provenance.
 
@@ -519,15 +543,14 @@ boundary and provenance.
 
 ```bash
 # faithful Qwen3-0.6B embedder (benefits from GPU)
-cd baselines/harness/simplemem && uv run python run.py --config config.example.yaml
+uv run --project baselines/harness/simplemem python -m baselines.harness.eval_harness \
+    --config baselines/harness/config.example.yaml      # harness: simplemem
 
-# light MiniLM fallback embedder (no GPU) — edit these keys in your config copy:
-#   dataset: dynamicmem
-#   embedding_model: all-MiniLM-L6-v2
-uv run python run.py --config my_simplemem.yaml
+# light MiniLM fallback embedder (no GPU) — override in your config copy:
+#   memo: {embedding_model: all-MiniLM-L6-v2}
 ```
 
-Artifacts: `baselines/harness/simplemem/{outputs/, results/<dataset>/<split>/}`.
+Artifacts: `baselines/harness/simplemem/{outputs/, runs/<run_id>/}`.
 See [harness/simplemem/README.md](harness/simplemem/README.md) for the
 faithfulness boundary and provenance.
 
@@ -553,11 +576,12 @@ not Graphiti's default Neo4j server. Embedder/reranker default to paper-faithful
 **BGE-m3** (config-toggleable to OpenAI). Requires **Python 3.12+**.
 
 ```bash
-cd baselines/harness/zep && uv run python run.py --config config.example.yaml
-# CPU-only box: set device: cpu in your config copy
+uv run --project baselines/harness/zep python -m baselines.harness.eval_harness \
+    --config baselines/harness/config.example.yaml      # harness: zep
+# device is auto-detected (cuda if visible, else cpu); pin with memo: {device: cpu}
 ```
 
-Artifacts: `baselines/harness/zep/{outputs/, results/<dataset>/<split>/}`. See
+Artifacts: `baselines/harness/zep/{outputs/, runs/<run_id>/}`. See
 [harness/zep/README.md](harness/zep/README.md) for the faithfulness boundary
 (FalkorDB Lite vs Neo4j-Lucene, the custom BGE-m3 embedder adapter) and cost
 caveats (Graphiti's internal gpt-4o-mini calls bypass `common.tokens`).
@@ -568,11 +592,12 @@ caveats (Graphiti's internal gpt-4o-mini calls bypass `common.tokens`).
 
 This is the recipe for evaluating an existing, human-crafted memory system
 (mem0, letta, zep, MemGPT, your own prototype, ...) under this repo's
-protocol. The whole adaptation is two files under
-`baselines/harness/<name>/`; everything else — split resolution, the
-per-dataset evaluation protocol (including DynamicMem's checkpoint
-interleaving), judging, scoring, trace persistence — comes from the shared
-runner and is byte-identical to what forge-evolved harnesses get.
+protocol. The whole adaptation is ONE file, `baselines/harness/<name>/memo.py`,
+plus a registry entry; everything else — the CLI, config resolution, the run
+directory, split resolution, the per-dataset evaluation protocol (including
+DynamicMem's checkpoint interleaving), judging, scoring, trace persistence —
+comes from the shared entrypoint and is byte-identical to what forge-evolved
+harnesses get.
 
 ### Step 0 — understand what you're adapting to
 
@@ -620,12 +645,25 @@ from typing import Dict, Optional
 from common.memo_class import MemoClass
 
 class MyMemo(MemoClass):
+    # EVERY method knob, declared once, with the reason for its value. This is
+    # the faithful arm; `--describe <name>` prints it, and every run records the
+    # merged result in runs/<run_id>/config.resolved.yaml.
+    CONFIG_DEFAULTS = {
+        "my_llm_model": "gpt-4o-mini",      # PAPER §x.y: ...
+        "embedding_model": "all-MiniLM-L6-v2",
+        "top_k": 10,                        # PAPER §x.y: k=10
+    }
+    # What `arm: unified` changes — the fleet's one LLM + one API embedder.
+    UNIFIED_OVERRIDES = {
+        "my_llm_model": "gpt-5-mini",
+        "embedding_model": "text-embedding-3-small",
+    }
 
     def __init__(self, config=None):
-        super().__init__(config)        # each instance gets its own self.config copy
+        super().__init__(config)        # self.config = CONFIG_DEFAULTS overlaid with config
         self._instance_id = uuid.uuid4().hex[:12]   # per-user state scoping
-        self._system = ...              # construct the wrapped memory system
-                                        #   using self.config (model names, top-k, ...)
+        self._system = ...              # construct the wrapped memory system from
+                                        #   self.config["top_k"] etc. — no second inline default
 
     async def build_memory_from_data(self, recorder) -> None:
         init = recorder.init
@@ -660,70 +698,30 @@ Notes on the RETRIEVE return dict:
   systems should let the shared QA agent answer — that keeps the comparison
   about *memory*, not about who has the better answerer.
 
-### Step 2 — `run.py`: the CLI entry
+### Step 2 — register it
 
-Copy [harness/amem/run.py](harness/amem/run.py) (~50 lines) and adjust
-`REQUIRED_KEYS` + the `memo_config` mapping for your system's own knobs.
-Harness `run.py`s (2026-08-06) take exactly one flag, `--config`, and have
-NO `DEFAULT_CONFIG` — the YAML must list every required key exactly, checked
-by `common.config.validate_exact_config`. Core shape:
+Add one line to `MEMOS` in [harness/eval_harness.py](harness/eval_harness.py):
 
 ```python
-import argparse, asyncio
-from pathlib import Path
-from baselines.harness.eval_utility import run_baseline, print_result
-from baselines.harness.<name>.memo import MyMemo
-from common.config import load_config_file, validate_exact_config
-
-# The config file must list EXACTLY these keys (a null value counts as
-# listed; sizing leaves are checked separately) — no CLI overrides, no
-# built-in defaults. Copy config.example.yaml and edit.
-REQUIRED_KEYS = frozenset({
-    "dataset", "split", "progressive", "sampling_seed",
-    "single_stage", "stages", "memory_cache",
-    "top_k",                       # ... your system's own knobs ...
-    "llm_model", "judge_model", "max_sample_concurrent",
-})
-
-
-def main():
-    p = argparse.ArgumentParser(description="MyMemo baseline — multi-dataset")
-    p.add_argument("--config", required=True,
-                   help="YAML config file — the ONLY parameter surface "
-                        "(no CLI overrides). Copy config.example.yaml and edit.")
-    a = p.parse_args()
-
-    cfg = validate_exact_config(load_config_file(a.config) or {},
-                                REQUIRED_KEYS, context="mymemo config")
-
-    memo_config = dict(top_k=cfg["top_k"])
-    out_dir = Path(__file__).resolve().parent / "results" / cfg["dataset"] / cfg["split"]
-    result = asyncio.run(run_baseline(
-        dataset=cfg["dataset"], split=cfg["split"],
-        single_stage=cfg["single_stage"], stages=cfg["stages"],   # native YAML dicts
-        memo_class=MyMemo, memo_config=memo_config,
-        qa_model=cfg["llm_model"], judge_model=cfg["judge_model"],
-        out_dir=out_dir, max_sample_concurrent=cfg["max_sample_concurrent"],
-        progressive=cfg["progressive"], sampling_seed=cfg["sampling_seed"],
-        memory_cache=cfg["memory_cache"],
-    ))
-    print_result(cfg["dataset"], cfg["progressive"], result, out_dir)
-
-
-if __name__ == "__main__":
-    main()
+MEMOS = {
+    ...
+    "<name>": "baselines.harness.<name>.memo:MyMemo",
+}
 ```
 
-`memo_config` reaches your instances through the constructor: the framework
-creates a FRESH memo per user/conversation as `MyMemo(config=memo_config)`,
-and each instance keeps its own private copy at `self.config` (never share
-mutable state across users). No `__init__.py` files needed (namespace
-packages). Also write a `config.example.yaml` alongside `run.py`,
-documenting every `REQUIRED_KEYS` entry inline (copy an existing baseline's
-for the shared boilerplate: `dataset`/`split`/`progressive`/
-`sampling_seed`/`single_stage`/`stages`/`memory_cache` are identical across
-every harness baseline; only your method's own knobs + header comment
-differ).
+The registry maps a name to a *module path string* and imports lazily, only
+for the harness a run selects — each baseline has its own venv, so a direct
+import of every memo class would make the entrypoint unimportable in all of
+them. That is also why `--project` is not optional in the launch command.
+
+That is the whole integration. There is no per-baseline `run.py` and no
+per-baseline config file: the frame config is the shared
+[harness/config.example.yaml](harness/config.example.yaml) (set
+`harness: <name>`), and your method knobs are `CONFIG_DEFAULTS` on the class.
+The framework creates a FRESH memo per user/conversation as
+`MyMemo(config=resolved_memo_config)`; each instance keeps its own private
+copy at `self.config` (never share mutable state across users). No
+`__init__.py` files needed (namespace packages).
 
 ### Step 3 — dependencies
 
@@ -741,7 +739,7 @@ This runs `uv sync` in `baselines/harness/<name>/`, creating
 mutually-conflicting deps are exactly why each baseline gets its own project
 now — no need to reconcile them against any other baseline's dependencies.
 Note anything unusual in your baseline's own README; scoring still MUST go
-through `run_baseline`.
+through `eval_harness`.
 
 ### Step 4 — validate on the SEARCH split (cheap, iterate freely)
 
@@ -750,44 +748,46 @@ per dataset and point `--config` at it:
 
 ```yaml
 # smoke_locomo.yaml — one conversation, a handful of QAs — does the
-# adapter run end-to-end?
+# adapter run end-to-end?  (copy harness/config.example.yaml and change:)
+harness: <name>
 dataset: locomo
 split: search
 single_stage: {n_conversations: 1, n_qa: 3}
-# ... plus every other REQUIRED_KEYS entry (see config.example.yaml) ...
 ```
 
 ```yaml
 # smoke_dm.yaml — DynamicMem protocol check: 1 user exercises the
 # checkpoint interleaving
+harness: <name>
 dataset: dynamicmem
 split: search
 single_stage: {n_users: 1, n_checkpoints: 1, n_task_a: 1, n_task_c: 1}
 ```
 
 ```bash
-cd baselines/harness/<name> && uv run python run.py --config smoke_locomo.yaml
-uv run python run.py --config smoke_dm.yaml
+uv run --project baselines/harness/<name> python -m baselines.harness.eval_harness --config smoke_locomo.yaml
+uv run --project baselines/harness/<name> python -m baselines.harness.eval_harness --config smoke_dm.yaml
 ```
 
 Iterate here as much as you like — this is the split the main method
-searches on. Read `results/<dataset>/search/traces/<user>.json`: each QA
+searches on. Read `runs/<run_id>/traces/<user>.json`: each QA
 step records the query, your retrieved dict, the answer, and
 `judge_reason` — the fastest way to see whether your retrieval is
 surfacing the right memory.
 
 ### Step 5 — final numbers on the TEST split
 
-`config.example.yaml` defaults to `split: test` with an all-null
-`single_stage` (whole split; = `forge.heldout` `progressive=false`) — run
-it as-is per dataset (edit `dataset:` between runs, or keep one config per
+Set `split: test` with an all-null `single_stage` (whole split; =
+`forge.heldout` `progressive=false`) in your copy of the shared example and
+run it per dataset (edit `dataset:` between runs, or keep one config per
 dataset):
 
 ```bash
-cd baselines/harness/<name> && uv run python run.py --config config.example.yaml
+uv run --project baselines/harness/<name> python -m baselines.harness.eval_harness --config my_test.yaml
 ```
 
-Outputs land in `baselines/harness/<name>/results/<dataset>/test/`:
+Outputs land in `baselines/harness/<name>/runs/<run_id>/` (and one line in
+`runs/index.jsonl`):
 `score.json` (mean reward = the number you report, same 0–1 scale as
 forge's `accuracy_<dataset>`), `token_usage.json`, `traces/`. Because the
 task list, workflow, judge, and scoring are the main method's own code,

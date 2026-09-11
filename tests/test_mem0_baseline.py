@@ -68,13 +68,15 @@ def test_dynamicmem_uses_shared_passage_text():
     assert msgs[0]["content"] == app_log_to_passage(entry)
 
 
-def test_run_config_keys_match_memo_reads():
-    # Every knob the memo reads from self.config must exist in REQUIRED_KEYS, or a
-    # run silently gets None (e.g. top_k=None -> TypeError deep inside search).
-    from baselines.harness.mem0.run import REQUIRED_KEYS
+def test_config_defaults_cover_every_memo_read():
+    # Every knob the memo reads from self.config must have a CONFIG_DEFAULT, or a
+    # run dies with KeyError (there are no inline fallbacks any more).
+    from baselines.harness.mem0.memo import Mem0Memo
     for key in ("mem0_llm_model", "embedding_model", "base_url",
                 "add_batch_size", "infer", "top_k", "threshold"):
-        assert key in REQUIRED_KEYS, key
+        assert key in Mem0Memo.CONFIG_DEFAULTS, key
+    assert Mem0Memo.resolve_config("unified")["mem0_llm_model"] == "gpt-5-mini"
+    assert Mem0Memo(config={"top_k": 3}).config["top_k"] == 3
 
 
 def test_memo_implements_the_three_hook_contract():

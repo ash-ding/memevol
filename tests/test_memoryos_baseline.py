@@ -95,18 +95,17 @@ def test_dynamicmem_uses_shared_passage_text():
     assert pages[0][1] == ""
 
 
-def test_run_config_keys_match_constructor():
-    # Every knob run.py passes must be a real Memoryos parameter — the vendored
+def test_config_defaults_match_constructor():
+    # Every knob the memo passes must be a real Memoryos parameter — the vendored
     # 0.1.0 has no `embedding_model_name` (that belongs to a later build), and a
     # stale key would blow up only at the first user.
     import inspect
-    from baselines.harness.memoryos.memo import Memoryos
-    from baselines.harness.memoryos.run import REQUIRED_KEYS
+    from baselines.harness.memoryos.memo import Memoryos, MemoryOSMemo
     params = set(inspect.signature(Memoryos.__init__).parameters)
     for key in ("short_term_capacity", "mid_term_capacity", "mid_term_heat_threshold",
                 "mid_term_similarity_threshold", "retrieval_queue_capacity",
                 "long_term_knowledge_capacity"):
-        assert key in REQUIRED_KEYS, f"missing from REQUIRED_KEYS: {key}"
+        assert key in MemoryOSMemo.CONFIG_DEFAULTS, f"missing from CONFIG_DEFAULTS: {key}"
         assert key in params, f"not a Memoryos parameter: {key}"
     assert "embedding_model_name" not in params, "vendored build unexpectedly gained this knob"
 
@@ -119,9 +118,8 @@ def test_embedder_key_is_applied_by_seeding_the_vendored_model_cache():
     which needs no global constructor patch — one dict entry instead."""
     from baselines.harness.model_config import APIEmbedder
     from baselines.harness.memoryos import memo as memoryos_memo
-    from baselines.harness.memoryos.run import REQUIRED_KEYS
 
-    assert "memoryos_embedding_model" in REQUIRED_KEYS
+    assert "memoryos_embedding_model" in memoryos_memo.MemoryOSMemo.CONFIG_DEFAULTS
 
     cache = memoryos_memo._mos_utils._model_cache
     key = memoryos_memo._VENDORED_EMBEDDER_KEY

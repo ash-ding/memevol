@@ -103,6 +103,25 @@ def _init_to_note_units(init: Dict) -> List[Tuple[str, str]]:
 
 
 class AMemMemo(MemoClass):
+    CONFIG_DEFAULTS = {
+        # PAPER (arXiv 2502.12110) Table 1: GPT-4o-mini is the primary GPT
+        # backbone (the paper also reports GPT-4o, Qwen2.5-1.5B/3B, Llama3.2-1B/3B).
+        # A-mem's OpenAIController hardcodes temperature+max_tokens, which the
+        # gpt-5 family rejects — model_config normalises those away at the
+        # OpenAI-SDK boundary, so a gpt-5 model IS runnable (unified arm).
+        "amem_llm_model": "gpt-4o-mini",
+        # PAPER §4.2: "For text embedding, we implement the all-minilm-l6-v2
+        # model across all experiments." 384-dim, local. A `text-embedding-*`
+        # name switches to the OpenAI API embedder instead.
+        "amem_embedding_model": "all-MiniLM-L6-v2",
+        "retrieve_k": 10,          # PAPER §4.2: "we primarily employ k=10 for top-k memory selection"
+    }
+    # UNIFIED arm: A-mem publishes on gpt-4o-mini with a local all-MiniLM-L6-v2
+    # index; both change here. Do not quote this arm as A-mem's published result.
+    UNIFIED_OVERRIDES = {
+        "amem_llm_model": "gpt-5-mini",
+        "amem_embedding_model": "text-embedding-3-small",
+    }
 
     def __init__(self, config=None):
         super().__init__(config)
@@ -112,7 +131,7 @@ class AMemMemo(MemoClass):
     def _ensure_system(self):
         if self._system is not None:
             return
-        model = self.config.get("amem_llm_model", "gpt-4o-mini")
+        model = self.config["amem_llm_model"]
         # A-mem's embedder IS a constructor parameter (AgenticMemorySystem's
         # `model_name`), so the config key needs no special plumbing: the name
         # flows to SimpleEmbeddingRetriever, which calls the patched
@@ -120,7 +139,7 @@ class AMemMemo(MemoClass):
         # ONE embedder across users (a fresh MemoClass is built per user, so
         # otherwise the weights reload per conversation) and returns an
         # APIEmbedder when the name is a `text-embedding-*` model.
-        embedder = self.config.get("amem_embedding_model") or "all-MiniLM-L6-v2"
+        embedder = self.config["amem_embedding_model"]
         # Mirrors test_advanced.py::advancedMemAgent.__init__ (openai backend):
         # one AgenticMemorySystem + a separate retriever_llm, same model.
         self._system = AgenticMemorySystem(
@@ -151,7 +170,7 @@ class AMemMemo(MemoClass):
     async def retrieve_memory_for_query(self, recorder) -> Dict:
         self._ensure_system()
         query = recorder.init.get("query", "")
-        k = int(self.config.get("retrieve_k", 10))
+        k = int(self.config["retrieve_k"])
         with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
             keywords = self._rewrite_query(query)   # LLM call
             memory_str = self._system.find_related_memories_raw(keywords, k=k)

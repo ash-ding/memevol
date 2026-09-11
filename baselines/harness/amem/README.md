@@ -38,15 +38,28 @@ dev/test only and cannot run amem.
 
 ## Usage
 
-    cd baselines/harness/amem && uv run python run.py --config config.example.yaml
+    uv run --project baselines/harness/amem python -m baselines.harness.eval_harness \
+        --config baselines/harness/config.example.yaml      # harness: amem
 
-`run.py` takes exactly one flag, `--config <yaml>` (required) — there is no
-other CLI surface. Every parameter lives in the config file:
-`config.example.yaml` documents each key inline — copy it, edit the values
-(e.g. `dataset: dynamicmem`, `split: search`), and point `--config` at your
-copy. The YAML must list EXACTLY the keys `run.py`'s `REQUIRED_KEYS`
-expects — a missing key OR an unknown key aborts the run before anything
-executes; a `null` value counts as listed.
+All seven harness baselines share ONE entrypoint
+([`../eval_harness.py`](../eval_harness.py)) and ONE frame config
+([`../config.example.yaml`](../config.example.yaml)): set `harness: amem`,
+choose `arm`, dataset/split/sizing and the shared QA + judge models, and point
+`--config` at your copy. The YAML must list EXACTLY the frame keys — a missing
+key OR an unknown key aborts the run before anything executes; a `null` value
+counts as listed. `--project` is not optional: this baseline's deps live only
+in its own venv.
+
+**Method knobs are not in the config file.** Every amem-specific parameter is
+declared once, with its justification, as `CONFIG_DEFAULTS` on the memo class
+in [`memo.py`](memo.py) (the faithful arm) plus `UNIFIED_OVERRIDES` (what
+`arm: unified` changes). Print them:
+
+    uv run --project baselines/harness/amem python -m baselines.harness.eval_harness --describe amem
+
+Every run records the fully merged values in `runs/<run_id>/config.resolved.yaml`.
+To override one for an ablation, add a `memo:` block to your config
+(`memo: {retrieve_k: 5}`) — validated against the class, so a typo aborts.
 
 Worth calling out: `amem_llm_model` (default `gpt-4o-mini`, A-mem's own
 default) and `amem_embedding_model` (default `all-MiniLM-L6-v2`, the
@@ -54,7 +67,7 @@ paper's local 384-dim index) — see **Model configuration** below;
 `retrieve_k` (default 10, upstream default); `llm_model` / `judge_model`
 (default `gpt-5-mini` — shared QA agent + judge, baseline convention).
 `progressive`, `sampling_seed`, and `memory_cache` behave as documented
-inline in `config.example.yaml`.
+inline in `../config.example.yaml`.
 
 **Sizing is config-file only** (there is no sizing CLI surface either).
 `progressive: false` (default) REQUIRES a `single_stage` block — ONE
@@ -63,14 +76,14 @@ pass sized by its native fields (`n_conversations` / `n_qa` for locomo,
 `n_questions` for longmemeval; a `null`/omitted field = the WHOLE split for
 that dimension). Omitting `single_stage` aborts the run (no silent
 whole-split). `progressive: true` sizes from a `stages` block (overrides
-the family `DEFAULT_STAGES`). See `config.example.yaml` — it documents
+the family `DEFAULT_STAGES`). See `../config.example.yaml` — it documents
 every key.
 
 ## Model configuration (two arms)
 
 Every model this baseline touches is a config parameter, so it runs in two arms:
 
-| | faithful arm (`config.example.yaml`) | unified arm (`config.unified.yaml`) |
+| | faithful arm (`CONFIG_DEFAULTS`, `arm: faithful`) | unified arm (`UNIFIED_OVERRIDES`, `arm: unified`) |
 |---|---|---|
 | internal LLM (`amem_llm_model`) | `gpt-4o-mini` — A-mem's own default | `gpt-5-mini` |
 | embedder (`amem_embedding_model`) | `all-MiniLM-L6-v2`, local, 384-dim — the paper's | `text-embedding-3-small`, API, 1536-dim |

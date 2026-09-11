@@ -45,18 +45,31 @@ dev/test only and cannot run zep.
 
 ## Usage
 
-    cd baselines/harness/zep && uv run python run.py --config config.example.yaml
+    uv run --project baselines/harness/zep python -m baselines.harness.eval_harness \
+        --config baselines/harness/config.example.yaml      # harness: zep
 
 **Requires Python 3.12+** (falkordblite constraint; pinned via zep's own
 `.python-version`).
 
-`run.py` takes exactly one flag, `--config <yaml>` (required) — there is no
-other CLI surface. Every parameter lives in the config file:
-`config.example.yaml` documents each key inline — copy it, edit the values
-(e.g. `dataset: dynamicmem`, `split: search`), and point `--config` at your
-copy. The YAML must list EXACTLY the keys `run.py`'s `REQUIRED_KEYS`
-expects — a missing key OR an unknown key aborts the run before anything
-executes; a `null` value counts as listed.
+All seven harness baselines share ONE entrypoint
+([`../eval_harness.py`](../eval_harness.py)) and ONE frame config
+([`../config.example.yaml`](../config.example.yaml)): set `harness: zep`,
+choose `arm`, dataset/split/sizing and the shared QA + judge models, and point
+`--config` at your copy. The YAML must list EXACTLY the frame keys — a missing
+key OR an unknown key aborts the run before anything executes; a `null` value
+counts as listed. `--project` is not optional: this baseline's deps live only
+in its own venv.
+
+**Method knobs are not in the config file.** Every zep-specific parameter is
+declared once, with its justification, as `CONFIG_DEFAULTS` on the memo class
+in [`memo.py`](memo.py) (the faithful arm) plus `UNIFIED_OVERRIDES` (what
+`arm: unified` changes). Print them:
+
+    uv run --project baselines/harness/zep python -m baselines.harness.eval_harness --describe zep
+
+Every run records the fully merged values in `runs/<run_id>/config.resolved.yaml`.
+To override one for an ablation, add a `memo:` block to your config
+(`memo: {retrieve_k: 5}`) — validated against the class, so a typo aborts.
 
 Keys worth calling out: `retrieve_k` (default 20, the paper's top-k);
 `embedder` (`bge-m3` paper-faithful local | `openai`); `reranker` (`bge`
@@ -66,17 +79,17 @@ sentence-transformers device for BGE models); `graph_llm_model` (default
 The rest (`embedder_model`, `reranker_model`, `db_root`,
 `graph_llm_small_model`, `llm_model`, `judge_model`, `progressive`,
 `sampling_seed`, `memory_cache`) are documented inline in
-`config.example.yaml`.
+`../config.example.yaml`.
 
 **Sizing is config-file only** (there is no sizing CLI surface either) —
 `single_stage` (progressive: false, REQUIRED) or `stages` (progressive:
-true). See `config.example.yaml`.
+true). See `../config.example.yaml`.
 
 ## Model configuration (two arms)
 
 Every model this baseline touches is a config parameter, so it runs in two arms:
 
-| | faithful arm (`config.example.yaml`) | unified arm (`config.unified.yaml`) |
+| | faithful arm (`CONFIG_DEFAULTS`, `arm: faithful`) | unified arm (`UNIFIED_OVERRIDES`, `arm: unified`) |
 |---|---|---|
 | graph LLM (`graph_llm_model`) | `gpt-4o-mini-2024-07-18` — the paper's exact pin (§4.1) | `gpt-5-mini` |
 | embedder (`embedder` / `embedder_model`) | `BAAI/bge-m3`, local, 1024-dim — the paper's (§4.1) | `text-embedding-3-small`, API, 1536-dim |
@@ -152,7 +165,7 @@ invalid.
   redis-server process failed to start`. The store therefore defaults to the
   system temp dir (`/tmp`, ext4 on WSL2), NOT the repo's `outputs/`. Override with
   the `db_root` config key (must be a native POSIX FS). Only the redislite store is
-  affected; `results/` traces still write under the repo.
+  affected; `runs/` traces still write under the repo.
 - **falkordblite maturity**: the embedded backend is newer than the Neo4j path.
   Each concurrent user spins its own embedded FalkorDB Lite store; teardown of the
   embedded process + on-disk file is best-effort (`ZepMemo.__del__`).
@@ -164,9 +177,9 @@ sessions); smoke with `split: search` in the config, 1 sample each, confirming
 build → retrieve → QA runs, `invalid_users` is empty, and retrieved context
 is non-empty:
 
-    cd baselines/harness/zep && uv run python run.py --config smoke_locomo.yaml
-    uv run python run.py --config smoke_longmemeval.yaml
-    uv run python run.py --config smoke_dynamicmem.yaml
+    uv run --project baselines/harness/zep python -m baselines.harness.eval_harness --config smoke_locomo.yaml
+    uv run --project baselines/harness/zep python -m baselines.harness.eval_harness --config smoke_longmemeval.yaml
+    uv run --project baselines/harness/zep python -m baselines.harness.eval_harness --config smoke_dynamicmem.yaml
 
 Smoke scores are single-sample sanity signals, NOT benchmark numbers. Real numbers
 belong on `split: test` runs (touch the test split once per reported number).

@@ -1,74 +1,29 @@
 # =============================================================================
-# memoryos (MemoryOS three-tier heat-based memory) baseline — exhaustive config.
-# Launch: uv run --project baselines/harness/memoryos python baselines/harness/memoryos/run.py \
-#             --config baselines/harness/memoryos/config.example.yaml
-# This file is the ONLY parameter surface for run.py — it takes exactly one
-# flag (--config). There are no CLI overrides and no built-in defaults.
+# memoryos — the PAPER-REPRODUCTION run: the record of what produced the numbers in
+# this baseline's README. Frame keys only; the method itself runs at its
+# paper-faithful CONFIG_DEFAULTS (memo.py — print with `--describe memoryos`).
 #
-# EXACT CONFIG (always on): the YAML must list EVERY key below — and ONLY
-# those keys (a null value counts as listed). A missing key OR an unknown
-# key aborts the run, naming the problem; sizing (single_stage/stages) is
-# checked to the leaf. Validated by common.config.validate_exact_config.
+#   uv run --project baselines/harness/memoryos python -m baselines.harness.eval_harness #       --config baselines/harness/memoryos/config.paper.yaml
 # =============================================================================
 
+harness: memoryos
+arm: faithful                  # the method's own published models
 
-dataset: locomo                # which benchmark: dynamicmem | locomo | longmemeval_s (MemoryOS reports on LoCoMo)
-split: search                    # test | search (search = the training split used during evolution)
-progressive: false             # false = ONE single pass (sized by single_stage); true = staged stage1->2->3 gauntlet (sized by stages)
-sampling_seed: 42              # seeds the sampled subset (both paths; a no-op at whole-split)
-memory_cache: true             # cross-stage Phase-1 memory reuse. Values:
-                               #   true      reuse a snapshot — INCLUDING one from a previous run; the
-                               #             cache is results/<dataset>/<split>/memory_cache, which is
-                               #             NOT run-scoped, so a re-run skips the build
-                               #   false     off entirely — every stage rebuilds
-                               #   rebuild   build fresh ONCE this run, then let the later stages reuse
-                               #             it and overwrite the stale entry
-                               # Any change to this file's method knobs invalidates an entry (the sidecar
-                               # fingerprints the memo config), so two different configs can never reuse
-                               # each other's memory.
+dataset: locomo                # the paper reports on LoCoMo
+split: search
+progressive: false
+sampling_seed: 42
+memory_cache: true
 
-# --- MemoryOS internal knobs (vendored @ memoryos-pro 0.1.0) -----------------
-# Paper = arXiv 2506.06326 §4.1 "Implementation Details". Where the shipped code
-# and the paper disagree, the code's value is the default here and the paper's is
-# named in the comment — the vendored implementation is the reference.
-memoryos_llm_model: gpt-4o-mini   # MemoryOS's own LLM: page/segment summarisation, keyword
-                                  # extraction, persona + knowledge distillation. The paper's
-                                  # headline LoCoMo numbers are on gpt-4o-mini.
-memoryos_embedding_model: all-MiniLM-L6-v2   # the paper's embedder (384-dim, local). See
-                                  # config.unified.yaml for the one-API-embedder arm.
-base_url: null                 # OpenAI-compatible base URL for MemoryOS's internal LLM (null = OpenAI default)
-short_term_capacity: 7         # STM dialogue-page queue length. Paper: 7 (vendored default is 10)
-mid_term_capacity: 200         # max MTM segments before LFU eviction. PAPER: 200. The vendored
-                               # default is 2000, which never binds — one LoCoMo conversation
-                               # produces ~176 segments, so 200 evicts and 2000 does not.
-mid_term_heat_threshold: 5.0   # tau: Heat = a*N_visit + b*L_interaction + c*R_recency above which
-                               #   a segment is distilled into the LPM. Paper: 5 (a=b=c=1)
-mid_term_similarity_threshold: 0.6   # theta in `F_score = cos(e_s,e_p) + Jaccard(K_s,K_p) > theta`
-                                     #   for merging a page into a segment. Paper: 0.6
-retrieval_queue_capacity: 10   # MTM pages returned per query (the paper's top-k). PAPER: 10 on
-                               # LoCoMo (5 on GVD). The vendored default is 7.
-long_term_knowledge_capacity: 100    # FIFO capacity of User KB / Assistant Traits. Paper: 100
-
-# --- shared eval (baseline convention) --------------------------------------
-llm_model: gpt-4o-mini         # PAPER-ALIGNED answerer: both papers report LoCoMo on gpt-4o-mini.
+llm_model: gpt-4o-mini         # PAPER-ALIGNED answerer: the paper reports LoCoMo on gpt-4o-mini.
                                # The repo-comparable arm uses gpt-5-mini (config.example.yaml).
 judge_model: gpt-5-mini        # LLM-as-judge model scoring predicted vs reference answers
-max_sample_concurrent: 3       # asyncio concurrency across users/samples (higher = faster, more API load)
+max_sample_concurrent: 3
 
-# --- Sizing (config-file only; there is no other parameter surface). BOTH keys
-#     must be present; the inactive one is null. Every leaf field in the active
-#     block must be listed (a null leaf = whole split for that dimension). ---
-# progressive: false → single_stage sizes the one pass (locomo native fields):
 single_stage:
   n_conversations: null        # all 6 conversations in the search split
   n_qa: 60                     # 60 randomly-sampled QA per conversation = 360 total.
                                # 60 rather than 30 because open-domain is only 6% of LoCoMo:
                                # at 30 it lands ~10 questions, far too few to read.
-# progressive: true → stages sizes the gauntlet (set single_stage: null above and
-# fill this out; sizes must be non-decreasing across stage1..3):
 stages: null
-# stages:
-#   sanity_check: {n_conversations: 1, n_qa: 3}
-#   stage1: {n_conversations: 2, n_qa: 20, threshold: 0.30}
-#   stage2: {n_conversations: 4, n_qa: 40, threshold: 0.35}
-#   stage3: {n_conversations: 6, n_qa: 60}
+run_name: null

@@ -37,7 +37,7 @@ a vendored copy, and eagerly imports the un-vendored `client/` subtree. It is
 replaced with a minimal initializer that inlines `__version__ = "2.0.17"` (read
 by `memory/telemetry.py`) and re-exports only `Memory`/`AsyncMemory`. The reason
 is restated in the file itself. All other integration code lives in `memo.py` /
-`run.py`, never in `src/`.
+`memo.py`, never in `src/`.
 
 ## What the method is
 
@@ -77,7 +77,7 @@ identical across baselines.
 
 Every model this baseline touches is a config parameter, so it runs in two arms:
 
-| | faithful arm (`config.example.yaml`) | unified arm (`config.unified.yaml`) |
+| | faithful arm (`CONFIG_DEFAULTS`, `arm: faithful`) | unified arm (`UNIFIED_OVERRIDES`, `arm: unified`) |
 |---|---|---|
 | internal LLM (`mem0_llm_model`) | `gpt-4o-mini` — Mem0's own default | `gpt-5-mini` |
 | embedder (`embedding_model`) | `text-embedding-3-small`, API, 1536-dim | **unchanged** |
@@ -125,8 +125,9 @@ embedded Qdrant, no server.
 # build mem0's isolated env
 cd baselines/harness/mem0 && uv sync
 
-# run it (from the baseline dir)
-cd baselines/harness/mem0 && uv run python run.py --config config.example.yaml
+# run it (from the repo root)
+uv run --project baselines/harness/mem0 python -m baselines.harness.eval_harness \
+        --config baselines/harness/config.example.yaml      # harness: mem0
 
 # its unit test (from the repo root)
 uv run --project baselines/harness/mem0 python tests/test_mem0_baseline.py
@@ -136,7 +137,7 @@ uv run --project baselines/harness/mem0 python tests/test_mem0_baseline.py
 
 `config.paper.yaml` — LoCoMo **search** split, all 6 conversations × 60
 randomly-sampled QA = **360 questions**, answerer **gpt-4o-mini** (what the paper
-reports on; `config.example.yaml` keeps the repo's shared gpt-5-mini agent),
+reports on; the shared `../config.example.yaml` keeps the repo's gpt-5-mini agent),
 `top_k: 10` per the paper's "s=10 similar memories". 6/6 conversations, 22.5 min,
 **796 tokens/question**.
 

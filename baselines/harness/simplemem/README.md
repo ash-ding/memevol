@@ -22,7 +22,7 @@ The one vendored file that is **not** byte-identical is
 the AutoMemory router (→ multimodal / evolver), so it is replaced with a minimal
 initializer that imports nothing (the baseline imports
 `simplemem.text.system.SimpleMemSystem` directly). All integration code lives in
-`memo.py` / `run.py`, never in `src/`.
+`memo.py`, never in `src/`.
 
 ## How it works
 
@@ -58,15 +58,28 @@ This creates `baselines/harness/simplemem/.venv/`. The repo-root
 
 ## Usage
 
-    cd baselines/harness/simplemem && uv run python run.py --config config.example.yaml
+    uv run --project baselines/harness/simplemem python -m baselines.harness.eval_harness \
+        --config baselines/harness/config.example.yaml      # harness: simplemem
 
-`run.py` takes exactly one flag, `--config <yaml>` (required) — there is no
-other CLI surface. Every parameter lives in the config file:
-`config.example.yaml` documents each key inline — copy it, edit the values
-(e.g. `dataset: dynamicmem`, `split: search`), and point `--config` at your
-copy. The YAML must list EXACTLY the keys `run.py`'s `REQUIRED_KEYS`
-expects — a missing key OR an unknown key aborts the run before anything
-executes; a `null` value counts as listed.
+All seven harness baselines share ONE entrypoint
+([`../eval_harness.py`](../eval_harness.py)) and ONE frame config
+([`../config.example.yaml`](../config.example.yaml)): set `harness: simplemem`,
+choose `arm`, dataset/split/sizing and the shared QA + judge models, and point
+`--config` at your copy. The YAML must list EXACTLY the frame keys — a missing
+key OR an unknown key aborts the run before anything executes; a `null` value
+counts as listed. `--project` is not optional: this baseline's deps live only
+in its own venv.
+
+**Method knobs are not in the config file.** Every simplemem-specific parameter is
+declared once, with its justification, as `CONFIG_DEFAULTS` on the memo class
+in [`memo.py`](memo.py) (the faithful arm) plus `UNIFIED_OVERRIDES` (what
+`arm: unified` changes). Print them:
+
+    uv run --project baselines/harness/simplemem python -m baselines.harness.eval_harness --describe simplemem
+
+Every run records the fully merged values in `runs/<run_id>/config.resolved.yaml`.
+To override one for an ablation, add a `memo:` block to your config
+(`memo: {retrieve_k: 5}`) — validated against the class, so a typo aborts.
 
 SimpleMem-specific keys worth calling out: `simplemem_llm_model` (default
 `gpt-4.1-mini` — SimpleMem's own default; **4-series only**, since its
@@ -79,11 +92,11 @@ rest (`base_url`, `window_size`, `overlap_size`, `semantic_top_k`,
 `max_parallel_workers`, `enable_parallel_retrieval`,
 `max_retrieval_workers`, `llm_model`, `judge_model`, `progressive`,
 `sampling_seed`, `memory_cache`) are documented inline in
-`config.example.yaml`.
+`../config.example.yaml`.
 
 **Sizing is config-file only** (there is no sizing CLI surface either).
 `progressive: false` (default) REQUIRES a `single_stage` block; `progressive:
-true` sizes from a `stages` block. See `config.example.yaml`.
+true` sizes from a `stages` block. See `../config.example.yaml`.
 
 ## Ingestion mapping (`recorder.init` → `Dialogue`)
 
@@ -101,7 +114,7 @@ the new segment; `finalize` flushes its remainder).
 
 Every model this baseline touches is a config parameter, so it runs in two arms:
 
-| | faithful arm (`config.example.yaml`) | unified arm (`config.unified.yaml`) |
+| | faithful arm (`CONFIG_DEFAULTS`, `arm: faithful`) | unified arm (`UNIFIED_OVERRIDES`, `arm: unified`) |
 |---|---|---|
 | internal LLM (`simplemem_llm_model`) | `gpt-4.1-mini` — the paper's backbone (§3.1/§3.3) | `gpt-5-mini` |
 | embedder (`embedding_model`) | `Qwen/Qwen3-Embedding-0.6B`, local, 1024-dim — the paper's (§3.1) | `text-embedding-3-small`, API, 1536-dim |
@@ -181,25 +194,25 @@ cheaply on the search split (mirrors amem's per-branch check):
 
 Smoke configs are LOCAL scratch files — `.gitignore` keeps
 `baselines/harness/simplemem/smoke_*.yaml` out of the repo (same as lightmem and
-zep), so create them yourself. Each is a full copy of `config.example.yaml` with
-only `dataset` / `split` / `single_stage` changed; exact config is
-unconditional, so a partial override file will abort before running.
+zep), so create them yourself. Each is a full copy of `../config.example.yaml`
+with `harness: simplemem` and only `dataset` / `split` / `single_stage` changed;
+exact config is unconditional, so a partial override file will abort before running.
 
     # locomo (conversation branch) — 1 conv, 3 QAs
     #   smoke_locomo.yaml: dataset: locomo, split: search,
     #   single_stage: {n_conversations: 1, n_qa: 3}
-    cd baselines/harness/simplemem && uv run python run.py --config smoke_locomo.yaml
+    uv run --project baselines/harness/simplemem python -m baselines.harness.eval_harness --config smoke_locomo.yaml
 
     # dynamicmem (app_logs branch) — 1 user, checkpoint interleaving
     #   smoke_dm.yaml: dataset: dynamicmem, split: search,
     #   single_stage: {n_users: 1, n_checkpoints: 1, n_task_a: 1, n_task_c: 1}
-    uv run python run.py --config smoke_dm.yaml
+    uv run --project baselines/harness/simplemem python -m baselines.harness.eval_harness --config smoke_dm.yaml
 
     # longmemeval_s (sessions branch) — 1 question
     #   smoke_lme.yaml: dataset: longmemeval_s, split: search,
     #   single_stage: {n_questions: 1}
-    uv run python run.py --config smoke_lme.yaml
+    uv run --project baselines/harness/simplemem python -m baselines.harness.eval_harness --config smoke_lme.yaml
 
-Read `results/<dataset>/search/traces/<user>.json` to confirm build → retrieve
+Read `runs/<run_id>/traces/<user>.json` to confirm build → retrieve
 → QA runs, `invalid_users` is empty, and the retrieved `passages` are non-empty
 compressed memory units in the expected format.

@@ -71,12 +71,6 @@ from simplemem.core.models.memory_entry import Dialogue, MemoryEntry  # noqa: E4
 # SimpleMem's llm_client.py builds its own `openai` client; the SDK-boundary
 # patch captures its calls without editing the vendored file.
 _install_openai_usage()
-ensure_sentence_transformers()     # embedding.py imports ST eagerly
-install_embedding_cache()          # share the ~0.6B Qwen3 embedder across per-user systems
-# Import the vendored simplemem chain (which pulls in lancedb) with HF `datasets`
-# active, so lancedb's import-time `from datasets import Dataset` resolves to the
-# HF library, not memevol's `benchmarks/` package.
-SimpleMemSystem, Dialogue, MemoryEntry = import_simplemem_system()   # vendored, byte-identical
 
 OUTPUTS_DIR = Path(__file__).resolve().parent / "outputs"
 
@@ -151,6 +145,57 @@ def _entry_to_passage(entry: MemoryEntry) -> str:
 
 
 class SimpleMemMemo(DiskStoreCache, MemoClass):
+    # SimpleMem's own defaults @ db80b6a, except where the paper's value wins
+    # (window_size) — see each comment.
+    CONFIG_DEFAULTS = {
+        # PAPER §3.1/§3.3: GPT-4.1-mini is the backbone the headline LoCoMo and
+        # LongMemEval-S tables and the full ablation are run on (the paper also
+        # reports GPT-4o, Qwen-Plus, Qwen2.5-1.5B/3B, Qwen3-1.7B/8B). Its
+        # LLMClient sends temperature=0.1..0.3, which the gpt-5 family rejects
+        # — model_config normalises that away at the OpenAI-SDK boundary, so a
+        # gpt-5 model IS runnable here.
+        "simplemem_llm_model": "gpt-4.1-mini",
+        # PAPER §3.1: "Qwen3-embedding-0.6b (1024 dimensions) for dense semantic
+        # embeddings". Local sentence-transformer; all-MiniLM-L6-v2 is a light
+        # fallback. A `text-embedding-*` name switches to the OpenAI API
+        # embedder. No dimension knob: SimpleMem sizes its LanceDB table from
+        # the embedder itself.
+        "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
+        "base_url": None,          # OpenAI-compatible base URL for the internal LLM (None = OpenAI default)
+        # PAPER §3.1: "we use a sliding window of size W = 20". The VENDORED
+        # code ships WINDOW_SIZE=40; the paper's value wins here (as memoryos
+        # prefers its paper's values over the shipped defaults). Numbers
+        # collected at 40 are NOT comparable to numbers collected at 20.
+        "window_size": 20,
+        # Window overlap for context continuity (SimpleMem OVERLAP_SIZE; the
+        # paper states the window size but not the overlap → the code's value).
+        "overlap_size": 2,
+        # The next three are per-view CAPS in the vendored code. The paper does
+        # not fix a top-k: §3.1 says the retrieval depth is "dynamically
+        # adjusted based on estimated query complexity, ranging from k_min = 3
+        # to k_max = 20 for complex reasoning queries" — that adaptive planner
+        # runs inside the vendored code, under these caps. Left at the code's values.
+        "semantic_top_k": 25,      # max vector-similarity hits per query (SEMANTIC_TOP_K)
+        "keyword_top_k": 5,        # max keyword/BM25 hits per query (KEYWORD_TOP_K)
+        "structured_top_k": 5,     # max structured-metadata hits per query (STRUCTURED_TOP_K)
+        "enable_planning": True,   # intent-aware multi-query retrieval planning
+        "enable_reflection": True, # reflection-based additional retrieval rounds
+        "max_reflection_rounds": 2,
+        # SimpleMem default — parallel window compression. FAITHFUL path (serial
+        # is NOT equivalent: it feeds each window the previous window's entries
+        # as dedup context). Also the main build speed lever.
+        "enable_parallel_processing": True,
+        "max_parallel_workers": 16,    # threads for parallel build (MAX_PARALLEL_WORKERS)
+        "enable_parallel_retrieval": True,   # SimpleMem default — parallel multi-view retrieval
+        "max_retrieval_workers": 8,    # threads for parallel retrieval (MAX_RETRIEVAL_WORKERS)
+    }
+    # UNIFIED arm: SimpleMem publishes on gpt-4.1-mini with a local
+    # Qwen3-Embedding-0.6B (1024-dim) index; both change here. Do not quote this
+    # arm as SimpleMem's published result.
+    UNIFIED_OVERRIDES = {
+        "simplemem_llm_model": "gpt-5-mini",
+        "embedding_model": "text-embedding-3-small",
+    }
 
     def __init__(self, config=None):
         super().__init__(config)
@@ -183,16 +228,16 @@ class SimpleMemMemo(DiskStoreCache, MemoClass):
             # EmbeddingModel is constructed here → patched SentenceTransformer
             self._system = SimpleMemSystem(
                 api_key=os.environ.get("OPENAI_API_KEY"),
-                model=cfg.get("simplemem_llm_model"),
-                base_url=cfg.get("base_url") or None,
+                model=cfg["simplemem_llm_model"],
+                base_url=cfg["base_url"] or None,
                 db_path=save_dir,
                 # A restored LanceDB store must NOT be cleared (DiskStoreCache).
                 clear_db=not self.restored_from_cache,
                 enable_thinking=False,
                 use_streaming=False,
-                enable_planning=cfg.get("enable_planning"),
-                enable_reflection=cfg.get("enable_reflection"),
-                max_reflection_rounds=cfg.get("max_reflection_rounds"),
+                enable_planning=cfg["enable_planning"],
+                enable_reflection=cfg["enable_reflection"],
+                max_reflection_rounds=cfg["max_reflection_rounds"],
                 # SimpleMem's internal thread pools are KEPT ON (its shipped
                 # default, and the path the paper's numbers use): the serial and
                 # parallel build paths are NOT equivalent — the serial path feeds
@@ -206,10 +251,10 @@ class SimpleMemMemo(DiskStoreCache, MemoClass):
                 # extraction concurrently; embedding into LanceDB is batched once
                 # at the end (single-threaded), so the shared embedder is never
                 # hit from multiple threads.
-                enable_parallel_processing=cfg.get("enable_parallel_processing"),
-                max_parallel_workers=cfg.get("max_parallel_workers"),
-                enable_parallel_retrieval=cfg.get("enable_parallel_retrieval"),
-                max_retrieval_workers=cfg.get("max_retrieval_workers"),
+                enable_parallel_processing=cfg["enable_parallel_processing"],
+                max_parallel_workers=cfg["max_parallel_workers"],
+                enable_parallel_retrieval=cfg["enable_parallel_retrieval"],
+                max_retrieval_workers=cfg["max_retrieval_workers"],
             )
 
     async def build_memory_from_data(self, recorder) -> None:

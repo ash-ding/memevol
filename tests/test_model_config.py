@@ -18,7 +18,6 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from baselines.harness import model_config as mc  # noqa: E402
-from common.config import load_config_file, validate_exact_config  # noqa: E402
 
 HARNESS_DIR = PROJECT_ROOT / "baselines" / "harness"
 
@@ -330,84 +329,52 @@ def test_api_embedder_encode_shapes(monkeypatched_embedding=None):
 
 
 # ---------------- the config surface ----------------
+#
+# Every method knob is declared ONCE, as a class attribute on the memo class
+# (CONFIG_DEFAULTS = the faithful arm, UNIFIED_OVERRIDES = what `arm: unified`
+# changes). Read out of memo.py by AST so no baseline's heavy deps are needed.
 
-def _required_keys(run_py: Path):
-    """REQUIRED_KEYS out of a run.py without importing it (memo.py pulls heavy deps)."""
-    for node in ast.walk(ast.parse(run_py.read_text(encoding="utf-8"))):
-        if isinstance(node, ast.Assign) and any(
-            getattr(t, "id", None) == "REQUIRED_KEYS" for t in node.targets
-        ):
-            return frozenset(ast.literal_eval(node.value.args[0]))
-    raise AssertionError(f"no REQUIRED_KEYS in {run_py}")
+def _class_dicts(memo_py: Path):
+    """(CONFIG_DEFAULTS, UNIFIED_OVERRIDES) literals out of memo.py without importing it."""
+    found = {}
+    for node in ast.walk(ast.parse(memo_py.read_text(encoding="utf-8"))):
+        if isinstance(node, ast.Assign):
+            for t in node.targets:
+                if getattr(t, "id", None) in ("CONFIG_DEFAULTS", "UNIFIED_OVERRIDES"):
+                    found[t.id] = ast.literal_eval(node.value)
+    assert "CONFIG_DEFAULTS" in found, f"no CONFIG_DEFAULTS in {memo_py}"
+    return found["CONFIG_DEFAULTS"], found.get("UNIFIED_OVERRIDES", {})
 
 
 def _baseline_dirs():
-    return sorted(d for d in HARNESS_DIR.iterdir()
-                  if d.is_dir() and (d / "run.py").exists())
+    from baselines.harness.eval_harness import MEMOS
+    return sorted(HARNESS_DIR / name for name in MEMOS)
 
 
-def _config_files(d: Path):
-    """Every config that can be passed to this baseline's run.py.
-
-    `smoke_*.yaml` are LOCAL scratch files by repo convention — `.gitignore`
-    excludes them per baseline — so they are validated opportunistically when
-    present in a working tree and simply absent in a fresh clone.
-    """
-    return sorted(list(d.glob("config.*.yaml")) + list(d.glob("smoke_*.yaml")))
+def test_registry_names_every_baseline_dir_and_nothing_else():
+    from baselines.harness.eval_harness import MEMOS
+    on_disk = {d.name for d in HARNESS_DIR.iterdir() if (d / "memo.py").exists()}
+    assert on_disk == set(MEMOS), (on_disk, set(MEMOS))
+    for name, spec in MEMOS.items():
+        assert spec.startswith(f"baselines.harness.{name}.memo:"), spec
 
 
-def test_every_baseline_config_matches_its_required_keys():
-    # Guards the whole surface at once: a new model key added to run.py but
-    # forgotten in any config (or vice versa) fails here.
-    #
-    # The smoke_*.yaml files are included deliberately. They were written against
-    # the old `strict_config: false` + DEFAULT_CONFIG layering, and when exact
-    # config replaced it they silently became unloadable — every one of them
-    # aborted before running anything, while three READMEs still told you to run
-    # them. Nothing caught it because nothing validated them.
+def test_no_baseline_ships_a_runner_or_its_own_config():
+    # The whole point of #24: a harness dir provides only its MemoClass.
+    # (config.paper.yaml is the record of a published reproduction — allowed.)
     for d in _baseline_dirs():
-        keys = _required_keys(d / "run.py")
-        for cfg in _config_files(d):
-            validate_exact_config(load_config_file(cfg) or {}, keys,
-                                  context=f"{cfg.parent.name}/{cfg.name}")
+        assert not (d / "run.py").exists(), d.name
+        for stray in ("config.example.yaml", "config.unified.yaml"):
+            assert not (d / stray).exists(), f"{d.name}/{stray}"
 
 
-def test_no_config_carries_the_removed_strict_config_knob():
-    # `strict_config` was removed when completeness became unconditional; a
-    # config still carrying it is one that predates the change.
+def test_unified_overrides_are_a_subset_of_the_defaults():
+    # A key that exists only in the unified arm would be a silent no-op in the
+    # faithful arm; resolve_config also rejects it at runtime.
     for d in _baseline_dirs():
-        for cfg in _config_files(d):
-            assert "strict_config" not in (load_config_file(cfg) or {}), cfg.name
-
-
-def test_every_shipped_config_a_readme_points_at_exists():
-    """A README naming a SHIPPED config that isn't there is a broken instruction.
-
-    Only `config.*.yaml` is checked. A README may also walk you through creating
-    your own local file — hipporag2's `my_hr.yaml`, or the `smoke_*.yaml`
-    scratch configs `.gitignore` deliberately keeps out of the repo — and those
-    are supposed to be absent from a fresh clone.
-    """
-    import re
-
-    missing = []
-    for d in _baseline_dirs():
-        readme = d / "README.md"
-        if not readme.exists():
-            continue
-        text = readme.read_text(encoding="utf-8", errors="ignore")
-        for name in set(re.findall(r"--config (\S+\.yaml)", text)):
-            base = Path(name).name
-            if not base.startswith("config."):
-                continue
-            if not (d / base).exists():
-                missing.append(f"{d.name}/README.md -> {name}")
-    assert not missing, f"README points at configs that do not exist: {missing}"
-
-
-def test_every_baseline_ships_a_unified_preset():
-    for d in _baseline_dirs():
-        assert (d / "config.unified.yaml").exists(), f"{d.name} has no unified arm"
+        defaults, unified = _class_dicts(d / "memo.py")
+        extra = set(unified) - set(defaults)
+        assert not extra, f"{d.name}: UNIFIED_OVERRIDES not in CONFIG_DEFAULTS: {extra}"
 
 
 def test_unified_arm_is_one_llm_and_one_embedder_everywhere():
@@ -415,86 +382,71 @@ def test_unified_arm_is_one_llm_and_one_embedder_everywhere():
     held fixed, so a difference in score is a difference in method."""
     llm_keys = {"amem_llm_model", "hipporag2_llm_model", "lightmem_llm_model",
                 "mem0_llm_model", "memoryos_llm_model", "simplemem_llm_model",
-                "graph_llm_model", "llm_model", "judge_model"}
+                "graph_llm_model"}
     embedder_keys = {"amem_embedding_model", "memoryos_embedding_model",
                      "embedding_model", "embedder_model", "embedding"}
     for d in _baseline_dirs():
-        cfg = load_config_file(d / "config.unified.yaml") or {}
-        for key in llm_keys & set(cfg):
-            assert cfg[key] == "gpt-5-mini", f"{d.name}: {key}={cfg[key]!r}"
-        for key in embedder_keys & set(cfg):
-            assert cfg[key] == "text-embedding-3-small", f"{d.name}: {key}={cfg[key]!r}"
+        defaults, unified = _class_dicts(d / "memo.py")
+        resolved = {**defaults, **unified}
+        assert llm_keys & set(resolved), f"{d.name}: no internal-LLM key"
+        for key in llm_keys & set(resolved):
+            assert resolved[key] == "gpt-5-mini", f"{d.name}: {key}={resolved[key]!r}"
+        for key in embedder_keys & set(resolved):
+            assert resolved[key] == "text-embedding-3-small", f"{d.name}: {key}={resolved[key]!r}"
 
 
 def test_the_two_arms_differ_only_in_models():
     """The invariant the whole comparison rests on: switching arms must change
     the MODELS and nothing else. If a method knob drifts between the two, a
-    score difference stops being attributable to the model swap.
-
-    (This caught `window_size` drifting to 40 in simplemem's unified arm after
-    the faithful arm moved to the paper's 20.)
-    """
+    score difference stops being attributable to the model swap."""
     model_keys = {
         "amem_llm_model", "amem_embedding_model", "hipporag2_llm_model",
         "lightmem_llm_model", "mem0_llm_model", "memoryos_llm_model",
         "memoryos_embedding_model", "simplemem_llm_model", "graph_llm_model",
         "graph_llm_small_model", "embedding_model", "embedder", "embedder_model",
-        "embedding", "embedding_dims", "llm_model", "judge_model",
-        # not models, but legitimately arm-independent choices
-        "dataset", "split", "embedding_device",
+        "embedding", "embedding_dims",
     }
-    drift = {}
     for d in _baseline_dirs():
-        unified = d / "config.unified.yaml"
-        if not unified.exists():
-            continue
-        faithful = load_config_file(d / "config.example.yaml") or {}
-        other = load_config_file(unified) or {}
-        differing = {
-            k: (faithful.get(k), other.get(k))
-            for k in set(faithful) | set(other)
-            if faithful.get(k) != other.get(k) and k not in model_keys
-        }
-        if differing:
-            drift[d.name] = differing
-    assert not drift, f"non-model drift between the arms: {drift}"
+        _, unified = _class_dicts(d / "memo.py")
+        drift = set(unified) - model_keys
+        assert not drift, f"{d.name}: non-model keys in UNIFIED_OVERRIDES: {drift}"
 
 
 def test_unified_lightmem_moves_its_dimension_with_the_embedder():
     # lightmem is the one baseline carrying an explicit dims knob: it sizes the
     # Qdrant collection AND is sent as the API `dimensions` parameter, so a
     # stale 384 against a 1536-dim embedder is a hard failure.
-    cfg = load_config_file(HARNESS_DIR / "lightmem" / "config.unified.yaml") or {}
-    assert cfg["embedding_model"] == "text-embedding-3-small"
-    assert cfg["embedding_dims"] == 1536
+    _, unified = _class_dicts(HARNESS_DIR / "lightmem" / "memo.py")
+    assert unified["embedding_model"] == "text-embedding-3-small"
+    assert unified["embedding_dims"] == 1536
 
 
-def test_no_config_hardcodes_cuda():
+def test_no_default_hardcodes_cuda():
     # The regression this replaces: lightmem (x2) and zep (x1) defaulted to
     # "cuda" and crashed outright on a CPU-only box.
     for d in _baseline_dirs():
-        for cfg_path in sorted(d.glob("config.*.yaml")):
-            cfg = load_config_file(cfg_path) or {}
-            for key in ("device", "embedding_device", "llmlingua_device"):
-                if key in cfg:
-                    assert cfg[key] is None, f"{cfg_path.name}: {key}={cfg[key]!r}"
+        defaults, _ = _class_dicts(d / "memo.py")
+        for key in ("device", "embedding_device", "llmlingua_device"):
+            if key in defaults:
+                assert defaults[key] is None, f"{d.name}: {key}={defaults[key]!r}"
 
 
-def test_src_is_untouched_by_the_configurable_model_layer():
-    """Byte-identity guard. Every lever in model_config.py acts at a boundary
-    OUTSIDE the vendored source, so no `src/` tree may import it.
+def test_every_shipped_config_a_readme_points_at_exists():
+    """A README naming a SHIPPED config that isn't there is a broken instruction."""
+    import re
 
-    Matches the IMPORT specifically, not the bare name — pydantic v2 models use
-    a `model_config` attribute all over the vendored trees.
-    """
-    needle = "baselines.harness.model_config"
-    offenders = [str(p.relative_to(PROJECT_ROOT))
-                 for d in _baseline_dirs() for p in (d / "src").rglob("*.py")
-                 if needle in p.read_text(encoding="utf-8", errors="ignore")]
-    assert not offenders, f"vendored source imports model_config: {offenders}"
+    missing = []
+    for readme in [HARNESS_DIR / "README.md", *(d / "README.md" for d in _baseline_dirs())]:
+        if not readme.exists():
+            continue
+        text = readme.read_text(encoding="utf-8", errors="ignore")
+        for name in set(re.findall(r"--config (\S+\.yaml)", text)):
+            if not Path(name).name.startswith("config."):
+                continue
+            if not (PROJECT_ROOT / name).exists() and not (readme.parent / Path(name).name).exists():
+                missing.append(f"{readme.parent.name}/README.md -> {name}")
+    assert not missing, f"README points at configs that do not exist: {missing}"
 
-
-# -------------------- runner --------------------
 
 def main():
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
