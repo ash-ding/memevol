@@ -17,6 +17,16 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
+def _resolved(arm="faithful", **memo):
+    """The complete config eval_harness would hand this memo (plus `memo:` overrides)."""
+    from baselines.harness import eval_harness as eh
+    from baselines.harness.zep import memo as memo_module
+    unified_models = ({"llm": "gpt-5-mini", "embedding": "text-embedding-3-small"}
+                      if arm == "unified" else None)
+    return eh.resolve_memo_config(memo_module.CONFIG_DEFAULTS, memo_module.UNIFIED_MODEL_KEYS,
+                                  arm=arm, unified_models=unified_models, overrides=memo)
+
+
 def test_memo_module_imports():
     # Regression guard: a leftover reference to the deleted `_st_shim` module
     # once made this module raise NameError at import, so zep could not run at all.
@@ -129,7 +139,7 @@ class _FakeGraphiti:
 
 def _memo_with_fake(config=None, **results):
     from baselines.harness.zep.memo import ZepMemo
-    m = ZepMemo(config=config)
+    m = ZepMemo(config=_resolved(**(config or {})))
     m._graphiti = _FakeGraphiti(**results)   # pre-set → _ensure no-ops
     return m
 
@@ -162,12 +172,65 @@ def test_retrieve_empty_query_or_results_returns_empty_dict():
 
 # ---- config + contract ----
 
-def test_config_defaults_and_unified_overrides():
-    from baselines.harness.zep.memo import ZepMemo
-    assert ZepMemo.CONFIG_DEFAULTS["graph_llm_model"] == "gpt-4o-mini-2024-07-18"
-    unified = ZepMemo.resolve_config("unified")
-    assert unified["embedder"] == "openai" and unified["embedder_model"] == "text-embedding-3-small"
+def test_config_defaults_and_unified_models():
+    from baselines.harness.zep.memo import CONFIG_DEFAULTS
+    assert CONFIG_DEFAULTS["graph_llm_model"] == "gpt-4o-mini-2024-07-18"
+    unified = _resolved("unified")
+    assert unified["graph_llm_model"] == "gpt-5-mini"
+    assert unified["embedder_model"] == "text-embedding-3-small"
     assert unified["reranker"] == "bge"   # the cross-encoder stays local in both arms
+
+
+def test_graphiti_telemetry_is_switched_off_explicitly():
+    import baselines.harness.zep.memo as zm
+    assert zm._graphiti_telemetry.is_telemetry_enabled() is False
+
+
+def test_ensure_passes_embedding_width_concurrency_and_models_explicitly():
+    """The API embedder is told its width (Graphiti otherwise truncates to the
+    EMBEDDING_DIM env default, 1024), concurrency is `max_coroutines`, and the
+    small model is the graph model — nothing is left to the environment."""
+    import redislite.async_falkordb_client as rl
+    import graphiti_core.embedder.openai as g_openai
+    import baselines.harness.zep.memo as zm
+    seen = {}
+
+    class _FakeDB:
+        def __init__(self, dbfilename): seen["db"] = dbfilename
+
+    class _FakeEmbedder:
+        def __init__(self, config): seen["embedder_config"] = config
+
+    class _FakeGraphiti:
+        def __init__(self, **kw): seen["graphiti"] = kw
+        async def build_indices_and_constraints(self): pass
+
+    class _FakeLLMClient:
+        def __init__(self, config): self.config = config
+
+    patches = [(rl, "AsyncFalkorDB", _FakeDB), (zm, "FalkorDriver", lambda falkor_db: object()),
+               (g_openai, "OpenAIEmbedder", _FakeEmbedder), (zm, "Graphiti", _FakeGraphiti),
+               (zm, "OpenAIClient", _FakeLLMClient),
+               (zm, "CachedBGEReranker", lambda model, device=None: "reranker")]
+    saved = [(obj, name, getattr(obj, name)) for obj, name, _ in patches]
+    for obj, name, value in patches:
+        setattr(obj, name, value)
+    tmp = tempfile.mkdtemp()
+    m = zm.ZepMemo(config=_resolved("unified", db_root=tmp))
+    try:
+        asyncio.run(m._ensure())
+        cfg = seen["embedder_config"]
+        assert cfg.embedding_model == "text-embedding-3-small" and cfg.embedding_dim == 1536
+        g = seen["graphiti"]
+        assert g["max_coroutines"] == 20
+        assert g["llm_client"].config.model == "gpt-5-mini"
+        assert g["llm_client"].config.small_model == "gpt-5-mini"
+        assert g["cross_encoder"] == "reranker"
+    finally:
+        for obj, name, value in saved:
+            setattr(obj, name, value)
+        m._db_path = None   # nothing on disk to clean up
+        import shutil; shutil.rmtree(tmp, ignore_errors=True)
 
 
 def test_memo_implements_the_three_hook_contract():

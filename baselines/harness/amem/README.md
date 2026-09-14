@@ -51,15 +51,17 @@ counts as listed. `--project` is not optional: this baseline's deps live only
 in its own venv.
 
 **Method knobs are not in the config file.** Every amem-specific parameter is
-declared once, with its justification, as `CONFIG_DEFAULTS` on the memo class
-in [`memo.py`](memo.py) (the faithful arm) plus `UNIFIED_OVERRIDES` (what
-`arm: unified` changes). Print them:
+declared once, with its justification, in `CONFIG_DEFAULTS` at the top of
+[`memo.py`](memo.py) (the faithful arm); `UNIFIED_MODEL_KEYS` names the keys
+`arm: unified` writes `unified_models` into. Print them:
 
     uv run --project baselines/harness/amem python -m baselines.harness.eval_harness --describe amem
 
-Every run records the fully merged values in `runs/<run_id>/config.resolved.yaml`.
+Every run keeps its config as `runs/<run_id>/config.yaml` (copy it to re-run) and
+the fully resolved values in `runs/<run_id>/memo_config.resolved.yaml`.
 To override one for an ablation, add a `memo:` block to your config
-(`memo: {retrieve_k: 5}`) — validated against the class, so a typo aborts.
+(`memo: {retrieve_k: 5}`) — validated against `CONFIG_DEFAULTS`, so a typo aborts;
+model keys can't be set there (use `arm` / `unified_models`).
 
 Worth calling out: `amem_llm_model` (default `gpt-4o-mini`, A-mem's own
 default) and `amem_embedding_model` (default `all-MiniLM-L6-v2`, the
@@ -83,7 +85,7 @@ every key.
 
 Every model this baseline touches is a config parameter, so it runs in two arms:
 
-| | faithful arm (`CONFIG_DEFAULTS`, `arm: faithful`) | unified arm (`UNIFIED_OVERRIDES`, `arm: unified`) |
+| | faithful arm (`arm: faithful` — `CONFIG_DEFAULTS`) | unified arm (`arm: unified` — example `unified_models`) |
 |---|---|---|
 | internal LLM (`amem_llm_model`) | `gpt-4o-mini` — A-mem's own default | `gpt-5-mini` |
 | embedder (`amem_embedding_model`) | `all-MiniLM-L6-v2`, local, 384-dim — the paper's | `text-embedding-3-small`, API, 1536-dim |

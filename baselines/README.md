@@ -185,7 +185,8 @@ real CLI with runtime knobs like `--status`/`--steps`/`--run-name`); every
 `memoryos`) runs through **one shared entrypoint**,
 [`harness/eval_harness.py`](harness/eval_harness.py), which takes exactly one
 flag, `--config <yaml>`, and reads a config that carries the **evaluation frame
-only** — every method knob is a class-level default on the memo class.
+only** — every method knob is a default in that baseline's `memo.py`
+(`CONFIG_DEFAULTS`), resolved by the entrypoint.
 
 ### alma + meta-harness (evolve baselines) — layered, unchanged
 
@@ -233,20 +234,27 @@ uv run --project baselines/harness/<name> python -m baselines.harness.eval_harne
 
 [`harness/config.example.yaml`](harness/config.example.yaml) is the ONE config,
 identical for all seven baselines. It carries the **evaluation frame** and
-nothing else: `harness` (which memo class), `arm` (see **Two model arms**),
-`dataset`, `split`, `progressive`, `sampling_seed`, `single_stage`, `stages`,
-`llm_model`, `judge_model`, `max_sample_concurrent`, and an
-optional `run_name`. No method parameter appears in it.
+nothing else: `harness` (which memo class), `arm` + `unified_models` (see
+**Two model arms**), `dataset`, `split`, `progressive`, `sampling_seed`,
+`single_stage`, `stages`, `llm_model`, `judge_model`, `max_sample_concurrent`,
+and the optional `run_name` / `memo`. No method parameter appears in it.
 
-- **Method knobs live on the memo class**, declared ONCE as
-  `CONFIG_DEFAULTS` in `harness/<name>/memo.py` — with the comment that
-  justifies each value (paper section, upstream default, deliberate
-  deviation) next to it — plus `UNIFIED_OVERRIDES`, the model swap
-  `arm: unified` applies. The point of these baselines is to run each system
-  as its authors specified and get one number, not to tune it, so there is no
-  method-parameter surface in the documented path. Print a class's values
-  without reading source:
+- **Method knobs are module-level data in `harness/<name>/memo.py`**, declared
+  ONCE as `CONFIG_DEFAULTS` — with the comment that justifies each value
+  (paper section, upstream default, deliberate deviation) next to it — plus
+  `UNIFIED_MODEL_KEYS`, the keys `arm: unified` writes `unified_models` into.
+  `eval_harness.py` resolves them and passes the complete result to the memo's
+  constructor; the class itself holds no defaults and no resolution logic, it
+  only reads `self.config`. The point of these baselines is to run each system
+  as its authors specified and get one number, not to tune it. Print a
+  baseline's values without reading source:
   `uv run --project baselines/harness/<name> python -m baselines.harness.eval_harness --describe <name>`.
+- **Nothing comes from the environment.** No `memo.py` reads or writes a
+  setting through `os.environ` (API keys are the one exception — credentials,
+  resolved by the SDKs and never written into a config or record), and a run
+  refuses to start if an environment variable that vendored code or the OpenAI
+  SDK would read (`OPENAI_BASE_URL`, `OPENROUTER_API_KEY`, graphiti's
+  `SEMAPHORE_LIMIT`, ...) is set — see `eval_harness.check_environment`.
 - **Exact validation is unchanged** —
   [`common/config.py::validate_exact_config`](../common/config.py): the YAML
   must list every frame key and NO other key (a `null` value counts as
@@ -254,11 +262,12 @@ optional `run_name`. No method parameter appears in it.
   level — aborts before anything runs, naming every problem at once). The
   active sizing block is checked to the LEAF via
   `common.evaluate.missing_sizing_config`.
-- **Ablation hatch (left out of the example on purpose)**: an optional
-  `memo:` block overrides individual class defaults, e.g.
-  `memo: {retrieve_k: 10}`. It is validated against that class's
-  `CONFIG_DEFAULTS`, so a typo still aborts. It exists so an ablation never
-  requires editing `memo.py` — which would silently change every later run.
+- **Ablation hatch**: an optional `memo:` block overrides method
+  hyper-parameters, e.g. `memo: {retrieve_k: 10}`. It is validated against
+  `CONFIG_DEFAULTS`, so a typo still aborts, and it may NOT set a key the arm
+  controls — models change only through `arm` / `unified_models`. It exists so
+  an ablation never requires editing `memo.py`, which would silently change
+  every later run.
 - **`config.paper.yaml`** — `mem0` and `memoryos` keep one: the record of the
   run that produced the reproduction numbers in their READMEs (frame keys
   only; the method runs at its faithful defaults).
@@ -288,16 +297,17 @@ number carries what produced it:
 
 ```
 baselines/harness/<name>/runs/                       (gitignored)
-├── index.jsonl                   one line per finished run: run_id, arm, dataset,
-│                                 split, raw_score, stage, tokens, wall_clock_s, git_sha
+├── index.jsonl                   one line per finished run: run_id, arm, unified_models,
+│                                 dataset, split, raw_score, stage, tokens, wall_clock_s, git_sha
 ├── latest                        the most recent run_id
 └── <run_id>/                     <YYYYMMDD_HHMMSS>_<dataset>_<split>, or `run_name`
-    ├── config.resolved.yaml      frame + the FULLY expanded memo config — the only
-    │                             place a run's method parameters (internal LLM,
-    │                             embedder, ...) are recorded; feeding it back as
-    │                             --config reproduces the run
-    ├── run.json                  harness, memo class, git sha, python, start/end,
-    │                             wall clock, exit status
+    ├── config.yaml               the config file as given, byte for byte — copy it to
+    │                             re-run (flipping `arm` switches the models cleanly)
+    ├── memo_config.resolved.yaml the fully resolved method config the memo received
+    │                             (internal LLM, embedder, every knob) — a record, NOT
+    │                             a --config input
+    ├── run.json                  harness, memo class, arm, unified_models, git sha,
+    │                             python, start/end, wall clock, exit status
     ├── run.log                   the logger tape for this run
     └── score.json  token_usage.json  stages.json  traces/  stage*/   (evaluate_memo, unchanged)
 ```
@@ -305,13 +315,19 @@ baselines/harness/<name>/runs/                       (gitignored)
 ### Two model arms — faithful vs unified
 
 Every model a harness baseline touches — internal LLM, embedder, reranker,
-compressor — is a class-level parameter, and the `arm:` frame key selects
-between two settings of them:
+compressor — is a key in its `CONFIG_DEFAULTS`, and the `arm:` frame key
+selects between two settings of the internal LLM and the embedder:
 
-| arm | where the values live | what it is |
+| arm | where the values come from | what it is |
 |---|---|---|
-| **faithful** | `CONFIG_DEFAULTS` | each method's own published models. **The default.** What every README's faithfulness table describes |
-| **unified** | `CONFIG_DEFAULTS` + `UNIFIED_OVERRIDES` | one LLM (`gpt-5-mini`) + one embedder (`text-embedding-3-small`) everywhere. The arm to compare against the main method |
+| **faithful** (`unified_models: null`) | `CONFIG_DEFAULTS` | each method's own published models. **The default.** What every README's faithfulness table describes |
+| **unified** | `CONFIG_DEFAULTS`, with `unified_models.llm` / `.embedding` written into the keys `UNIFIED_MODEL_KEYS` names | the SAME LLM + embedder everywhere (the example config: `gpt-5-mini` + `text-embedding-3-small`). The arm to compare against the main method |
+
+Only models change between the arms — every method hyper-parameter stays each
+method's own — and two local models stay local in both (lightmem's LLMlingua-2
+compressor, zep's bge cross-encoder reranker: neither has an API equivalent).
+The shared QA agent and judge (`llm_model` / `judge_model`) are frame keys,
+independent of the arm.
 
 The faithful defaults are deliberately NOT replaced: the local embedders are
 paper choices (zep's bge-m3, simplemem's Qwen3) and the READMEs make
@@ -321,7 +337,7 @@ config decision, and the two are directly comparable because everything else is
 held fixed.
 
 **Every faithful-arm model is traceable to a paper section**, cited inline in
-each memo class's `CONFIG_DEFAULTS`:
+each memo.py's `CONFIG_DEFAULTS`:
 
 | baseline | internal LLM | embedder | source |
 |---|---|---|---|
@@ -690,26 +706,26 @@ import uuid
 from typing import Dict, Optional
 from common.memo_class import MemoClass
 
-class MyMemo(MemoClass):
-    # EVERY method knob, declared once, with the reason for its value. This is
-    # the faithful arm; `--describe <name>` prints it, and every run records the
-    # merged result in runs/<run_id>/config.resolved.yaml.
-    CONFIG_DEFAULTS = {
-        "my_llm_model": "gpt-4o-mini",      # PAPER §x.y: ...
-        "embedding_model": "all-MiniLM-L6-v2",
-        "top_k": 10,                        # PAPER §x.y: k=10
-    }
-    # What `arm: unified` changes — the fleet's one LLM + one API embedder.
-    UNIFIED_OVERRIDES = {
-        "my_llm_model": "gpt-5-mini",
-        "embedding_model": "text-embedding-3-small",
-    }
+# EVERY method knob, declared once as MODULE-LEVEL data, with the reason for its
+# value. This is the faithful arm; `--describe <name>` prints it, and every run
+# records the resolved result in runs/<run_id>/memo_config.resolved.yaml.
+CONFIG_DEFAULTS = {
+    "my_llm_model": "gpt-4o-mini",      # PAPER §x.y: ...
+    "embedding_model": "all-MiniLM-L6-v2",
+    "top_k": 10,                        # PAPER §x.y: k=10
+}
+# Where `arm: unified` writes unified_models.llm / .embedding (a baseline that
+# must be told its embedder's width also maps "embedding_dims").
+UNIFIED_MODEL_KEYS = {"llm": ("my_llm_model",), "embedding": ("embedding_model",)}
 
+
+class MyMemo(MemoClass):             # no config machinery on the class
     def __init__(self, config=None):
-        super().__init__(config)        # self.config = CONFIG_DEFAULTS overlaid with config
+        super().__init__(config)        # self.config = the complete resolved config
         self._instance_id = uuid.uuid4().hex[:12]   # per-user state scoping
         self._system = ...              # construct the wrapped memory system from
-                                        #   self.config["top_k"] etc. — no second inline default
+                                        #   self.config["top_k"] etc. — never a default here,
+                                        #   never os.environ
 
     async def build_memory_from_data(self, recorder) -> None:
         init = recorder.init
@@ -763,7 +779,7 @@ them. That is also why `--project` is not optional in the launch command.
 That is the whole integration. There is no per-baseline `run.py` and no
 per-baseline config file: the frame config is the shared
 [harness/config.example.yaml](harness/config.example.yaml) (set
-`harness: <name>`), and your method knobs are `CONFIG_DEFAULTS` on the class.
+`harness: <name>`), and your method knobs are `CONFIG_DEFAULTS` in memo.py.
 The framework creates a FRESH memo per user/conversation as
 `MyMemo(config=resolved_memo_config)`; each instance keeps its own private
 copy at `self.config` (never share mutable state across users). No

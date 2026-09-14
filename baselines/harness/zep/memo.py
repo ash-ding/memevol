@@ -47,7 +47,8 @@ from common.memo_class import MemoClass
 from common.openai_usage import install as _install_openai_usage
 from baselines.harness.hipporag2.memo import app_log_to_passage
 from baselines.harness.model_config import (
-    install_openai_param_normalisation, resolve_device,
+    api_embedding_dims, install_openai_param_normalisation, is_api_embedding_model,
+    resolve_device,
 )
 
 # `import graphiti_core` must resolve to the byte-identical vendored copy under
@@ -78,6 +79,14 @@ from graphiti_core.cross_encoder.bge_reranker_client import BGERerankerClient  #
 from graphiti_core.search.search_config_recipes import (  # noqa: E402
     COMBINED_HYBRID_SEARCH_CROSS_ENCODER,
 )
+import graphiti_core.telemetry.telemetry as _graphiti_telemetry  # noqa: E402
+
+# Graphiti sends an anonymous PostHog event on every Graphiti() construction —
+# once per user here — unless GRAPHITI_TELEMETRY_ENABLED says otherwise. A
+# benchmark run should not phone home (mem0's is off for the same reason), and
+# the switch is set here explicitly rather than through the environment:
+# `capture_event` looks this function up at call time.
+_graphiti_telemetry.is_telemetry_enabled = lambda: False
 
 # --- Paper-faithful BGE-m3 embedder + cached BGE reranker --------------------
 #
@@ -127,13 +136,12 @@ class BGEM3Embedder(EmbedderClient):
     """SentenceTransformer('BAAI/bge-m3') as a graphiti EmbedderClient. Encodes on
     the ST model (cached, shared) in an executor so the async graph pipeline never
     blocks. Embeddings are L2-normalized (graphiti retrieval uses cosine
-    similarity) and truncated to config.embedding_dim (default 1024 = BGE-m3's
-    native dim, so a no-op)."""
+    similarity) and kept at the model's native width — set explicitly, because
+    EmbedderConfig's default width comes from the EMBEDDING_DIM env var."""
 
-    def __init__(self, model_name: str = DEFAULT_EMBEDDER_MODEL,
-                 device: str | None = None, config: EmbedderConfig | None = None):
-        self.config = config or EmbedderConfig()
+    def __init__(self, model_name: str = DEFAULT_EMBEDDER_MODEL, device: str | None = None):
         self.model = get_bge_embedder(model_name, device=device)
+        self.config = EmbedderConfig(embedding_dim=self.model.get_sentence_embedding_dimension())
 
     def _encode(self, texts: list[str]) -> list[list[float]]:
         vecs = self.model.encode(texts, normalize_embeddings=True)
@@ -280,50 +288,51 @@ def _format_context(edges: List[Any], nodes: List[Any]) -> str:
     return _CONTEXT_TEMPLATE.format(facts="\n".join(facts), entities="\n".join(entities))
 
 
-class ZepMemo(MemoClass):
-    CONFIG_DEFAULTS = {
-        "retrieve_k": 20,          # PAPER §4: "retrieve the 20 most relevant edges (facts) and entity nodes"
-        "embedder": "bge-m3",      # bge-m3 (paper-faithful, local sentence-transformers) | openai
-        # PAPER §4.1: "the BGE-m3 models from BAAI for both reranking and
-        # embedding tasks". 1024-dim.
-        "embedder_model": "BAAI/bge-m3",
-        "reranker": "bge",         # bge (paper-faithful cross-encoder rerank) | openai
-        # PAPER §4.1 names the BGE-m3 family for reranking without pinning a
-        # checkpoint; this is that family's cross-encoder and graphiti's own
-        # BGERerankerClient default.
-        "reranker_model": "BAAI/bge-reranker-v2-m3",
-        # sentence-transformers device for BGE-m3 + reranker. None/"auto" =>
-        # cuda if a GPU is visible, else cpu. Pin with "cpu" / "cuda:1" if needed.
-        "device": None,
-        # Dir for the embedded FalkorDB Lite store; None => system temp. MUST be
-        # a native POSIX FS (redislite binds a unix socket) — do NOT point at
-        # /mnt/c or another DrvFs/9p mount under WSL.
-        "db_root": None,
-        # PAPER §4.1: "we utilize gpt-4o-mini-2024-07-18 for graph construction".
-        # The DATED snapshot is the paper's, and is what this pins — the undated
-        # `gpt-4o-mini` alias now resolves to a later snapshot, so it would
-        # silently stop reproducing the paper. Graphiti already drops
-        # temperature for the gpt-5 family but still sends max_tokens, which
-        # they reject; model_config renames it, so a gpt-5 model is runnable too.
-        "graph_llm_model": "gpt-4o-mini-2024-07-18",
-        # Graphiti "small" LLM for simpler prompts; None => same as
-        # graph_llm_model. The paper names no separate small model.
-        "graph_llm_small_model": None,
-    }
-    # UNIFIED arm: the graph-construction LLM and the embedder change (Graphiti's
-    # own OpenAIEmbedder — an injected EmbedderClient, no adapter). 1536-dim:
-    # any FalkorDB store built at 1024-dim is invalid.
-    # WHAT STAYS LOCAL: the reranker. bge-reranker-v2-m3 is a CROSS-ENCODER
-    # scoring (query, doc) pairs, so it has no API equivalent; Graphiti's
-    # OpenAIRerankerClient is an LLM-scoring reranker — a materially different
-    # retrieval algorithm — so the paper's cross-encoder is kept in BOTH arms
-    # (still the heaviest local cost in the fleet: ~570M params, k passes/query).
-    UNIFIED_OVERRIDES = {
-        "embedder": "openai",
-        "embedder_model": "text-embedding-3-small",
-        "graph_llm_model": "gpt-5-mini",
-    }
+# Method config, faithful arm — module-level DATA: eval_harness.py resolves it
+# (with `arm` / `unified_models` / `memo:`) and hands the result to the memo's
+# constructor; the class itself only reads self.config.
+CONFIG_DEFAULTS = {
+    "retrieve_k": 20,          # PAPER §4: "retrieve the 20 most relevant edges (facts) and entity nodes"
+    # PAPER §4.1: "the BGE-m3 models from BAAI for both reranking and
+    # embedding tasks". 1024-dim, local sentence-transformers. A
+    # `text-embedding-*` name builds Graphiti's OpenAIEmbedder instead.
+    "embedder_model": "BAAI/bge-m3",
+    "reranker": "bge",         # bge (paper-faithful cross-encoder rerank) | openai
+    # PAPER §4.1 names the BGE-m3 family for reranking without pinning a
+    # checkpoint; this is that family's cross-encoder and graphiti's own
+    # BGERerankerClient default.
+    "reranker_model": "BAAI/bge-reranker-v2-m3",
+    # sentence-transformers device for BGE-m3 + reranker. None/"auto" =>
+    # cuda if a GPU is visible, else cpu. Pin with "cpu" / "cuda:1" if needed.
+    "device": None,
+    # Dir for the embedded FalkorDB Lite store; None => system temp. MUST be
+    # a native POSIX FS (redislite binds a unix socket) — do NOT point at
+    # /mnt/c or another DrvFs/9p mount under WSL.
+    "db_root": None,
+    # PAPER §4.1: "we utilize gpt-4o-mini-2024-07-18 for graph construction".
+    # The DATED snapshot is the paper's, and is what this pins — the undated
+    # `gpt-4o-mini` alias now resolves to a later snapshot, so it would
+    # silently stop reproducing the paper. Graphiti already drops
+    # temperature for the gpt-5 family but still sends max_tokens, which
+    # they reject; model_config renames it, so a gpt-5 model is runnable too.
+    "graph_llm_model": "gpt-4o-mini-2024-07-18",
+    # Max concurrent graph operations — Graphiti's own default (its
+    # SEMAPHORE_LIMIT), passed as `max_coroutines` so the environment can't
+    # change it. The paper states none.
+    "max_coroutines": 20,
+}
+# `arm: unified` writes unified_models.llm / .embedding into these keys; an API
+# embedder is then built through Graphiti's own OpenAIEmbedder (an injected
+# EmbedderClient, no adapter). WHAT STAYS LOCAL: the reranker.
+# bge-reranker-v2-m3 is a CROSS-ENCODER scoring (query, doc) pairs, so it has
+# no API equivalent; Graphiti's OpenAIRerankerClient is an LLM-scoring reranker
+# — a materially different retrieval algorithm — so the paper's cross-encoder is
+# kept in BOTH arms (still the heaviest local cost in the fleet: ~570M params,
+# k passes/query).
+UNIFIED_MODEL_KEYS = {"llm": ("graph_llm_model",), "embedding": ("embedder_model",)}
 
+
+class ZepMemo(MemoClass):
     def __init__(self, config=None):
         super().__init__(config)
         # Per-user isolation: a fresh instance == one user (no cross-user state —
@@ -347,13 +356,17 @@ class ZepMemo(MemoClass):
         driver = FalkorDriver(falkor_db=self._falkor_db)
 
         device = resolve_device(self.config["device"])   # None → cuda if visible, else cpu
-        # Embedder: paper-faithful BGE-m3 (default) or OpenAI (unified arm).
-        if self.config["embedder"] == "openai":
+        # Embedder: paper-faithful BGE-m3 (default) or an OpenAI API model
+        # (unified arm). The width is passed explicitly: OpenAIEmbedder truncates
+        # every vector to it, and its default comes from the EMBEDDING_DIM env var
+        # (1024 when unset) — which silently cut text-embedding-3-small to 1024.
+        model = self.config["embedder_model"]
+        if is_api_embedding_model(model):
             from graphiti_core.embedder.openai import OpenAIEmbedder, OpenAIEmbedderConfig
             embedder = OpenAIEmbedder(OpenAIEmbedderConfig(
-                embedding_model=self.config["embedder_model"]))
+                embedding_model=model, embedding_dim=api_embedding_dims(model)))
         else:
-            embedder = BGEM3Embedder(self.config["embedder_model"], device=device)
+            embedder = BGEM3Embedder(model, device=device)
 
         graph_model = self.config["graph_llm_model"]
         # Reranker: paper-faithful BGE cross-encoder (default) or OpenAI (fallback).
@@ -364,17 +377,15 @@ class ZepMemo(MemoClass):
             cross_encoder = CachedBGEReranker(
                 self.config["reranker_model"], device=device)
 
-        # Internal graph-construction LLM. Paper: gpt-4o-mini-2024-07-18 (4-series).
-        # NOTE: Graphiti uses the openai SDK directly, so these calls do NOT flow
-        # through common.tokens (same caveat as amem/hipporag2/simplemem/lightmem).
-        llm_client = OpenAIClient(config=LLMConfig(
-            model=graph_model,
-            small_model=self.config["graph_llm_small_model"] or graph_model,
-        ))
+        # Internal graph-construction LLM (paper: gpt-4o-mini-2024-07-18) — also
+        # Graphiti's "small" model: the paper names no separate one. Its calls
+        # are captured by common.openai_usage at the SDK boundary.
+        llm_client = OpenAIClient(config=LLMConfig(model=graph_model, small_model=graph_model))
 
         self._graphiti = Graphiti(
             graph_driver=driver, llm_client=llm_client,
             embedder=embedder, cross_encoder=cross_encoder,
+            max_coroutines=self.config["max_coroutines"],
         )
         await self._graphiti.build_indices_and_constraints()
 

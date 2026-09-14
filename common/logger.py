@@ -1,6 +1,9 @@
 """Shared logger used by alma-style code.
 
 Log directory resolution (lazy — happens inside `get_logger`, not at import):
+  0. An explicit `configure(log_dir, log_file)` call — how an in-process
+     entrypoint (baselines/harness/eval_harness.py) routes the tape into its
+     run directory without touching the environment.
   1. `EVALS_LOG_DIR` env var if set (forge sets this to the per-eval out_dir
      via the Singularity --env binding; alma's run.py sets it to
      `baselines/evolve/alma/logs/`). Inside containers, `/out` is bound R/W.
@@ -27,8 +30,23 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _HOST_DEFAULT_LOG_DIR = _PROJECT_ROOT / "baselines" / "evolve" / "alma" / "logs"
 
 
+_configured_log_dir = None
+_configured_log_file = None
+
+
+def configure(log_dir, log_file=None) -> None:
+    """Route file logs explicitly; takes precedence over EVALS_LOG_DIR /
+    MEMEVOL_LOG_FILE. Call before the first `get_logger` — a logger that
+    already exists keeps the file handler it was built with."""
+    global _configured_log_dir, _configured_log_file
+    _configured_log_dir = Path(log_dir)
+    _configured_log_file = log_file
+
+
 def _resolve_log_dir() -> Path:
     """Pick a writable log dir lazily. See module docstring for the chain."""
+    if _configured_log_dir is not None:
+        return _configured_log_dir
     env_dir = os.environ.get("EVALS_LOG_DIR")
     if env_dir:
         return Path(env_dir)
@@ -56,7 +74,7 @@ console = Console(force_terminal=True, soft_wrap=True) if USE_RICH else None
 
 def get_logger(name="", level=logging.INFO, log_file=None, level_styles=None):
     if log_file is None:
-        log_file = _DEFAULT_LOG_FILE
+        log_file = _configured_log_file or _DEFAULT_LOG_FILE
     if name in _initialized_loggers:
         return _initialized_loggers[name]
 

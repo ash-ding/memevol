@@ -14,6 +14,16 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
+def _resolved(arm="faithful", **memo):
+    """The complete config eval_harness would hand this memo (plus `memo:` overrides)."""
+    from baselines.harness import eval_harness as eh
+    from baselines.harness.lightmem import memo as memo_module
+    unified_models = ({"llm": "gpt-5-mini", "embedding": "text-embedding-3-small"}
+                      if arm == "unified" else None)
+    return eh.resolve_memo_config(memo_module.CONFIG_DEFAULTS, memo_module.UNIFIED_MODEL_KEYS,
+                                  arm=arm, unified_models=unified_models, overrides=memo)
+
+
 # ---- _init_to_turns ----
 
 def test_locomo_turns_carry_speaker_ids_and_parsed_session_time():
@@ -84,7 +94,7 @@ def test_unknown_init_raises():
 
 def test_topic_segment_requires_pre_compress():
     from baselines.harness.lightmem.memo import LightMemMemo
-    m = LightMemMemo(config={"pre_compress": False, "topic_segment": True})
+    m = LightMemMemo(config=_resolved(pre_compress=False, topic_segment=True))
     try:
         m._build_config()
     except ValueError as e:
@@ -95,7 +105,7 @@ def test_topic_segment_requires_pre_compress():
 
 def test_faithful_config_uses_huggingface_embedder_and_sized_qdrant():
     from baselines.harness.lightmem.memo import LightMemMemo
-    m = LightMemMemo()
+    m = LightMemMemo(config=_resolved())
     cfg = m._build_config()
     assert cfg["text_embedder"]["model_name"] == "huggingface"
     assert cfg["text_embedder"]["configs"]["model"] == "all-MiniLM-L6-v2"
@@ -107,7 +117,7 @@ def test_faithful_config_uses_huggingface_embedder_and_sized_qdrant():
 
 def test_unified_config_switches_to_vendored_openai_embedder_with_matching_dims():
     from baselines.harness.lightmem.memo import LightMemMemo
-    m = LightMemMemo(config=LightMemMemo.resolve_config("unified"))
+    m = LightMemMemo(config=_resolved("unified"))
     cfg = m._build_config()
     assert cfg["text_embedder"]["model_name"] == "openai"
     assert cfg["text_embedder"]["configs"]["embedding_dims"] == 1536
@@ -117,7 +127,7 @@ def test_unified_config_switches_to_vendored_openai_embedder_with_matching_dims(
 
 def test_pre_compress_off_drops_compressor_and_segmenter():
     from baselines.harness.lightmem.memo import LightMemMemo
-    cfg = LightMemMemo(config={"pre_compress": False, "topic_segment": False})._build_config()
+    cfg = LightMemMemo(config=_resolved(pre_compress=False, topic_segment=False))._build_config()
     assert cfg["pre_compressor"] is None and cfg["topic_segmenter"] is None
 
 
@@ -139,7 +149,7 @@ class _FakeLightMemory:
 
 def _memo_with_fake(config=None, retrieved=("m1", "m2")):
     from baselines.harness.lightmem.memo import LightMemMemo
-    m = LightMemMemo(config=config)
+    m = LightMemMemo(config=_resolved(**(config or {})))
     m._system = _FakeLightMemory(retrieved)   # pre-set → _ensure_system no-ops
     return m
 
@@ -178,11 +188,11 @@ def test_retrieve_empty_returns_empty_dict():
 
 # ---- config + contract ----
 
-def test_config_defaults_and_unified_overrides():
-    from baselines.harness.lightmem.memo import LightMemMemo
-    unified = LightMemMemo.resolve_config("unified")
+def test_config_defaults_and_unified_models():
+    unified = _resolved("unified")
     assert unified["embedding_model"] == "text-embedding-3-small" and unified["embedding_dims"] == 1536
-    assert LightMemMemo.resolve_config("faithful")["embedding_dims"] == 384
+    assert unified["lightmem_llm_model"] == "gpt-5-mini"
+    assert _resolved()["embedding_dims"] == 384
 
 
 def test_memo_implements_the_three_hook_contract():

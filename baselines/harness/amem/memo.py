@@ -102,27 +102,29 @@ def _init_to_note_units(init: Dict) -> List[Tuple[str, str]]:
     raise KeyError(f"unrecognized recorder.init keys: {list(init)}")
 
 
-class AMemMemo(MemoClass):
-    CONFIG_DEFAULTS = {
-        # PAPER (arXiv 2502.12110) Table 1: GPT-4o-mini is the primary GPT
-        # backbone (the paper also reports GPT-4o, Qwen2.5-1.5B/3B, Llama3.2-1B/3B).
-        # A-mem's OpenAIController hardcodes temperature+max_tokens, which the
-        # gpt-5 family rejects — model_config normalises those away at the
-        # OpenAI-SDK boundary, so a gpt-5 model IS runnable (unified arm).
-        "amem_llm_model": "gpt-4o-mini",
-        # PAPER §4.2: "For text embedding, we implement the all-minilm-l6-v2
-        # model across all experiments." 384-dim, local. A `text-embedding-*`
-        # name switches to the OpenAI API embedder instead.
-        "amem_embedding_model": "all-MiniLM-L6-v2",
-        "retrieve_k": 10,          # PAPER §4.2: "we primarily employ k=10 for top-k memory selection"
-    }
-    # UNIFIED arm: A-mem publishes on gpt-4o-mini with a local all-MiniLM-L6-v2
-    # index; both change here. Do not quote this arm as A-mem's published result.
-    UNIFIED_OVERRIDES = {
-        "amem_llm_model": "gpt-5-mini",
-        "amem_embedding_model": "text-embedding-3-small",
-    }
+# Method config, faithful arm — module-level DATA: eval_harness.py resolves it
+# (with `arm` / `unified_models` / `memo:`) and hands the result to the memo's
+# constructor; the class itself only reads self.config.
+CONFIG_DEFAULTS = {
+    # PAPER (arXiv 2502.12110) Table 1: GPT-4o-mini is the primary GPT
+    # backbone (the paper also reports GPT-4o, Qwen2.5-1.5B/3B, Llama3.2-1B/3B).
+    # A-mem's OpenAIController hardcodes temperature+max_tokens, which the
+    # gpt-5 family rejects — model_config normalises those away at the
+    # OpenAI-SDK boundary, so a gpt-5 model IS runnable (unified arm).
+    "amem_llm_model": "gpt-4o-mini",
+    # PAPER §4.2: "For text embedding, we implement the all-minilm-l6-v2
+    # model across all experiments." 384-dim, local. A `text-embedding-*`
+    # name switches to the OpenAI API embedder instead.
+    "amem_embedding_model": "all-MiniLM-L6-v2",
+    "retrieve_k": 10,          # PAPER §4.2: "we primarily employ k=10 for top-k memory selection"
+}
+# `arm: unified` writes unified_models.llm / .embedding into these keys. A-mem
+# publishes on gpt-4o-mini with a local all-MiniLM-L6-v2 index; both change.
+# Do not quote the unified arm as A-mem's published result.
+UNIFIED_MODEL_KEYS = {"llm": ("amem_llm_model",), "embedding": ("amem_embedding_model",)}
 
+
+class AMemMemo(MemoClass):
     def __init__(self, config=None):
         super().__init__(config)
         self._system = None          # AgenticMemorySystem (lazy — built on first hook call)

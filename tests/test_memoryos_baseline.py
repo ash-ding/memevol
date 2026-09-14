@@ -14,6 +14,16 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
+def _resolved(arm="faithful", **memo):
+    """The complete config eval_harness would hand this memo (plus `memo:` overrides)."""
+    from baselines.harness import eval_harness as eh
+    from baselines.harness.memoryos import memo as memo_module
+    unified_models = ({"llm": "gpt-5-mini", "embedding": "text-embedding-3-small"}
+                      if arm == "unified" else None)
+    return eh.resolve_memo_config(memo_module.CONFIG_DEFAULTS, memo_module.UNIFIED_MODEL_KEYS,
+                                  arm=arm, unified_models=unified_models, overrides=memo)
+
+
 def test_sentence_transformers_coexists_with_memevol_benchmarks():
     # Regression guard for the name clash that once needed a sys.modules shim:
     # sentence-transformers eagerly imports HF `datasets`, which collided with
@@ -100,12 +110,12 @@ def test_config_defaults_match_constructor():
     # 0.1.0 has no `embedding_model_name` (that belongs to a later build), and a
     # stale key would blow up only at the first user.
     import inspect
-    from baselines.harness.memoryos.memo import Memoryos, MemoryOSMemo
+    from baselines.harness.memoryos.memo import CONFIG_DEFAULTS, Memoryos
     params = set(inspect.signature(Memoryos.__init__).parameters)
     for key in ("short_term_capacity", "mid_term_capacity", "mid_term_heat_threshold",
                 "mid_term_similarity_threshold", "retrieval_queue_capacity",
                 "long_term_knowledge_capacity"):
-        assert key in MemoryOSMemo.CONFIG_DEFAULTS, f"missing from CONFIG_DEFAULTS: {key}"
+        assert key in CONFIG_DEFAULTS, f"missing from CONFIG_DEFAULTS: {key}"
         assert key in params, f"not a Memoryos parameter: {key}"
     assert "embedding_model_name" not in params, "vendored build unexpectedly gained this knob"
 
@@ -119,15 +129,14 @@ def test_embedder_key_is_applied_by_seeding_the_vendored_model_cache():
     from baselines.harness.model_config import APIEmbedder
     from baselines.harness.memoryos import memo as memoryos_memo
 
-    assert "memoryos_embedding_model" in memoryos_memo.MemoryOSMemo.CONFIG_DEFAULTS
+    assert "memoryos_embedding_model" in memoryos_memo.CONFIG_DEFAULTS
 
     cache = memoryos_memo._mos_utils._model_cache
     key = memoryos_memo._VENDORED_EMBEDDER_KEY
     real, saved = memoryos_memo.Memoryos, cache.pop(key, None)
     memoryos_memo.Memoryos = lambda **kw: object()
     try:
-        m = memoryos_memo.MemoryOSMemo(
-            config={"memoryos_embedding_model": "text-embedding-3-small"})
+        m = memoryos_memo.MemoryOSMemo(config=_resolved("unified"))
         m._ensure_system()
         # Seeded under the name the VENDORED code asks for, not the configured one.
         assert isinstance(cache[key], APIEmbedder)

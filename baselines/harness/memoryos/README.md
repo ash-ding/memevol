@@ -69,7 +69,7 @@ config comment names the paper's value:
 
 Every model this baseline touches is a config parameter, so it runs in two arms:
 
-| | faithful arm (`CONFIG_DEFAULTS`, `arm: faithful`) | unified arm (`UNIFIED_OVERRIDES`, `arm: unified`) |
+| | faithful arm (`arm: faithful` — `CONFIG_DEFAULTS`) | unified arm (`arm: unified` — example `unified_models`) |
 |---|---|---|
 | internal LLM (`memoryos_llm_model`) | `gpt-4o-mini` — the paper's headline backbone (Tables 1-2) | `gpt-5-mini` |
 | embedder (`memoryos_embedding_model`) | `all-MiniLM-L6-v2`, local, 384-dim — **the code's, not the paper's** | `text-embedding-3-small`, API, 1536-dim |
@@ -144,9 +144,6 @@ only against the **unweighted** mean: it is what the papers' "Avg." is.
 > now on capture those calls under the `build` phase, so the number WILL rise,
 > and the "cost profile also reproduces" reading below needs re-measuring
 > before it can be trusted. (2026-08-14)
-
-Scored with `baselines/harness/score_paper_metrics.py`, which recomputes the
-papers' metrics — the shared judge is binary and is not what they report.
 
 | category | our F1 | paper F1 | paper BLEU-1 | n |
 |---|---|---|---|---|

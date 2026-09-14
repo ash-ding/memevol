@@ -179,61 +179,67 @@ def _init_to_turns(init: Dict) -> List[List[Dict]]:
     raise KeyError(f"unrecognized recorder.init keys: {list(init)}")
 
 
-class LightMemMemo(MemoClass):
-    # LightMem's own experiment defaults @ 34410f4.
-    CONFIG_DEFAULTS = {
-        "pre_compress": True,      # LLMlingua-2 token pre-compression (a core LightMem stage; needs the llmlingua model + a GPU)
-        "topic_segment": True,     # attention-based topic segmentation. REQUIRES pre_compress (shares the LLMlingua-2 model)
-        # PAPER Table 5: LLMlingua-2 is the token-compression AND
-        # topic-segmentation model (both, shared). HF hub id or a local path.
-        "llmlingua_model": "microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank",
-        # device_map for the LLMlingua-2 model. None/"auto" => cuda if a GPU is
-        # visible, else cpu (slow). Pin with "cpu" / "cuda" / "cuda:1" if needed.
-        "llmlingua_device": None,
-        "compress_rate": 0.6,      # LLMlingua-2 target compression rate (LoCoMo experiment value; library default is 0.8)
-        "messages_use": "user_only",   # which turns feed extraction: user_only | assistant_only | hybrid
-        "extract_threshold": 0.1,  # segmentation/extraction trigger threshold (LoCoMo experiment value)
-        "extraction_mode": "flat", # flat (factual entries only) | event (factual + relational, temporally bound)
-        # PAPER Table 5: GPT-4o-mini is the system backbone for BOTH
-        # f_sum/extract() and f_update() (the paper also reports
-        # Qwen3-30B-A3B-Instruct-2507 and GLM-4.6). It sends temperature +
-        # max_tokens, which the gpt-5 family rejects — model_config normalises
-        # those away at the OpenAI-SDK boundary, so a gpt-5 model IS runnable.
-        "lightmem_llm_model": "gpt-4o-mini",
-        "manager_max_tokens": 16000,   # max_tokens for the internal LLM (LoCoMo experiment value)
-        # OpenAI-compatible base URL for LightMem's internal LLM AND, on the API
-        # embedder arm, for its embedding calls (None = OpenAI default)
-        "base_url": None,
-        # PAPER Table 5: f_index() embedding model = all-MiniLM-L6-v2 (a
-        # black-font entry there, i.e. shared by LightMem AND its baselines).
-        # 384-dim, local HF sentence-transformer. A `text-embedding-*` name
-        # switches to LightMem's OWN vendored TextEmbedderOpenAI arm — a real
-        # code path, not an adapter.
-        "embedding_model": "all-MiniLM-L6-v2",
-        # MUST match the embedder: it sizes the Qdrant collection AND is sent as
-        # the API `dimensions` parameter, so a mismatch fails hard.
-        # text-embedding-3-small => 1536. Changing this invalidates any existing
-        # index built at the old width.
-        "embedding_dims": 384,
-        "embedding_device": None,  # device for the embedder (HF arm only). None/"auto" => cuda if visible, else cpu
-        # Run the offline-update refinement phase after build
-        # (construct_update_queue + offline_update_all_entries) — the full
-        # LoCoMo-paper pipeline. Adds per-entry LLM cost.
-        "offline_update": True,
-        "update_sim_threshold": 0.9,   # score_threshold for offline_update_all_entries (LoCoMo experiment value)
-        "retrieve_limit": 20,      # top-k memories LightMemory.retrieve returns per query (LongMemEval driver value)
-    }
-    # UNIFIED arm: LightMem publishes on gpt-4o-mini with a local
-    # all-MiniLM-L6-v2 (384-dim) index; both change here, and embedding_dims
-    # moves with the embedder. WHAT STAYS LOCAL: the LLMlingua-2 pre-compressor
-    # — a BERT token classifier with NO API equivalent, so it remains a real,
-    # untracked local compute cost in BOTH arms.
-    UNIFIED_OVERRIDES = {
-        "lightmem_llm_model": "gpt-5-mini",
-        "embedding_model": "text-embedding-3-small",
-        "embedding_dims": 1536,
-    }
+# Method config, faithful arm — module-level DATA: eval_harness.py resolves it
+# (with `arm` / `unified_models` / `memo:`) and hands the result to the memo's
+# constructor; the class itself only reads self.config.
+# LightMem's own experiment defaults @ 34410f4.
+CONFIG_DEFAULTS = {
+    "pre_compress": True,      # LLMlingua-2 token pre-compression (a core LightMem stage; needs the llmlingua model + a GPU)
+    "topic_segment": True,     # attention-based topic segmentation. REQUIRES pre_compress (shares the LLMlingua-2 model)
+    # PAPER Table 5: LLMlingua-2 is the token-compression AND
+    # topic-segmentation model (both, shared). HF hub id or a local path.
+    "llmlingua_model": "microsoft/llmlingua-2-bert-base-multilingual-cased-meetingbank",
+    # device_map for the LLMlingua-2 model. None/"auto" => cuda if a GPU is
+    # visible, else cpu (slow). Pin with "cpu" / "cuda" / "cuda:1" if needed.
+    "llmlingua_device": None,
+    "compress_rate": 0.6,      # LLMlingua-2 target compression rate (LoCoMo experiment value; library default is 0.8)
+    "messages_use": "user_only",   # which turns feed extraction: user_only | assistant_only | hybrid
+    "extract_threshold": 0.1,  # segmentation/extraction trigger threshold (LoCoMo experiment value)
+    "extraction_mode": "flat", # flat (factual entries only) | event (factual + relational, temporally bound)
+    # PAPER Table 5: GPT-4o-mini is the system backbone for BOTH
+    # f_sum/extract() and f_update() (the paper also reports
+    # Qwen3-30B-A3B-Instruct-2507 and GLM-4.6). It sends temperature +
+    # max_tokens, which the gpt-5 family rejects — model_config normalises
+    # those away at the OpenAI-SDK boundary, so a gpt-5 model IS runnable.
+    "lightmem_llm_model": "gpt-4o-mini",
+    "manager_max_tokens": 16000,   # max_tokens for the internal LLM (LoCoMo experiment value)
+    # OpenAI-compatible base URL for LightMem's internal LLM AND, on the API
+    # embedder arm, for its embedding calls (None = OpenAI default)
+    "base_url": None,
+    # PAPER Table 5: f_index() embedding model = all-MiniLM-L6-v2 (a
+    # black-font entry there, i.e. shared by LightMem AND its baselines).
+    # 384-dim, local HF sentence-transformer. A `text-embedding-*` name
+    # switches to LightMem's OWN vendored TextEmbedderOpenAI arm — a real
+    # code path, not an adapter.
+    "embedding_model": "all-MiniLM-L6-v2",
+    # MUST match the embedder: it sizes the Qdrant collection AND is sent as
+    # the API `dimensions` parameter, so a mismatch fails hard.
+    # text-embedding-3-small => 1536. Changing this invalidates any existing
+    # index built at the old width.
+    "embedding_dims": 384,
+    "embedding_device": None,  # device for the embedder (HF arm only). None/"auto" => cuda if visible, else cpu
+    # Run the offline-update refinement phase after build
+    # (construct_update_queue + offline_update_all_entries) — the full
+    # LoCoMo-paper pipeline. Adds per-entry LLM cost.
+    "offline_update": True,
+    "update_sim_threshold": 0.9,   # score_threshold for offline_update_all_entries (LoCoMo experiment value)
+    "retrieve_limit": 20,      # top-k memories LightMemory.retrieve returns per query (LongMemEval driver value)
+}
+# `arm: unified` writes unified_models.llm / .embedding into these keys, and the
+# embedder's width into `embedding_dims` (it sizes the Qdrant collection AND is
+# sent as the API `dimensions` parameter, so it must move with the embedder).
+# LightMem publishes on gpt-4o-mini with a local all-MiniLM-L6-v2 (384-dim)
+# index. WHAT STAYS LOCAL: the LLMlingua-2 pre-compressor — a BERT token
+# classifier with NO API equivalent, so it remains a real, untracked local
+# compute cost in BOTH arms.
+UNIFIED_MODEL_KEYS = {
+    "llm": ("lightmem_llm_model",),
+    "embedding": ("embedding_model",),
+    "embedding_dims": ("embedding_dims",),
+}
 
+
+class LightMemMemo(MemoClass):
     def __init__(self, config=None):
         super().__init__(config)
         self._system = None                        # LightMemory (lazy — built on first hook call)
@@ -279,7 +285,7 @@ class LightMemMemo(MemoClass):
                 "model_name": "openai",
                 "configs": {
                     "model": cfg["lightmem_llm_model"],
-                    "api_key": os.environ.get("OPENAI_API_KEY"),
+                    "api_key": None,   # credential: resolved from the environment by LightMem / the SDK
                     "max_tokens": cfg["manager_max_tokens"],
                     "openai_base_url": cfg["base_url"] or "",
                 },
@@ -301,7 +307,7 @@ class LightMemMemo(MemoClass):
                 "configs": {
                     "model": cfg["embedding_model"],
                     "embedding_dims": cfg["embedding_dims"],
-                    "api_key": os.environ.get("OPENAI_API_KEY"),
+                    "api_key": None,   # credential: the OpenAI SDK reads it from the environment
                     "openai_base_url": cfg["base_url"] or None,
                 },
             } if is_api_embedding_model(cfg["embedding_model"]) else {
@@ -332,15 +338,14 @@ class LightMemMemo(MemoClass):
             return
         OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
         config = self._build_config()
-        # Construction builds the LLMlingua-2 compressor + SentenceTransformer
-        # embedder + Qdrant client; the patched SentenceTransformer (shared cache
-        # the stdout redirect + sys.modules swap can't leak across samples.
+        # Construction builds the LLMlingua-2 compressor + the embedder (shared
+        # across users by model_config's factory) + the Qdrant client; stdout is
+        # silenced for the vendored debug prints.
         with _quiet_stdout():
             self._system = LightMemory.from_config(config)
 
     async def build_memory_from_data(self, recorder) -> None:
         self._ensure_system()
-        # _init_to_turns touches memevol's `datasets` (locomo branch) — compute
         turns = _init_to_turns(recorder.init)
         if not turns:
             return
