@@ -78,7 +78,7 @@ from forge.selection import Entry, Frontier
 
 from common.config import (
     deep_merge as _deep_merge,  # shared primitive (2026-07-25)
-    strict_on, missing_schema_paths, raise_completeness,
+    strict_on, missing_schema_paths, raise_completeness, reject_removed_keys,
     REQUIRED, Cond, ConfigCompletenessError,
 )
 from common.evaluate import (  # re-export: config moved to common/ 2026-07-25
@@ -153,11 +153,6 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # run (incl. sanity); forge.heldout (test split) sees full data.
     # CLI: --no-data-isolation.
     "data_isolation": True,
-    # Cross-stage memory cache: persist each user's Phase-1 memory per
-    # (harness, dataset) and reuse it at deeper gauntlet stages (nested
-    # sampling makes it bit-for-bit reusable). Stage1..3 only; sanity/dev
-    # never touch it. Disable via `memory_cache: false` or --no-memory-cache.
-    "memory_cache": True,
     # How claude-* models (QA agent / retrieve agent / judge via common.llm)
     # reach Anthropic — applies host-side AND inside the eval container.
     # OpenAI models are unaffected. CLI override: --anthropic-transport.
@@ -287,7 +282,7 @@ FORGE_REQUIRED_SCHEMA = {
     "steps": REQUIRED, "smoke_test": REQUIRED, "model": REQUIRED,
     "judge_model": REQUIRED, "progressive": REQUIRED, "random_sample": REQUIRED,
     "sampling_seed": REQUIRED, "max_sample_concurrent": REQUIRED,
-    "memory_cache": REQUIRED, "data_isolation": REQUIRED,
+    "data_isolation": REQUIRED,
     "adopt_orphans": REQUIRED, "agent": REQUIRED,
     "llm": {
         "anthropic_transport": REQUIRED,
@@ -320,7 +315,7 @@ FORGE_REQUIRED_SCHEMA = {
 # adopt_orphans/agent/proposer.*/propose.*/sanity.*/seed.*/prompts.*) —
 # FORGE_REQUIRED_SCHEMA wrongly demanded them for heldout configs. Heldout's
 # real config surface (verified via forge/heldout.py's cfg[...] reads):
-# model, judge_model, max_sample_concurrent, memory_cache, gpu.enabled, llm,
+# model, judge_model, max_sample_concurrent, gpu.enabled, llm,
 # datasets. `progressive` is intentionally absent here too — heldout forces
 # it via `_apply_heldout_progressive_default`/`_reject_progressive_on_heldout`,
 # not the operator's config.
@@ -328,7 +323,6 @@ HELDOUT_REQUIRED_SCHEMA = {
     "model": REQUIRED,
     "judge_model": REQUIRED,
     "max_sample_concurrent": REQUIRED,
-    "memory_cache": REQUIRED,
     "gpu": {"enabled": REQUIRED},
     "llm": {
         "anthropic_transport": REQUIRED,
@@ -366,7 +360,7 @@ def _forge_provided_tree(file_cfg: Dict[str, Any], args: argparse.Namespace) -> 
     max_sample_concurrent/progressive/random_sample/sampling_seed/agent/
     proposer.max_turns/proposer.timeout_s/prompts.version/proposer.*.model.
     Other forge CLI flags that also mutate `cfg` in `_resolve_config` (e.g.
-    --datasets, --smoke-test, --gpu, --no-memory-cache, --no-data-isolation,
+    --datasets, --smoke-test, --gpu, --no-data-isolation,
     --k-per-step, --anthropic-transport, --sanity-max-retries,
     --no-adopt-orphans, --no-seed/--seed-source, --claude-auth,
     --proposer-disallowed-tools) are NOT overlaid here. Under
@@ -463,9 +457,10 @@ def _resolve_config(args: argparse.Namespace, *,
         raise ValueError(
             "`memory_dumps:` was removed (2026-07-08) — the lossy post-Phase-1 "
             "memory dump mechanism is gone. To inspect a harness's built "
-            "memory, unpickle harnesses/<id>/<ds>/memory_cache/*.pkl instead. "
+            "memory, use the memory-state tracer under tracing/. "
             "Delete the field from the YAML and re-run."
         )
+    reject_removed_keys(cfg, "forge config")
     # Top-level CLI overrides (each applied only if explicitly provided)
     for key in (
         "steps", "model", "judge_model",
@@ -500,8 +495,6 @@ def _resolve_config(args: argparse.Namespace, *,
         cfg["proposer"]["claude_code"]["auth"] = args.claude_auth
     if args.k_per_step is not None:
         cfg["propose"]["k_per_step"] = args.k_per_step
-    if args.no_memory_cache:
-        cfg["memory_cache"] = False
     if getattr(args, "no_data_isolation", False):
         cfg["data_isolation"] = False
     if getattr(args, "smoke_test", False):
@@ -1046,9 +1039,8 @@ def _publish_run_artifacts(run_dir: Path, dst_dir: Path) -> None:
     # The container writes the WHOLE evaluation layout into /out now (per-stage
     # subdirs + stages.json + metrics.json + root copies), so publish is a full
     # tree move: clear every prior eval artifact from dst_dir EXCEPT the
-    # protected persistent entries (the host-managed memory_cache mount and the
-    # separately-published sanity/ dir), then copy everything the run produced.
-    _PROTECTED = {"memory_cache", "sanity"}
+    # separately-published sanity/ dir, then copy everything the run produced.
+    _PROTECTED = {"sanity"}
     if run_dir.exists():
         for stale in dst_dir.iterdir():
             if stale.name in _PROTECTED:
@@ -1266,7 +1258,6 @@ async def evaluate_harness(
     model: str,
     judge_model: str,
     max_sample_concurrent: int,
-    memory_cache: bool = True,
     gpu: bool = False,
     llm_cfg: Optional[Dict[str, Any]] = None,
     progressive: bool = True,
@@ -1322,13 +1313,6 @@ async def evaluate_harness(
             "sample_seed": sample_seed_for(ds),
         }
         run_dir = paths.runs_dir / f"{harness_id}_{int(time.time())}_{ds}"
-        # Persistent cross-stage memory cache (host dir bound at /memcache);
-        # never mounted for smoke (harness code can still change during the
-        # sanity-fix retry loop).
-        memcache_dir: Optional[Path] = None
-        if memory_cache and not smoke:
-            memcache_dir = dst_root / "memory_cache"
-            memcache_dir.mkdir(parents=True, exist_ok=True)
         crashed: Optional[Exception] = None
         try:
             await run_evaluation(
@@ -1341,7 +1325,6 @@ async def evaluate_harness(
                 model=model,
                 judge_model=ds_judge,
                 max_sample_concurrent=max_sample_concurrent,
-                memcache_dir=memcache_dir,
                 gpu=gpu,
                 anthropic_transport=(llm_cfg or {}).get("anthropic_transport", "api"),
                 vertex_cfg=(llm_cfg or {}).get("vertex"),
@@ -1597,7 +1580,6 @@ async def propose_eval_one(
         smoke=cfg["smoke_test"],
         model=cfg["model"], judge_model=cfg["judge_model"],
         max_sample_concurrent=cfg["max_sample_concurrent"],
-        memory_cache=cfg.get("memory_cache", True),
         gpu=cfg["gpu"]["enabled"],
         llm_cfg=cfg.get("llm"),
         progressive=cfg["progressive"],
@@ -1970,7 +1952,6 @@ async def _adopt_orphan(
         smoke=cfg["smoke_test"],
         model=cfg["model"], judge_model=cfg["judge_model"],
         max_sample_concurrent=cfg["max_sample_concurrent"],
-        memory_cache=cfg.get("memory_cache", True),
         gpu=cfg["gpu"]["enabled"],
         llm_cfg=cfg.get("llm"),
         progressive=cfg["progressive"],
@@ -2195,9 +2176,6 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--k-per-step", type=int, default=None,
                         help="Harnesses proposed per outer-loop step (default 2)")
 
-    parser.add_argument("--no-memory-cache", action="store_true",
-                        help="Disable the cross-stage memory cache "
-                             "(harnesses rebuild Phase-1 memory at every stage)")
     parser.add_argument("--no-sanity", action="store_true",
                         help="Disable the pre-eval sanity gate (mode=search/test; dev always skips it)")
     parser.add_argument("--sanity-max-retries", type=int, default=None,

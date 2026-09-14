@@ -92,8 +92,8 @@ def is_api_embedding_model(model_name: Optional[str]) -> bool:
     sentence-transformer or an :class:`APIEmbedder`. Note the DIMENSION
     COUPLING this implies: `text-embedding-3-small` is 1536-dim where the local
     defaults are 384 (MiniLM) / 1024 (bge-m3, Qwen3), so any switch must carry
-    the baseline's dimension knob with it, and invalidates vector indexes and
-    memory-cache snapshots built at the old width.
+    the baseline's dimension knob with it, and invalidates vector indexes built
+    at the old width.
     """
     return str(model_name or "").startswith(_API_EMBEDDING_PREFIX)
 

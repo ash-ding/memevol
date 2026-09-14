@@ -27,7 +27,6 @@ Run layout (one directory per run; nothing is ever overwritten):
     baselines/harness/<harness>/runs/
     ├── index.jsonl                  one line per run (appended after it ends)
     ├── latest                       the most recent run_id
-    ├── memory_cache/<dataset>/<split>/   cross-run Phase-1 memory cache
     └── <run_id>/                    <YYYYMMDD_HHMMSS>_<dataset>_<split> | run_name
         ├── config.resolved.yaml     frame + fully expanded memo config
         ├── run.json                 harness, memo class, git sha, timing, status
@@ -77,7 +76,7 @@ MEMOS: Dict[str, str] = {
 # `run_name` and `memo`. No method knob is ever listed here.
 FRAME_KEYS = frozenset({
     "harness", "arm", "dataset", "split", "progressive", "sampling_seed",
-    "single_stage", "stages", "memory_cache", "llm_model", "judge_model",
+    "single_stage", "stages", "llm_model", "judge_model",
     "max_sample_concurrent",
 })
 OPTIONAL_KEYS = frozenset({"run_name", "memo"})
@@ -99,8 +98,9 @@ def load_memo(name: str) -> Type[MemoClass]:
 
 def load_frame_config(path) -> Dict[str, Any]:
     """Load + validate the frame config (exact keys, sizing to the leaf)."""
-    from common.config import load_config_file, validate_exact_config
+    from common.config import load_config_file, reject_removed_keys, validate_exact_config
     cfg = load_config_file(path) or {}
+    reject_removed_keys(cfg, "harness config")
     core = {k: v for k, v in cfg.items() if k not in OPTIONAL_KEYS}
     validate_exact_config(core, FRAME_KEYS, context="harness config")
     if cfg["arm"] not in ("faithful", "unified"):
@@ -124,8 +124,6 @@ async def run_baseline(
     progressive: bool = False,
     sampling_seed: int = 42,
     stages: Optional[Dict[str, Any]] = None,
-    memory_cache: bool = True,
-    memcache_dir: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Evaluate one fixed memory system on a split.
 
@@ -139,10 +137,7 @@ async def run_baseline(
     shared, execution-independent evaluator (see its docstring for the artifact
     layout: out_dir/<stage>/ + stages.json + reached-stage root copies). The
     per-run sample_seed is the fixed step-0 derivation from `sampling_seed`
-    (no search steps here); a no-op at whole-split n=None. `memcache_dir`
-    (default out_dir/memory_cache) is where the Phase-1 memory cache lives —
-    main() passes a run-independent one so `memory_cache: true` still reuses
-    a previous run's build now that every run has its own directory.
+    (no search steps here); a no-op at whole-split n=None.
 
     Returns {dataset: metrics} where metrics is evaluate_memo's dict
     {raw_score, score_max, per_user_stddev, tokens, stage, eliminated}."""
@@ -160,7 +155,6 @@ async def run_baseline(
         stages=stages, single_stage=single_stage,
         max_sample_concurrent=max_sample_concurrent,
         sample_seed=derive_sample_seed(sampling_seed, 0, dataset),
-        memory_cache=memory_cache, memcache_dir=memcache_dir,
     )
     return {dataset: metrics}
 
@@ -254,10 +248,9 @@ def main(argv=None) -> None:
             single_stage=cfg["single_stage"], stages=cfg["stages"],
             memo_class=memo_class, memo_config=memo_config,
             qa_model=cfg["llm_model"], judge_model=cfg["judge_model"],
-            out_dir=run_dir, memcache_dir=runs_dir / "memory_cache" / dataset / split,
+            out_dir=run_dir,
             max_sample_concurrent=cfg["max_sample_concurrent"],
             progressive=cfg["progressive"], sampling_seed=cfg["sampling_seed"],
-            memory_cache=cfg["memory_cache"],
         ))
         record["status"] = "ok"
     except BaseException as e:

@@ -126,7 +126,6 @@ class MetaAgent:
         sampling_seed: int = 42,
         step_index: int = 0,
         stages: Optional[dict] = None,
-        memory_cache: bool = True,
     ):
         """Sanity-check gating: run generated code; on failure, reflect + retry.
 
@@ -157,7 +156,6 @@ class MetaAgent:
                     sampling_seed=sampling_seed,
                     step_index=step_index,
                     stages=stages,
-                    memory_cache=memory_cache,
                 )
             except Exception as e:
                 success = False
@@ -201,7 +199,6 @@ class MetaAgent:
         step_index: int = 0,
         stages: Optional[dict] = None,
         single_stage: Optional[dict] = None,
-        memory_cache: bool = True,
     ):
         if status == 'search':
             self.memo_manager.update_visit_time(memo_SHA)
@@ -234,7 +231,6 @@ class MetaAgent:
                 sampling_seed=sampling_seed,
                 step_index=step_index,
                 stages=stages,
-                memory_cache=memory_cache,
             )
 
             self.memo_manager.update_analysis(memo_sha=new_memo_SHA, suggestion=analysis_result)
@@ -259,7 +255,6 @@ class MetaAgent:
             step_index=step_index,
             stages=stages,
             single_stage=single_stage,
-            memory_cache=memory_cache,
         )
 
         if status == 'search':
@@ -288,7 +283,6 @@ class MetaAgent:
         sampling_seed: int = 42,
         stages: Optional[dict] = None,
         single_stage: Optional[dict] = None,
-        memory_cache: bool = True,
     ):
         logs_root = self.memo_manager.LOGS_ROOT
 
@@ -312,7 +306,6 @@ class MetaAgent:
                 step_index=0,
                 stages=stages,
                 single_stage=single_stage,
-                memory_cache=memory_cache,
             )
             self.memo_manager.no_memo_reward = (
                 eval_result.get('benchmark_eval_score', {}).get('benchmark_overall_eval_score', 0.0)
@@ -339,7 +332,6 @@ class MetaAgent:
                 sampling_seed=sampling_seed,
                 step_index=0,
                 stages=stages,
-                memory_cache=memory_cache,
             )
             log.info(f"[blue][FINISH CODE GENERATION] Code SHA: {new_memo_SHA} | Code example: {new_code[:30]}...[/blue]")
 
@@ -360,7 +352,6 @@ class MetaAgent:
                 step_index=0,
                 stages=stages,
                 single_stage=single_stage,
-                memory_cache=memory_cache,
             )
             self.memo_manager.update_reward(
                 new_memo_SHA,
@@ -449,7 +440,6 @@ class MetaAgent:
                                 step_index=step,
                                 stages=stages,
                                 single_stage=single_stage,
-                                memory_cache=memory_cache,
                             )
                             break
                         except Exception as e:

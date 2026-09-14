@@ -109,51 +109,34 @@ class DynamicMemWorkflow(BaseWorkflow):
         for item in sampled:
             sampled_by_cp.setdefault(item["checkpoint_id"], []).append(item)
 
-        memo = (self.memo_class(config=self.memo_config)
-                if self.memo_config is not None else self.memo_class())
+        memo = self._new_memo()
         recorder = self.recorder_class()
         recorder.user_id = user_tag
         await self.phase1_log_init(recorder, app_logs)
-
-        from common.memory_cache import user_key as _mc_user_key
-        ukey = _mc_user_key(user_dir)
 
         prev_end = 0
         total_ingested = 0
         phase2_errs: List[Tuple[str, str]] = []   # (kind, first-error text)
         t0 = time.time()
         for cp_idx, cp in enumerate(checkpoints_used, 1):
+            # Checkpoint isolation: cp_i's items are answered with memory that
+            # reflects exactly app_logs[:log_index_i+1], so ingest only the
+            # newly visible segment before answering this checkpoint's items.
             visible = observed_logs_for_checkpoint(cp, app_logs)
-            cp_meta = {
-                "checkpoint_id": cp["checkpoint_id"],
-                "log_end": len(visible),
-            }
-            # Cross-stage memory cache — PER-CHECKPOINT snapshots. Checkpoint
-            # isolation is a hard correctness constraint: cp_i's items must be
-            # answered with memory reflecting exactly app_logs[:log_index_i+1],
-            # and later stages still answer items at EARLY checkpoints, so the
-            # snapshot for each cp is loaded (replacing the memo) rather than
-            # reusing the final state.
-            loaded = self._cache_load(f"{ukey}__cp{cp_idx}", extra_meta=cp_meta)
-            if loaded is not None:
-                memo = loaded
-                prev_end = max(prev_end, len(visible))
-            else:
-                segment = app_logs[prev_end: len(visible)]
-                prev_end = max(prev_end, len(visible))
-                if segment:
-                    t1 = time.time()
-                    # Phase set at the call site (see BaseWorkflow.run_single_user
-                    # for why); DynamicMem drives its own per-checkpoint ingest
-                    # loop and so needs its own wrapper.
-                    with tokens.phase(tokens.BUILD):
-                        await self._phase1_update(memo, segment)
-                    total_ingested += len(segment)
-                    log.info(
-                        f"[Checkpoint {cp_idx}/{len(checkpoints_used)}] User {user_tag} "
-                        f"ingested {len(segment)} logs ({total_ingested} total, {time.time() - t1:.1f}s)"
-                    )
-                self._cache_save(memo, f"{ukey}__cp{cp_idx}", extra_meta=cp_meta)
+            segment = app_logs[prev_end: len(visible)]
+            prev_end = max(prev_end, len(visible))
+            if segment:
+                t1 = time.time()
+                # Phase set at the call site (see BaseWorkflow.run_single_user
+                # for why); DynamicMem drives its own per-checkpoint ingest
+                # loop and so needs its own wrapper.
+                with tokens.phase(tokens.BUILD):
+                    await self._phase1_update(memo, segment)
+                total_ingested += len(segment)
+                log.info(
+                    f"[Checkpoint {cp_idx}/{len(checkpoints_used)}] User {user_tag} "
+                    f"ingested {len(segment)} logs ({total_ingested} total, {time.time() - t1:.1f}s)"
+                )
 
             for item in sampled_by_cp.get(cp["checkpoint_id"], []):
                 err = await self._run_item(memo, recorder, item, visible)

@@ -91,7 +91,7 @@ rest (`base_url`, `window_size`, `overlap_size`, `semantic_top_k`,
 `max_reflection_rounds`, `enable_parallel_processing`,
 `max_parallel_workers`, `enable_parallel_retrieval`,
 `max_retrieval_workers`, `llm_model`, `judge_model`, `progressive`,
-`sampling_seed`, `memory_cache`) are documented inline in
+`sampling_seed`) are documented inline in
 `../config.example.yaml`.
 
 **Sizing is config-file only** (there is no sizing CLI surface either).
@@ -144,8 +144,7 @@ possible:
 
 No dimension knob has to move with the embedder: SimpleMem sizes its LanceDB
 table from `embedding_model.dimension`. The per-user store is rebuilt with
-`clear_db=True`, but a `memory_cache: true` gauntlet snapshot taken at 1024-dim
-is invalid under the 1536-dim arm.
+`clear_db=True`, so switching arms needs no manual cleanup.
 
 ## Faithfulness boundary
 

@@ -149,64 +149,12 @@ class BaseWorkflow(ABC):
         return self.eval_n_qa or self._default_qa_per_user_hint
 
     def _new_memo(self):
-        """The ONE way a memo instance is constructed.
-
-        Shared by the normal per-user path and by the memory cache's
-        `memo_factory`. They used to build memos differently: the cache passed
-        the bare class, so a hook-restored memo came back with an EMPTY config
-        while a freshly-built one got `memo_config`. Any `load_memory` that
-        needs config to rebuild its backend (simplemem needs the model names to
-        reopen its store) would have silently restored a broken instance.
-        """
+        """The ONE way a memo instance is constructed — with `memo_config`
+        when the caller supplied one (the parameterized harness baselines),
+        zero-arg otherwise (forge-evolved harnesses)."""
         if self.memo_config is not None:
             return self.memo_class(config=self.memo_config)
         return self.memo_class()
-
-    # ---- Cross-stage memory cache (common/memory_cache.py) ----
-
-    def _cache_meta(self) -> Dict:
-        """Sidecar fields that must match for a cache entry to be reused —
-        different ingest config or harness code ⇒ different memory."""
-        from common.memory_cache import config_fingerprint
-        return {
-            "model": self.model,
-            "max_logs": self.max_logs,
-            "harness_fingerprint": self.harness_fingerprint,
-            # The memo's CONFIG, not just its source. Two runs of identical code
-            # with a different embedder / internal LLM / window size build
-            # materially different memory; without this the second silently
-            # reuses the first's. See config_fingerprint.
-            "memo_config": config_fingerprint(self.memo_config),
-        }
-
-    def _cache_load(self, key: str, extra_meta: Optional[Dict] = None):
-        if self.memory_cache_dir is None or not self.memory_cache_read:
-            return None
-        from common import memory_cache as mc
-        expect = self._cache_meta()
-        if extra_meta:
-            expect.update(extra_meta)
-        loaded = mc.load_memo(self.memory_cache_dir, key, expect,
-                              memo_factory=self._new_memo)
-        # Cache hits spend NO build tokens — true for this run, misleading if
-        # read as the harness's build cost. The tallies ride out in the stage
-        # metrics so a 0 is never mistaken for a free memory system.
-        if loaded is not None:
-            self.build_cache_hits += 1
-            log.info(f"[memcache] hit: {key}")
-        else:
-            self.build_cache_misses += 1
-        return loaded
-
-    def _cache_save(self, memo, key: str, extra_meta: Optional[Dict] = None) -> None:
-        if self.memory_cache_dir is None:
-            return
-        from common import memory_cache as mc
-        meta = self._cache_meta()
-        if extra_meta:
-            meta.update(extra_meta)
-        if mc.save_memo(memo, self.memory_cache_dir, key, meta):
-            log.info(f"[memcache] saved: {key}")
 
     def _phase1_item_count(self, init_data) -> "int | str":
         """Return the count of "items" in Phase 1's init_data — used purely
@@ -244,20 +192,6 @@ class BaseWorkflow(ABC):
         # Output directory — set by launch.py before run_all_users. Full
         # traces go to {output_run_dir}/traces/.
         self.output_run_dir: Optional[Path] = None
-        # Cross-stage memory cache (common/memory_cache.py). Set by launch.py
-        # when the orchestrator passes a cache mount; None = caching off
-        # (baselines / sanity / dev runs). `harness_fingerprint` guards
-        # against reusing memory built by different harness code.
-        self.memory_cache_dir: Optional[Path] = None
-        # False under `memory_cache: rebuild` — writes continue, reads are
-        # skipped, so Phase 1 is built fresh once per run.
-        self.memory_cache_read: bool = True
-        self.harness_fingerprint: str = ""
-        # Build-cache tallies (see `_cache_load`) — a cached build spends no
-        # tokens, so cost readers need to know how much of the build was
-        # actually paid for during THIS run.
-        self.build_cache_hits = 0
-        self.build_cache_misses = 0
         # Lazy-constructed Judge (per common.metric.Judge). Subclasses can
         # override `_make_judge` to customize prompt / score range.
         self._judge_instance = None
@@ -489,9 +423,8 @@ class BaseWorkflow(ABC):
 
         `stage` is the staged-evaluation tier this run belongs to
         (sanity / stage1 / stage2 / stage3). The base implementation treats
-        it as informational (the memory cache is gated host-side by
-        launch.py: `memory_cache_dir` is only set for stage1..3); DynamicMem's
-        legacy alma branch also dispatches on it. `stage_spec` carries the
+        it as informational; DynamicMem's legacy alma branch also dispatches
+        on it. `stage_spec` carries the
         benchmark-native size fields (e.g. n_qa, n_checkpoints, ...).
 
         task_list is expected to be pre-capped by the caller (a deterministic
@@ -596,34 +529,21 @@ class BaseWorkflow(ABC):
 
         memo = self._new_memo()
 
-        # Cross-stage memory cache: Phase-1 input for this benchmark family is
-        # independent of the QA count, so the final memory built at an earlier
-        # stage is bit-for-bit reusable here.
-        from common.memory_cache import user_key as _mc_user_key
-        cache_key = f"{_mc_user_key(user_dir)}__final"
-
         t1 = time.time()
-        cached = self._cache_load(cache_key)
-        if cached is not None:
-            memo = cached
-            log.info(f"[Phase 1] User {user_tag} memory loaded from cache "
-                     f"({time.time() - t1:.1f}s)")
-        else:
-            # Wrapped at the CALL SITE, not inside `_phase1_update`: benchmarks
-            # override that method (LoCoMo's init_data is a conversation dict,
-            # not a list) and an override does not inherit a phase block living
-            # in the base implementation. A real simplemem/LoCoMo run filed
-            # 151k build tokens under `other` before this moved out here.
-            # Everything spent inside is the cost of HAVING the memory.
-            with tokens.phase(tokens.BUILD):
-                await self._phase1_update(memo, init_data)
-            t1_elapsed = time.time() - t1
-            item_count = self._phase1_item_count(init_data)
-            log.info(
-                f"[Phase 1] User {user_tag} update complete "
-                f"({item_count} {self._phase1_item_label}, {t1_elapsed:.1f}s)"
-            )
-            self._cache_save(memo, cache_key)
+        # Wrapped at the CALL SITE, not inside `_phase1_update`: benchmarks
+        # override that method (LoCoMo's init_data is a conversation dict,
+        # not a list) and an override does not inherit a phase block living
+        # in the base implementation. A real simplemem/LoCoMo run filed
+        # 151k build tokens under `other` before this moved out here.
+        # Everything spent inside is the cost of HAVING the memory.
+        with tokens.phase(tokens.BUILD):
+            await self._phase1_update(memo, init_data)
+        t1_elapsed = time.time() - t1
+        item_count = self._phase1_item_count(init_data)
+        log.info(
+            f"[Phase 1] User {user_tag} update complete "
+            f"({item_count} {self._phase1_item_label}, {t1_elapsed:.1f}s)"
+        )
 
         t2 = time.time()
         recorder = self.recorder_class()

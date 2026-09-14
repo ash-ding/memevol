@@ -43,7 +43,6 @@ max_logs: null
 progressive: false       # ONE full pass — no gauntlet, no elimination
 random_sample: false
 sampling_seed: 42
-memory_cache: true
 
 # ACTIVE sizing block (LoCoMo fields). Every leaf null = the WHOLE test split:
 # all 4 held-out conversations, every non-adversarial question in them (655 QAs

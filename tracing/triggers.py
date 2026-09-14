@@ -52,13 +52,10 @@ def _trace_root() -> Path:
 
 
 def _user_key(user_dir: str) -> str:
-    try:
-        from common.memory_cache import user_key  # reuse the canonical sanitizer
-        return user_key(user_dir)
-    except Exception:
-        import re
-        name = Path(str(user_dir)).name or str(user_dir)
-        return re.sub(r"[^A-Za-z0-9._-]+", "_", name)
+    """Filename-safe key for a user/sample identifier."""
+    import re
+    name = Path(str(user_dir)).name or str(user_dir)
+    return re.sub(r"[^A-Za-z0-9._-]+", "_", name)
 
 
 # ---------------------------------------------------------------------------

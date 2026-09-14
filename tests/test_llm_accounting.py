@@ -474,31 +474,13 @@ def test_stage_metrics_split_cost_by_phase():
     with T.phase(T.JUDGE):
         tracker.update("m", _usage(1, 0))
 
-    class _WF:
-        build_cache_hits = 2
-        build_cache_misses = 1
-
-    m = _stage_cost_metrics(tracker.summary(), _WF())
+    m = _stage_cost_metrics(tracker.summary())
     assert m["tokens"] == 1111, "the flat scalar stays ALL-phase"
     assert m["tokens_build"] == 1000
     assert m["tokens_memory"] == 1100, "build + retrieve"
     assert m["tokens_judge"] == 1
     assert m["llm_calls"] == 4
-    assert m["build_cache_hits"] == 2
-
-
-def test_cached_build_reports_zero_tokens_but_flags_the_cache():
-    """A cache hit spends no build tokens. That is true for the run, but a
-    reader must be able to tell it apart from a free memory system."""
-    from common.evaluate import _stage_cost_metrics
-    tracker = _fresh_tracker()
-
-    class _WF:
-        build_cache_hits = 4
-        build_cache_misses = 0
-
-    m = _stage_cost_metrics(tracker.summary(), _WF())
-    assert m["tokens_build"] == 0 and m["build_cache_hits"] == 4
+    assert not any(k.startswith("build_cache") for k in m), "the memory cache is gone"
 
 
 # ---------------------------------------------------------------------------

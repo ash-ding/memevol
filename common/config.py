@@ -40,6 +40,26 @@ def resolve_config(
     return cfg
 
 
+#: Keys removed from every entrypoint's config surface. Listing one is an error
+#: that names the removal — never a silently ignored or generically "unknown"
+#: key — so an operator with an old YAML learns exactly what to delete.
+REMOVED_KEYS = {
+    "memory_cache": "the cross-stage memory cache was removed (2026-09-14); "
+                    "every gauntlet stage now builds Phase-1 memory from scratch",
+}
+
+
+def reject_removed_keys(cfg, context):
+    """Raise ValueError if `cfg` (a top-level config mapping) lists any
+    REMOVED_KEYS entry."""
+    found = sorted(k for k in REMOVED_KEYS if isinstance(cfg, dict) and k in cfg)
+    if found:
+        raise ValueError(
+            f"{context}: " + "; ".join(f"`{k}:` — {REMOVED_KEYS[k]}" for k in found)
+            + ". Delete it from the YAML and re-run."
+        )
+
+
 # ---------------------------------------------------------------------------
 # Strict-config completeness validation — used by baselines' run.py (Task 2)
 # and forge's _resolve_config (Task 3) to reject configs that omit required

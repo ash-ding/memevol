@@ -116,7 +116,6 @@ def _write_error(out_dir: Path, err: str) -> None:
 
 async def _async_main(args: argparse.Namespace) -> None:
     from common.evaluate import evaluate_memo
-    from common.memory_cache import harness_fingerprint
 
     harness_dir = Path(args.harness_dir)
     out_dir = Path(args.out_dir)
@@ -150,9 +149,6 @@ async def _async_main(args: argparse.Namespace) -> None:
             single_stage=plan.get("single_stage"),
             max_sample_concurrent=args.max_sample_concurrent,
             sample_seed=plan.get("sample_seed"),
-            memory_cache=bool(args.memcache_dir),
-            memcache_fingerprint=harness_fingerprint(harness_dir),
-            memcache_dir=Path(args.memcache_dir) if args.memcache_dir else None,
             smoke=bool(plan.get("smoke", False)),
             max_logs=args.max_logs,
             memo_sha=harness_dir.name,
@@ -184,9 +180,6 @@ if __name__ == "__main__":
                              '"smoke": false, "stages": {...}, "single_stage": null, '
                              '"sample_seed": null}\'. The whole gauntlet (or single '
                              'pass) runs inside THIS container via evaluate_memo.')
-    parser.add_argument("--memcache-dir", default=None,
-                        help="RW dir for cross-stage memory snapshots "
-                             "(omit to disable caching; never used for smoke)")
     parser.add_argument("--model", default="gpt-5-mini")
     parser.add_argument("--judge-model", default="gpt-5-mini")
     parser.add_argument("--max-logs", type=int, default=None)

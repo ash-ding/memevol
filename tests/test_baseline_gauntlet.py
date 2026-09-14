@@ -1,4 +1,4 @@
-"""Progressive gauntlet + memcache + seed for the harness baselines
+"""Progressive gauntlet + seed for the harness baselines
 (baselines/harness/eval_harness.py::run_baseline).
 
 Zero-dependency runner (baselines venv; no network — the QA agent + judge are
@@ -11,7 +11,7 @@ Covers:
   (b) a below-threshold stage stops early (eliminated)
   (c) progressive=False still takes the single-stage path UNCHANGED
   (d) whole-split seed no-op (n=None → seeded task SET == unseeded)
-  (e) REAL memcache reuse — stage2/stage3 load stage1's pickled Phase-1 memory
+  (e) every stage REBUILDS Phase-1 memory — nothing is carried across stages
       (real LoCoMoWorkflow, only the network legs stubbed)
 """
 import sys, asyncio, json, shutil, tempfile, traceback
@@ -82,7 +82,7 @@ def test_progressive_promotes_through_all_stages():
             dataset="locomo", split="test",
             memo_class=_StubMemo, qa_model="gpt-5-mini", judge_model="gpt-5-mini",
             out_dir=out_dir, max_sample_concurrent=1,
-            progressive=True, memory_cache=False,
+            progressive=True,
         )
         # promoted through every stage, in order
         assert seen == ["stage1", "stage2", "stage3"], seen
@@ -119,7 +119,7 @@ def test_progressive_eliminates_below_threshold():
             dataset="locomo", split="test",
             memo_class=_StubMemo, qa_model="gpt-5-mini", judge_model="gpt-5-mini",
             out_dir=out_dir, max_sample_concurrent=1,
-            progressive=True, memory_cache=False,
+            progressive=True,
         )
         assert seen == ["stage1"], seen                 # stopped after stage1
         assert result["locomo"]["eliminated"] is True, result
@@ -294,19 +294,15 @@ def test_whole_split_seed_is_noop():
 
 
 # --------------------------------------------------------------------------
-# (e) REAL memcache reuse: stage2/stage3 load stage1's pickled Phase-1 memory
+# (e) every stage rebuilds Phase-1 memory (the cross-stage cache was removed)
 #     Real LoCoMoWorkflow; only the two network legs (QA agent + judge) stubbed.
 # --------------------------------------------------------------------------
 
-# Module-level counter + memo base so pickle can resolve the class across the
-# save/load roundtrip within this process.
 _BUILD_CALLS = []
 
 
 class _CountingMemo(MemoClass):
-    """Picklable stub memo: no per-instance state (empty __dict__), so pickle
-    of the built memo is trivial. Phase-1 bumps a module counter so we can
-    detect that stage2/stage3 SKIP the build (cache hit)."""
+    """Phase-1 bumps a module counter so the test can count builds."""
     async def build_memory_from_data(self, r):
         _BUILD_CALLS.append(1)
         return None
@@ -315,7 +311,7 @@ class _CountingMemo(MemoClass):
         return {"passages": ["stub passage"]}
 
 
-def test_progressive_real_memcache_reuse():
+def test_progressive_rebuilds_memory_at_every_stage():
     import common.llm as llm_mod
     from benchmarks.locomo.workflow import LoCoMoWorkflow
     from baselines.harness.eval_harness import run_baseline
@@ -328,12 +324,8 @@ def test_progressive_real_memcache_reuse():
     async def _fake_judge(self, query, predicted, reference, qa_metadata=None):
         return 1, "fake-judge: forced pass"
 
-    # plain memo classes pickle without any wrapper magic now (constructor
-    # config injection, 2026-08-06):
-    memo_class = _CountingMemo
-
     # thresholds 0.0 → promote through all 3 stages; n_conversations=1 with a
-    # constant per-run seed → the SAME single user each stage → same cache key.
+    # constant per-run seed → the SAME single user at every stage.
     stages = {
         "stage1": {"n_conversations": 1, "n_qa": 2, "threshold": 0.0},
         "stage2": {"n_conversations": 1, "n_qa": 2, "threshold": 0.0},
@@ -342,39 +334,22 @@ def test_progressive_real_memcache_reuse():
 
     orig_ask, orig_judge = llm_mod.Agent.ask, LoCoMoWorkflow.judge
     llm_mod.Agent.ask, LoCoMoWorkflow.judge = _fake_ask, _fake_judge
-    out_dir = Path(tempfile.mkdtemp(prefix="test_gauntlet_memcache_"))
+    out_dir = Path(tempfile.mkdtemp(prefix="test_gauntlet_rebuild_"))
     try:
         result = asyncio.run(run_baseline(
             dataset="locomo", split="test",
-            memo_class=memo_class, qa_model="gpt-5-mini", judge_model="gpt-5-mini",
+            memo_class=_CountingMemo, qa_model="gpt-5-mini", judge_model="gpt-5-mini",
             out_dir=out_dir, max_sample_concurrent=1,
-            progressive=True, memory_cache=True, stages=stages,
+            progressive=True, stages=stages,
         ))
+        assert result["locomo"]["stage"] == 3.0, result
+        assert result["locomo"]["eliminated"] is False, result
+        # the same user is built once PER STAGE — no reuse across stages
+        assert len(_BUILD_CALLS) == 3, f"expected 3 Phase-1 builds, got {len(_BUILD_CALLS)}"
+        assert not (out_dir / "memory_cache").exists()
     finally:
         llm_mod.Agent.ask, LoCoMoWorkflow.judge = orig_ask, orig_judge
-
-    # promoted through all three stages
-    assert result["locomo"]["stage"] == 3.0, result
-    assert result["locomo"]["eliminated"] is False, result
-
-    # ONE build across three stages (1 user) — stage2 + stage3 hit the cache.
-    assert len(_BUILD_CALLS) == 1, (
-        f"expected exactly 1 Phase-1 build (stage1 only); got {len(_BUILD_CALLS)} "
-        f"— cross-stage memcache reuse is NOT working"
-    )
-
-    # the pickled snapshot + sidecar were actually written to the shared dir
-    memcache_dir = out_dir / "memory_cache"
-    pkls = list(memcache_dir.glob("*__final.pkl"))
-    metas = list(memcache_dir.glob("*__final.meta.json"))
-    assert pkls, f"no memcache pkl written under {memcache_dir}"
-    assert metas, f"no memcache sidecar written under {memcache_dir}"
-    # the sidecar records the harness fingerprint the loads validate against
-    side = json.loads(metas[0].read_text())
-    assert side.get("harness_fingerprint"), side
-    assert side.get("storage") == "pickle", side
-
-    shutil.rmtree(out_dir, ignore_errors=True)
+        shutil.rmtree(out_dir, ignore_errors=True)
 
 
 # -------------------- runner --------------------

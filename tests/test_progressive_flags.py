@@ -139,20 +139,6 @@ def test_plan_kinds_recognized_by_evaluator_timeouts():
     assert evaluator_mod.SUBPROCESS_TIMEOUT["gauntlet"] >= (2 + 4 + 8) * 3600
 
 
-def test_memcache_mounted_for_eval_never_smoke():
-    """The cross-stage memory cache must be wired for gauntlet + single evals
-    and NEVER for smoke/sanity (harness code can still change during the
-    sanity-fix retry loop) — both on the host (orchestrator mounts the
-    persistent dir) and inside evaluate_memo (skips smoke)."""
-    import inspect
-    import forge.orchestrator as orchestrator_mod
-    import common.evaluate as evaluate_mod
-    orch_src = inspect.getsource(orchestrator_mod.evaluate_harness)
-    assert "if memory_cache and not smoke:" in orch_src
-    em_src = inspect.getsource(evaluate_mod.evaluate_memo)
-    assert "if memory_cache and not smoke:" in em_src
-
-
 def test_evaluate_memo_forwards_sample_seed_to_get_task_list():
     # Lightweight source check: guard against someone reverting the shared
     # evaluate_memo's task-list call back to the old no-seed form.

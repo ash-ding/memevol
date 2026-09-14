@@ -100,7 +100,7 @@ possible:
   one dict entry. No dimension knob is needed
   — MemoryOS sizes its FAISS indexes from the embedding array itself
   (`dim = embeddings_np.shape[1]`), so a 1536-dim API embedder drops straight
-  in. A `memory_cache: true` snapshot built at 384-dim is still invalid.
+  in.
 - **the LLM.** MemoryOS's vendored `chat_completion` hardcodes `temperature`
   and `max_tokens`, which the gpt-5 family rejects — so before this, MemoryOS
   could not run a gpt-5 model at all. The shim drops the rejected params and

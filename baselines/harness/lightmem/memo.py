@@ -40,7 +40,6 @@ from pathlib import Path
 from typing import Dict, List
 
 from common.memo_class import MemoClass
-from common.store_cache import DiskStoreCache
 
 from common.openai_usage import install as _install_openai_usage
 from baselines.harness.hipporag2.memo import app_log_to_passage
@@ -180,7 +179,7 @@ def _init_to_turns(init: Dict) -> List[List[Dict]]:
     raise KeyError(f"unrecognized recorder.init keys: {list(init)}")
 
 
-class LightMemMemo(DiskStoreCache, MemoClass):
+class LightMemMemo(MemoClass):
     # LightMem's own experiment defaults @ 34410f4.
     CONFIG_DEFAULTS = {
         "pre_compress": True,      # LLMlingua-2 token pre-compression (a core LightMem stage; needs the llmlingua model + a GPU)
@@ -214,7 +213,7 @@ class LightMemMemo(DiskStoreCache, MemoClass):
         # MUST match the embedder: it sizes the Qdrant collection AND is sent as
         # the API `dimensions` parameter, so a mismatch fails hard.
         # text-embedding-3-small => 1536. Changing this invalidates any existing
-        # index and any `memory_cache` snapshot taken at the old width.
+        # index built at the old width.
         "embedding_dims": 384,
         "embedding_device": None,  # device for the embedder (HF arm only). None/"auto" => cuda if visible, else cpu
         # Run the offline-update refinement phase after build
@@ -327,13 +326,6 @@ class LightMemMemo(DiskStoreCache, MemoClass):
             "extraction_mode": cfg["extraction_mode"],
         }
         return config
-
-    # -- memory-cache hooks (common/store_cache.py) --
-    _store_handle = "_system"
-
-    def _store_path(self):
-        """Per-user Qdrant directory — the whole of LightMem's persistent state."""
-        return OUTPUTS_DIR / self._instance_id
 
     def _ensure_system(self):
         if self._system is not None:

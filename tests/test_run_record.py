@@ -178,7 +178,7 @@ def _run_stage(out_dir: Path):
             memo_class=_StubMemo, dataset="locomo", split="test",
             progressive=False, single_stage={"n_conversations": 1, "n_qa": 1},
             out_dir=out_dir, qa_model="gpt-5-mini", judge_model="gpt-5-mini",
-            max_sample_concurrent=1, memory_cache=False))
+            max_sample_concurrent=1))
     finally:
         LoCoMoWorkflow.run_all_users = orig
 
@@ -200,7 +200,7 @@ def test_run_record_names_the_local_models_that_ran():
     assert record["local_models"][1]["device"] == "cuda:0"
     # A cost figure must never read as complete when it is not.
     assert "API calls only" in record["coverage_caveat"]
-    assert "phase_seconds" in record and "build_cache" in record
+    assert "phase_seconds" in record and "build_cache" not in record
     # ...and it reaches every consumer of evaluate_memo, not just the file.
     assert [m["name"] for m in metrics["local_models"]] == names
 

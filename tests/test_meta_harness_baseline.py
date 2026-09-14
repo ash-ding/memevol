@@ -815,7 +815,7 @@ def test_smoke_flag_reaches_the_subprocess_argv():
     try:
         cfg = {"execution_model": "m", "judge_model": "j", "max_sample_concurrent": 1,
                "sampling_seed": 42, "progressive": True, "random_sample": False,
-               "memory_cache": True, "max_logs": None, "stages": None,
+               "max_logs": None, "stages": None,
                "single_stage": None}
         with tempfile.TemporaryDirectory() as tmp:
             for smoke, expected in ((True, "--smoke"), (False, "--no-smoke")):

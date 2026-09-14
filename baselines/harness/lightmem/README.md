@@ -100,7 +100,7 @@ LightMem sends `temperature=0.1`, which the gpt-5 family rejects). The rest
 `extract_threshold`, `extraction_mode`, `manager_max_tokens`,
 `embedding_model`, `embedding_dims`, `embedding_device`, `offline_update`,
 `update_sim_threshold`, `retrieve_limit`, `llm_model`, `judge_model`,
-`progressive`, `sampling_seed`, `memory_cache`) are documented inline in
+`progressive`, `sampling_seed`) are documented inline in
 `../config.example.yaml`.
 
 **Sizing is config-file only** (there is no sizing CLI surface either).
@@ -154,7 +154,7 @@ Both arms leave `src/` **byte-identical** — the `diff -r` above still passes.
 `embedding_dims` **must move with the embedder**: it sizes the Qdrant
 collection AND is sent as the API `dimensions` parameter, so a mismatch fails
 hard rather than degrading silently. Changing it invalidates any existing index
-and any `memory_cache: true` gauntlet snapshot taken at the old width.
+built at the old width.
 
 ## Faithfulness boundary
 

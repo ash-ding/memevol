@@ -210,7 +210,7 @@ def test_memo_constructor_config():
     assert b.config == {"model": "x", "k": 3}
     # zero-arg still works (forge-evolved harnesses are never handed a config)
     assert MemoClass().config == {}
-    # plain instances pickle round-trip, config included (memcache relies on it)
+    # plain instances pickle round-trip, config included
     restored = pickle.loads(pickle.dumps(a))
     assert restored.config["k"] == 99
 

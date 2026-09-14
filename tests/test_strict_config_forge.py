@@ -49,7 +49,7 @@ def _forge_min_cfg(agent="claude_code"):
         "model": "gpt-5-mini", "judge_model": "gpt-5-mini",
         "progressive": True, "random_sample": False, "sampling_seed": 42,
         "max_sample_concurrent": 3,
-        "memory_cache": True, "data_isolation": True, "adopt_orphans": True,
+        "data_isolation": True, "adopt_orphans": True,
         "agent": agent,
         "llm": {
             "anthropic_transport": "api",
@@ -180,6 +180,25 @@ def test_forge_strict_on_via_config_flag_raises_end_to_end():
         assert raised
 
 
+def test_forge_removed_memory_cache_key_raises_end_to_end():
+    """`memory_cache:` was removed (2026-09-14): a YAML still listing it must
+    fail with an error naming the removal, not be silently ignored."""
+    import tempfile
+    import os
+    import yaml
+    orch = _load("_orch7", "forge/orchestrator.py")
+    with tempfile.TemporaryDirectory() as td:
+        p = os.path.join(td, "c.yaml")
+        with open(p, "w") as f:
+            yaml.safe_dump({"memory_cache": True, "datasets": {"locomo": {}}}, f)
+        raised = False
+        try:
+            orch._resolve_config(orch.build_arg_parser().parse_args(["--config", p]))
+        except ValueError as e:
+            raised = "memory cache was removed" in str(e)
+        assert raised
+
+
 def test_forge_no_config_file_never_trips_strict():
     """Strict mode is gated on args.config being non-None — an in-process
     config (no --config file at all) must never trip it, however incomplete."""
@@ -207,7 +226,7 @@ def test_forge_no_config_file_never_trips_strict():
 def _heldout_min_cfg():
     return {
         "model": "gpt-5-mini", "judge_model": "gpt-5-mini",
-        "max_sample_concurrent": 3, "memory_cache": True,
+        "max_sample_concurrent": 3,
         "gpu": {"enabled": False},
         "llm": {
             "anthropic_transport": "api",

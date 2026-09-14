@@ -53,7 +53,6 @@ progressive: true             # true = stage1->2->3 gauntlet (cheap candidates
 random_sample: false          # true = each iteration draws a different seeded
                               # subset (seeded by sampling_seed + iteration)
 sampling_seed: 42
-memory_cache: true            # cross-stage Phase-1 memory reuse
 
 # --- sizing (config-file only; both keys required, the inactive one null) ----
 single_stage: null            # used when progressive: false — see config.test.yaml

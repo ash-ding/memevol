@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import hashlib
 import importlib.util
 import inspect
 import json
@@ -70,19 +69,6 @@ def _write_load_error(out_dir: Path, error: str) -> None:
     }, indent=2), encoding="utf-8")
 
 
-def _file_fingerprint(path: Path) -> str:
-    """sha256[:16] over the single candidate file — gates cross-stage memory
-    cache reuse per candidate (the dir-scoped fingerprint would churn as
-    sibling candidates land in harnesses/)."""
-    h = hashlib.sha256()
-    try:
-        h.update(path.name.encode("utf-8"))
-        h.update(path.read_bytes())
-    except OSError:
-        return ""
-    return h.hexdigest()[:16]
-
-
 async def main(args: argparse.Namespace) -> None:
     from common.evaluate import evaluate_memo
     from common.sampling import derive_sample_seed
@@ -109,8 +95,6 @@ async def main(args: argparse.Namespace) -> None:
         single_stage=json.loads(args.single_stage) if args.single_stage else None,
         max_sample_concurrent=args.max_sample_concurrent,
         sample_seed=sample_seed,
-        memory_cache=args.memory_cache,
-        memcache_fingerprint=_file_fingerprint(Path(args.harness_file)),
         max_logs=args.max_logs, memo_sha=args.name,
     )
     (out_dir / "metrics.json").write_text(
@@ -132,13 +116,12 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--progressive", action=argparse.BooleanOptionalAction, default=True)
     p.add_argument("--smoke", action=argparse.BooleanOptionalAction, default=False,
                    help="ONE sanity_check-sized pass (artifacts at the out_dir root, "
-                        "no gauntlet, no memory cache) — the pre-eval crash gate.")
+                        "no gauntlet) — the pre-eval crash gate.")
     p.add_argument("--random-sample", action=argparse.BooleanOptionalAction, default=False)
     p.add_argument("--sampling-seed", type=int, default=42)
     p.add_argument("--step-index", type=int, default=0)
     p.add_argument("--stages", default=None, help="JSON stages block")
     p.add_argument("--single-stage", default=None, help="JSON single_stage block")
-    p.add_argument("--memory-cache", action=argparse.BooleanOptionalAction, default=True)
     return p.parse_args()
 
 

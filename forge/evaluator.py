@@ -86,7 +86,6 @@ async def run_evaluation(
     model: str = "gpt-5-mini",
     judge_model: str = "gpt-5-mini",
     max_sample_concurrent: int = 3,
-    memcache_dir: Optional[Path] = None,
     gpu: bool = False,
     anthropic_transport: str = "api",
     vertex_cfg: Optional[Dict[str, Any]] = None,
@@ -152,10 +151,6 @@ async def run_evaluation(
         "--bind", f"{harness_dir}:/harness:ro",
         "--bind", f"{out_dir}:/out:rw",
     ]
-    if memcache_dir is not None:
-        # Cross-stage memory snapshots (RW; persistent host dir so snapshots
-        # survive across evaluator invocations for this harness+dataset).
-        cmd += ["--bind", f"{memcache_dir}:/memcache:rw"]
     # Search-mode data isolation: overlay binds that shadow the test split
     # inside /app/benchmarks (see forge/data_isolation.py). Passed only for
     # split=search runs with cfg.data_isolation on.
@@ -198,8 +193,6 @@ async def run_evaluation(
         "--judge-model", judge_model,
         "--max-sample-concurrent", str(max_sample_concurrent),
     ]
-    if memcache_dir is not None:
-        cmd += ["--memcache-dir", "/memcache"]
 
     plan_kind = "smoke" if plan.get("smoke") else ("gauntlet" if plan.get("progressive", True) else "single")
     log.info(

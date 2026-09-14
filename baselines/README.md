@@ -9,7 +9,7 @@ producing comparable metrics: per-user reward, judge-scored accuracy, and
 
 1. [Layout — two kinds of baseline](#layout--two-kinds-of-baseline)
 2. [Method-boundary conventions](#method-boundary-conventions)
-3. [Shared progressive sampling, seeding & memory cache](#shared-progressive-sampling-seeding--memory-cache)
+3. [Shared progressive sampling & seeding](#shared-progressive-sampling--seeding)
 4. [Configuration](#configuration)
 5. [Existing baselines](#existing-baselines)
 6. [**Adding a harness baseline** — adapting an existing memory system](#adding-a-harness-baseline--adapting-an-existing-memory-system)
@@ -112,12 +112,12 @@ baseline's own project (it needs that baseline's deps):
 Every harness baseline writes one directory per run under its own `runs/`
 (gitignored — see **Run records** below); alma writes `logs/` + `results/`.
 
-## Shared progressive sampling, seeding & memory cache
+## Shared progressive sampling & seeding
 
 Every baseline (`evolve/alma`, `evolve/meta-harness`, and every `harness/*`)
 shares the same
 evaluation-sampling infrastructure as forge — the literal same `common/`
-modules forge uses — via two flags/keys plus a cross-stage memory cache.
+modules forge uses — via two flags/keys.
 **alma** and **meta-harness** still expose these as CLI flags layered over
 their config (see "Configuration"); **harness baselines** (2026-08-06) have NO CLI parameter
 surface at all — every one of these is a config-file key only, validated
@@ -149,14 +149,10 @@ exactly by `common.config.validate_exact_config`:
   config key `sampling_seed:`): the base seed. alma combines it with
   `(step_index, dataset)` when `random_sample` is on; harness baselines (no
   steps) use it directly as a single fixed seed for their one-shot sample.
-- **Memory cache** (default on): alma uses CLI `--memory_cache` /
-  `--no-memory_cache` (underscore, `BooleanOptionalAction`); harness
-  baselines set the config key `memory_cache: true|false` (no flag). When
-  `progressive` is set, the SAME `common/memory_cache.py` mechanism forge's
-  evaluator uses is mounted in the baseline's in-process stage runner too,
-  so stage2/stage3 reuse stage1's built Phase-1 memory instead of
-  re-ingesting from scratch — a real win for expensive builders (e.g.
-  A-mem's per-note LLM analysis + evolution).
+
+There is no memory cache (removed 2026-09-14): every gauntlet stage builds its
+users' Phase-1 memory from scratch, and a config that still lists
+`memory_cache:` is rejected with an error naming the removal.
 
 Surface per side:
 
@@ -239,7 +235,7 @@ uv run --project baselines/harness/<name> python -m baselines.harness.eval_harne
 identical for all seven baselines. It carries the **evaluation frame** and
 nothing else: `harness` (which memo class), `arm` (see **Two model arms**),
 `dataset`, `split`, `progressive`, `sampling_seed`, `single_stage`, `stages`,
-`memory_cache`, `llm_model`, `judge_model`, `max_sample_concurrent`, and an
+`llm_model`, `judge_model`, `max_sample_concurrent`, and an
 optional `run_name`. No method parameter appears in it.
 
 - **Method knobs live on the memo class**, declared ONCE as
@@ -295,7 +291,6 @@ baselines/harness/<name>/runs/                       (gitignored)
 ├── index.jsonl                   one line per finished run: run_id, arm, dataset,
 │                                 split, raw_score, stage, tokens, wall_clock_s, git_sha
 ├── latest                        the most recent run_id
-├── memory_cache/<dataset>/<split>/   cross-run Phase-1 memory cache (memory_cache: true)
 └── <run_id>/                     <YYYYMMDD_HHMMSS>_<dataset>_<split>, or `run_name`
     ├── config.resolved.yaml      frame + the FULLY expanded memo config — the only
     │                             place a run's method parameters (internal LLM,
@@ -393,8 +388,8 @@ check still passes:
 **Dimension coupling.** The API embedder is 1536-dim against local defaults of
 384 (MiniLM) / 1024 (bge-m3, Qwen3). Only lightmem carries an explicit
 `embedding_dims` knob that must move with it; the others size their index from
-the embedder itself. In every case, switching arms invalidates vector stores and
-`memory_cache: true` gauntlet snapshots built at the other width.
+the embedder itself. In every case, switching arms invalidates vector stores
+built at the other width.
 
 ## Existing baselines
 
@@ -675,7 +670,7 @@ Three lifecycle rules that trip up adapters:
    checkpoint's new log segment. Your ingestion must be additive.
 3. **RETRIEVE is read-only.** DynamicMem interleaves queries with
    ingestion at checkpoints — a retrieve that mutates memory corrupts
-   checkpoint isolation (and the cross-stage memory cache).
+   checkpoint isolation.
 
 ### Step 1 — `memo.py`: the adapter class
 

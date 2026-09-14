@@ -42,7 +42,6 @@ max_logs: null
 progressive: false       # ONE full pass — no gauntlet, no elimination
 random_sample: false
 sampling_seed: 42
-memory_cache: true
 
 # ACTIVE sizing block: every leaf null = the whole test split.
 single_stage:

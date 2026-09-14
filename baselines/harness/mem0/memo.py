@@ -36,7 +36,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from common.memo_class import MemoClass
-from common.store_cache import DiskStoreCache
 
 from common.openai_usage import install as _install_openai_usage
 from baselines.harness.hipporag2.memo import app_log_to_passage
@@ -130,7 +129,7 @@ def _init_to_messages(init: Dict) -> List[Dict[str, str]]:
     return out
 
 
-class Mem0Memo(DiskStoreCache, MemoClass):
+class Mem0Memo(MemoClass):
     CONFIG_DEFAULTS = {
         # PAPER (arXiv 2504.19413) §2: "LLM-based extractors and update module
         # leverage GPT-4o-mini with function calling". Reads each batch of
@@ -165,20 +164,12 @@ class Mem0Memo(DiskStoreCache, MemoClass):
         self._instance_id = uuid.uuid4().hex[:12]
         self._user_id = f"u_{self._instance_id}"
 
-    # -- memory-cache hooks (common/store_cache.py) --
-    _store_handle = "_memory"
-
-    def _store_path(self):
-        """Per-user store: the Qdrant collection AND the history DB live here."""
-        return OUTPUTS_DIR / self._instance_id
-
     def _ensure_system(self) -> None:
         if self._memory is not None:
             return
         cfg = self.config
         store = OUTPUTS_DIR / self._instance_id
-        # Never wipe a store restored from the memory cache (DiskStoreCache).
-        if store.exists() and not self.restored_from_cache:
+        if store.exists():
             shutil.rmtree(store, ignore_errors=True)
         store.mkdir(parents=True, exist_ok=True)
         llm_conf: Dict[str, Any] = {"model": cfg["mem0_llm_model"]}

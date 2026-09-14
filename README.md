@@ -23,7 +23,7 @@ evaluation protocol.
 | Directory | Role |
 |---|---|
 | [`forge/`](forge/) | **The main method.** Claude-Code-SDK proposer + Singularity-sandboxed evaluator + frontier record store; searches over harness code |
-| [`common/`](common/) | The shared evaluation platform: the [`MemoClass`](common/memo_class.py) contract, the [`Basic_Recorder`](common/recorder.py) data envelope, the [`BaseWorkflow`](common/workflow.py) scheduler, LLM/judge/embedding kernel, token tracking, memory cache, logging |
+| [`common/`](common/) | The shared evaluation platform: the [`MemoClass`](common/memo_class.py) contract, the [`Basic_Recorder`](common/recorder.py) data envelope, the [`BaseWorkflow`](common/workflow.py) scheduler, LLM/judge/embedding kernel, token tracking, logging |
 | [`benchmarks/`](benchmarks/) | One adapter per benchmark: `env.py` (data loading + recorder + split), `workflow.py` (evaluation protocol), `prompts.py` (QA-agent prompt) |
 | [`baselines/`](baselines/) | Comparison methods, split into `evolve/` (search-method baselines, compared against forge itself) and `harness/` (ready-made memory systems, compared against forge-evolved harnesses) — [README](baselines/README.md) |
 | [`seeds/`](seeds/) | Opt-in seed harness library. A seed is copied into a run as candidate #0 (e.g. `no_memory` — the calibration floor any real memory design must beat) |
@@ -59,8 +59,8 @@ evaluation protocol.
 │      ┌────────▼────────┐  staged gauntlet, per benchmark:   │
 │      │ Evaluator       │  stage1 →[≥thr]→ stage2 →[≥thr]→   │
 │      │ (Singularity)   │  stage3 (below threshold ⇒ out);   │
-│      └────────┬────────┘  Phase-1 memory cached across      │
-│               │           stages → score.json + traces      │
+│      └────────┬────────┘  memory rebuilt at every stage     │
+│               │           → score.json + traces             │
 │      ┌────────▼────────┐  per-benchmark axes only —         │
 │      │ Frontier update │  objectives = {accuracy_<ds>,      │
 │      └─────────────────┘    stage_<ds>, robustness_<ds>,    │
@@ -77,15 +77,12 @@ WebSearch), decides which candidates to study, and records its chosen
 priors in the new harness's `meta.json::parent_ids`. There is no
 algorithmic selection — the frontier is a pure record store.
 
-Two evaluation-efficiency mechanisms:
-
-- **Staged evaluation** — each benchmark runs a stage1→2→3 promotion
-  gauntlet with config thresholds; bad candidates die on a ~20-item stage1
-  instead of consuming a full eval. Sampling is deterministic and *nested*
-  (a smaller stage's task set is a strict subset of a larger one).
-- **Cross-stage memory cache** — the memory a harness builds in Phase 1 is
-  snapshotted (pickle; per checkpoint for DynamicMem) and reused at deeper
-  stages instead of being rebuilt. See [`common/memory_cache.py`](common/memory_cache.py).
+**Staged evaluation** is the evaluation-efficiency mechanism: each benchmark
+runs a stage1→2→3 promotion gauntlet with config thresholds; bad candidates
+die on a ~20-item stage1 instead of consuming a full eval. Sampling is
+deterministic and *nested* (a smaller stage's task set is a strict subset of a
+larger one). Every stage builds its users' Phase-1 memory from scratch —
+nothing is cached across stages or runs.
 
 How much and which data each eval covers is controlled by three flags,
 honored by forge AND every baseline (alma + the harness/ baselines):
