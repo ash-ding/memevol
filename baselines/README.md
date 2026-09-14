@@ -604,7 +604,7 @@ faithfulness boundary and provenance.
 
 `ZepMemo` ([harness/zep/memo.py](harness/zep/memo.py)) vendors and drives
 [Graphiti](https://github.com/getzep/graphiti) (@ `4f62cfe`, byte-identical under
-`src/graphiti_core/`), the engine behind [Zep](harness/zep/zep.pdf)
+`src/graphiti_core/`), the engine behind [Zep](https://arxiv.org/abs/2501.13956)
 (arXiv:2501.13956):
 
 - **BUILD**: each ingestion unit becomes one Graphiti *episode* via `add_episode`

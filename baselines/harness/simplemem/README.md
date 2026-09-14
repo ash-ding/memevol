@@ -2,7 +2,7 @@
 
 [SimpleMem](https://github.com/aiming-lab/SimpleMem) — semantic-compression
 lifelong memory — as a ready-made memory system on the 3-hook `MemoClass`
-contract. The paper PDF is in this directory ([simplemem.pdf](simplemem.pdf)).
+contract. Paper: [arXiv 2601.02553](https://arxiv.org/abs/2601.02553).
 
 **Provenance**: the `src/simplemem/` subtree is vendored from
 <https://github.com/aiming-lab/SimpleMem> @
@@ -29,7 +29,8 @@ initializer that imports nothing (the baseline imports
 SimpleMem's three-stage text pipeline runs untouched:
 
 1. **Semantic structured compression** — BUILD windows the ingested `Dialogue`s
-   (`WINDOW_SIZE=40`, overlap 2) and an LLM distills each window into
+   (`window_size: 20`, the paper's W — the vendored code ships 40; overlap 2)
+   and an LLM distills each window into
    self-contained `MemoryEntry` units: a coreference-resolved "lossless
    restatement" with absolute timestamps, plus keywords and
    persons/entities/location/topic metadata.
@@ -168,14 +169,11 @@ table from `embedding_model.dimension`. The per-user store is rebuilt with
   compression lands under the `build` phase; planning/reflection under
   `retrieve`.
 - The faithful embedder (`Qwen/Qwen3-Embedding-0.6B`) is a ~0.6B local model:
-  it benefits from a GPU and downloads once from HuggingFace.
-  The shared embedder factory loads it once per process and shares it
-  across users.
-
-  it benefits from a GPU and downloads once from HuggingFace. `_st_shim` loads
-  it once per process and shares it across users. It is **not** an API call, so
-  its compute can never appear in any token count — `run_record.json` names it
-  with its device, and `phase_seconds` is the only figure that covers it.
+  it benefits from a GPU and downloads once from HuggingFace. The shared
+  embedder factory in [`../model_config.py`](../model_config.py) loads it once
+  per process and shares it across users. It is **not** an API call, so its
+  compute can never appear in any token count — `run_record.json` names it with
+  its device, and `phase_seconds` is the only figure that covers it.
 - Build/retrieve are synchronous + blocking, so users don't overlap under
   `max_sample_concurrent` (a blocking hook body stalls the event loop). The
   real build speedup is SimpleMem's own window parallelism

@@ -3,7 +3,8 @@
 # this baseline's README. Frame keys only; the method itself runs at its
 # paper-faithful CONFIG_DEFAULTS (memo.py — print with `--describe memoryos`).
 #
-#   uv run --project baselines/harness/memoryos python -m baselines.harness.eval_harness #       --config baselines/harness/memoryos/config.paper.yaml
+#   uv run --project baselines/harness/memoryos python -m baselines.harness.eval_harness \
+#       --config baselines/harness/memoryos/config.paper.yaml
 # =============================================================================
 
 harness: memoryos

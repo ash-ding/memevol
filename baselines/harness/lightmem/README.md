@@ -3,8 +3,8 @@
 [LightMem](https://github.com/zjunlp/LightMem) — a lightweight, compression-first
 lifelong memory (LLMlingua-2 pre-compression → attention topic segmentation → LLM
 metadata/summary extraction → embedding index → offline update) — as a ready-made
-memory system on the 3-hook `MemoClass` contract. The paper PDF is in this
-directory ([lightmem.pdf](lightmem.pdf)).
+memory system on the 3-hook `MemoClass` contract. Paper:
+[arXiv 2510.18866](https://arxiv.org/abs/2510.18866).
 
 **Provenance**: the `src/lightmem/` subtree is vendored from
 <https://github.com/zjunlp/LightMem> @
@@ -184,10 +184,6 @@ built at the old width.
   crashed outright on a CPU-only box. Pin an explicit device if you need one.
   The embedder is loaded once per process and shared across users by the shared
   factory in [`../model_config.py`](../model_config.py).
-
-  embedder are local and benefit from a GPU (`llmlingua_device` / `embedding_device`,
-  default `cuda`; set `cpu` to run without a GPU, slowly). The embedder is loaded
-  once per process and shared across users (`_st_shim`).
 - **Neither local model can ever appear in the token numbers** — they are not
   API calls, so there is no usage object to report. LLMlingua-2 runs one forward
   pass per ingested text; that compute is real and invisible to any token count.

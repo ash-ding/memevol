@@ -69,9 +69,6 @@ install_openai_param_normalisation()
 # src/ (byte-identity per the README's `diff -r`).
 _install_openai_usage()
 
-_st_shim.ensure_src_on_path()          # `import graphiti_core` -> vendored copy
-_st_shim.ensure_sentence_transformers()   # before any graphiti cross_encoder import
-
 from graphiti_core import Graphiti  # noqa: E402
 from graphiti_core.driver.falkordb_driver import FalkorDriver  # noqa: E402
 from graphiti_core.nodes import EpisodeType  # noqa: E402
