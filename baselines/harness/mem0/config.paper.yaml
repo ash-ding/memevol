@@ -1,67 +1,29 @@
 # =============================================================================
-# mem0 (Mem0 LLM-extracted fact memory) baseline — exhaustive config.
-# Launch: uv run --project baselines/harness/mem0 python baselines/harness/mem0/run.py \
-#             --config baselines/harness/mem0/config.example.yaml
-# This file is the ONLY parameter surface for run.py — it takes exactly one
-# flag (--config). There are no CLI overrides and no built-in defaults.
+# mem0 — the PAPER-REPRODUCTION run: the record of what produced the numbers in
+# this baseline's README. Frame keys only; the method itself runs at its
+# paper-faithful CONFIG_DEFAULTS (memo.py — print with `--describe mem0`).
 #
-# EXACT CONFIG (always on): the YAML must list EVERY key below — and ONLY
-# those keys (a null value counts as listed). A missing key OR an unknown
-# key aborts the run, naming the problem; sizing (single_stage/stages) is
-# checked to the leaf. Validated by common.config.validate_exact_config.
+#   uv run --project baselines/harness/mem0 python -m baselines.harness.eval_harness #       --config baselines/harness/mem0/config.paper.yaml
 # =============================================================================
 
+harness: mem0
+arm: faithful                  # the method's own published models
 
-dataset: locomo                # which benchmark: dynamicmem | locomo | longmemeval_s (Mem0 reports on LoCoMo)
-split: search                    # test | search (search = the training split used during evolution)
-progressive: false             # false = ONE single pass (sized by single_stage); true = staged stage1->2->3 gauntlet (sized by stages)
-sampling_seed: 42              # seeds the sampled subset (both paths; a no-op at whole-split)
-memory_cache: true             # cross-stage Phase-1 memory reuse. Values:
-                               #   true      reuse a snapshot — INCLUDING one from a previous run; the
-                               #             cache is results/<dataset>/<split>/memory_cache, which is
-                               #             NOT run-scoped, so a re-run skips the build
-                               #   false     off entirely — every stage rebuilds
-                               #   rebuild   build fresh ONCE this run, then let the later stages reuse
-                               #             it and overwrite the stale entry
-                               # Any change to this file's method knobs invalidates an entry (the sidecar
-                               # fingerprints the memo config), so two different configs can never reuse
-                               # each other's memory.
+dataset: locomo                # the paper reports on LoCoMo
+split: search
+progressive: false
+sampling_seed: 42
+memory_cache: true
 
-# --- Mem0 internal knobs (its own defaults) ---------------------------------
-mem0_llm_model: gpt-4o-mini    # Mem0's extractor/updater LLM: reads each batch of messages, extracts
-                               # standalone facts, and decides ADD / UPDATE / DELETE against what is
-                               # already stored. This IS the method — not just a summariser.
-embedding_model: text-embedding-3-small   # Mem0's embedder (OpenAI provider)
-base_url: null                 # OpenAI-compatible base URL for Mem0's internal LLM (null = OpenAI default)
-add_batch_size: 20             # messages per Memory.add() extraction call. Mem0 reads a whole message
-                               # list at once; batching is its intended usage and keeps the build to
-                               # dozens of LLM calls rather than one per turn.
-infer: true                    # true = LLM fact extraction (the method). false = store messages verbatim,
-                               # which turns Mem0 into a plain vector store — useful only as an ablation.
-top_k: 10                      # Memory.search hits per query. PAPER (arXiv 2504.19413): s=10
-                               # similar memories. Mem0's own library default is 20.
-threshold: 0.0                 # min similarity for a hit (0 = keep all top_k; Mem0's own default is 0.1)
-
-# --- shared eval (baseline convention) --------------------------------------
-llm_model: gpt-4o-mini         # PAPER-ALIGNED answerer: both papers report LoCoMo on gpt-4o-mini.
+llm_model: gpt-4o-mini         # PAPER-ALIGNED answerer: the paper reports LoCoMo on gpt-4o-mini.
                                # The repo-comparable arm uses gpt-5-mini (config.example.yaml).
 judge_model: gpt-5-mini        # LLM-as-judge model scoring predicted vs reference answers
-max_sample_concurrent: 3       # asyncio concurrency across users/samples (higher = faster, more API load)
+max_sample_concurrent: 3
 
-# --- Sizing (config-file only; there is no other parameter surface). BOTH keys
-#     must be present; the inactive one is null. Every leaf field in the active
-#     block must be listed (a null leaf = whole split for that dimension). ---
-# progressive: false → single_stage sizes the one pass (locomo native fields):
 single_stage:
   n_conversations: null        # all 6 conversations in the search split
   n_qa: 60                     # 60 randomly-sampled QA per conversation = 360 total.
                                # 60 rather than 30 because open-domain is only 6% of LoCoMo:
                                # at 30 it lands ~10 questions, far too few to read.
-# progressive: true → stages sizes the gauntlet (set single_stage: null above and
-# fill this out; sizes must be non-decreasing across stage1..3):
 stages: null
-# stages:
-#   sanity_check: {n_conversations: 1, n_qa: 3}
-#   stage1: {n_conversations: 2, n_qa: 20, threshold: 0.30}
-#   stage2: {n_conversations: 4, n_qa: 40, threshold: 0.35}
-#   stage3: {n_conversations: 6, n_qa: 60}
+run_name: null

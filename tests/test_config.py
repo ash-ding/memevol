@@ -60,20 +60,14 @@ def test_resolve_non_mapping_yaml_raises():
     assert raised
 
 
-def test_amem_config_file_only_surface():
-    # Harness baselines are config-file-ONLY (2026-08-06): run.py exposes
-    # REQUIRED_KEYS (no DEFAULT_CONFIG, no CLI overrides) and its
-    # config.example.yaml passes the exact-key validation as-is.
-    try:
-        import importlib
-        m = importlib.import_module("baselines.harness.amem.run")
-    except ImportError:
-        print("    SKIP (amem deps unavailable in this venv)"); return
-    from common.config import load_config_file, validate_exact_config
-    assert not hasattr(m, "DEFAULT_CONFIG")
-    assert "dataset" in m.REQUIRED_KEYS and "single_stage" in m.REQUIRED_KEYS
-    cfg = load_config_file("baselines/harness/amem/config.example.yaml")
-    validate_exact_config(cfg, m.REQUIRED_KEYS, "amem")  # no raise
+def test_harness_frame_config_surface():
+    # Harness baselines share ONE frame config (eval_harness.FRAME_KEYS, no
+    # method knobs) and the shipped example passes exact validation as-is.
+    # No baseline deps needed: nothing here imports a memo class.
+    from baselines.harness.eval_harness import FRAME_KEYS, load_frame_config, MEMOS
+    assert "dataset" in FRAME_KEYS and "single_stage" in FRAME_KEYS and "harness" in FRAME_KEYS
+    cfg = load_frame_config("baselines/harness/config.example.yaml")  # no raise
+    assert cfg["harness"] in MEMOS
 
 
 def test_require_present_keys_missing_raises():

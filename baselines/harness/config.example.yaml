@@ -1,0 +1,65 @@
+# =============================================================================
+# Harness-baseline evaluation — the ONE config, identical for all seven
+# baselines (amem, hipporag2, lightmem, mem0, memoryos, simplemem, zep).
+# Launch from the repo root inside the TARGET baseline's own uv project:
+#
+#   uv run --project baselines/harness/<harness> python -m baselines.harness.eval_harness \
+#       --config baselines/harness/config.example.yaml
+#
+# This file is the EVALUATION FRAME only. Every method-specific knob (retrieval
+# k, internal LLM, embedder, capacities, …) is a default on the memo class
+# (`CONFIG_DEFAULTS` in baselines/harness/<harness>/memo.py, with the paper /
+# upstream justification next to each value). Print them with
+#   ... eval_harness --describe <harness>
+# and find the fully merged values of any run in its runs/<run_id>/config.resolved.yaml.
+#
+# EXACT CONFIG (always on): the YAML must list EVERY key below — and ONLY those
+# keys (a null value counts as listed; `run_name` is optional). A missing or
+# unknown key aborts the run, naming the problem; sizing (single_stage/stages)
+# is checked to the leaf. Validated by common.config.validate_exact_config.
+# =============================================================================
+
+harness: mem0                  # which memory system: amem | hipporag2 | lightmem | mem0 | memoryos | simplemem | zep
+arm: faithful                  # faithful = each method's own published models (paper-faithful defaults)
+                               # unified  = ONE LLM (gpt-5-mini) + ONE API embedder (text-embedding-3-small)
+                               #            fleet-wide, so the comparison against the main method is
+                               #            like-for-like (applies the class's UNIFIED_OVERRIDES)
+
+dataset: locomo                # which benchmark: dynamicmem | locomo | longmemeval_s
+split: search                  # test | search (search = the training split used during evolution)
+progressive: false             # false = ONE single pass (sized by single_stage); true = staged stage1->2->3 gauntlet (sized by stages)
+sampling_seed: 42              # seeds the sampled subset (both paths; a no-op at whole-split)
+memory_cache: true             # cross-run Phase-1 memory reuse. Values:
+                               #   true      reuse a snapshot — INCLUDING one from a previous run; the cache
+                               #             is runs/memory_cache/<dataset>/<split>, NOT run-scoped, so a
+                               #             re-run skips the build. What you measure is yesterday's memory
+                               #   rebuild   build fresh ONCE this run, then let the later gauntlet stages
+                               #             reuse it and overwrite the stale entry — reproducible from scratch
+                               #   false     off entirely — every stage rebuilds
+                               # Any change to the method config invalidates an entry (the sidecar
+                               # fingerprints the resolved memo config), so two different configs can
+                               # never reuse each other's memory.
+
+# --- Shared eval knobs (the layer that makes scores comparable: the answerer
+#     and the judge are the same for every baseline) ---
+llm_model: gpt-5-mini          # shared QA agent — answers from the baseline's retrieved memory
+judge_model: gpt-5-mini        # LLM-as-judge model scoring predicted vs reference answers
+max_sample_concurrent: 3       # asyncio concurrency across users/samples (higher = faster, more API load)
+
+# --- Sizing (config-file only). BOTH keys must be present; the inactive one
+#     is null. Every leaf field in the active block must be listed (a null
+#     leaf = whole split for that dimension). ---
+# progressive: false → single_stage sizes the one pass (locomo native fields):
+single_stage:
+  n_conversations: null        # locomo: null = all conversations in the split; e.g. 2 to cap
+  n_qa: null                   # null = all QA per conversation
+# progressive: true → stages sizes the gauntlet (set single_stage: null above and
+# fill this out; sizes must be non-decreasing across stage1..3):
+stages: null
+# stages:
+#   sanity_check: {n_conversations: 1, n_qa: 3}
+#   stage1: {n_conversations: 2, n_qa: 20, threshold: 0.30}
+#   stage2: {n_conversations: 4, n_qa: 40, threshold: 0.35}
+#   stage3: {n_conversations: 6, n_qa: 60}
+
+run_name: null                 # optional run directory name; null = <YYYYMMDD_HHMMSS>_<dataset>_<split>

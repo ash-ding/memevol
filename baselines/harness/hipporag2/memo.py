@@ -96,6 +96,23 @@ def _init_to_passages(init: Dict) -> List[str]:
 
 
 class HippoRAGMemo(DiskStoreCache, MemoClass):
+    CONFIG_DEFAULTS = {
+        "embedding": "text-embedding-3-small",   # API embedder (1536-dim). PAPER: nvidia/NV-Embed-v2.
+        # HippoRAG2's INTERNAL LLM (NER, triple extraction, graph construction).
+        # PAPER: Llama-3.3-70B-Instruct. gpt-4o-mini is both the paper's
+        # alternative QA-reader model and what the other six baselines build
+        # memory with, so it keeps the fleet comparable. (This key used to fall
+        # back to the frame's `llm_model`, which is why hipporag2 was once the
+        # only baseline building memory with gpt-5-mini.)
+        "hipporag2_llm_model": "gpt-4o-mini",
+        "embedding_batch_size": None,   # None = HippoRAG2's own default (4 local / 16 API)
+        "embedding_dtype": None,        # None = HippoRAG2's own default ("float16" local / "auto" API)
+        "top_k": 5,                     # PAPER §4.4: "Our QA module uses the top-5 retrieved passages as context"
+    }
+    # UNIFIED arm: hipporag2 is already on the fleet's API embedder; only the
+    # graph-construction LLM changes.
+    UNIFIED_OVERRIDES = {"hipporag2_llm_model": "gpt-5-mini"}
+
     def __init__(self, config=None):
         super().__init__(config)
         self._hippo = None
@@ -120,7 +137,7 @@ class HippoRAGMemo(DiskStoreCache, MemoClass):
     def _store_path(self):
         """HippoRAG's save_dir. Keyed on the embedding model exactly as _ensure_hippo
         builds it, so a restore lands where the graph will be reopened."""
-        emb = str(self.config.get("embedding", "") or "").replace("/", "_")
+        emb = str(self.config["embedding"]).replace("/", "_")
         return OUTPUTS_DIR / f"{self._instance_id}_{emb}"
 
     def _ensure_hippo(self):
@@ -136,17 +153,12 @@ class HippoRAGMemo(DiskStoreCache, MemoClass):
         from hipporag import HippoRAG
         from hipporag.utils.config_utils import BaseConfig
         is_local = "text-embedding" not in embedding
-        # HippoRAG's INTERNAL LLM (NER, triple extraction, graph construction)
-        # has its own key. It used to read the frame's `llm_model` — the shared
-        # QA-agent model — which is why hipporag2 was the only baseline building
-        # its memory with gpt-5-mini while the other six used gpt-4o-mini. The
-        # fallback keeps that historical behaviour when the key is null.
         conf = BaseConfig(
-            llm_name=cfg.get("hipporag2_llm_model") or cfg["llm_model"],
+            llm_name=cfg["hipporag2_llm_model"],
             embedding_model_name=embedding,
             save_dir=save_dir, response_format=None, temperature=1, seed=None,
-            embedding_batch_size=cfg.get("embedding_batch_size") or (4 if is_local else 16),
-            embedding_model_dtype=cfg.get("embedding_dtype") or ("float16" if is_local else "auto"),
+            embedding_batch_size=cfg["embedding_batch_size"] or (4 if is_local else 16),
+            embedding_model_dtype=cfg["embedding_dtype"] or ("float16" if is_local else "auto"),
         )
         self._hippo = HippoRAG(global_config=conf)
 
@@ -162,7 +174,7 @@ class HippoRAGMemo(DiskStoreCache, MemoClass):
     async def retrieve_memory_for_query(self, recorder) -> Dict:
         self._ensure_hippo()   # defensive no-op if build_memory_from_data already ran
         query = recorder.init.get("query", "")
-        k = int(self.config.get("top_k", 5))
+        k = int(self.config["top_k"])
         # Prefer retrieve-only; fall back to rag_qa(...).docs if absent.
         if hasattr(self._hippo, "retrieve"):
             sols = self._hippo.retrieve(queries=[query], num_to_retrieve=k)

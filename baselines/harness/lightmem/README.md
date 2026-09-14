@@ -22,7 +22,7 @@ LightMem's text memory only. Verify the vendored files are unmodified:
 
 Nothing under `src/` is edited (unlike the simplemem baseline, LightMem's
 top-level `__init__.py` is empty, so no trimming is needed). All integration code
-lives in `memo.py` / `run.py`, never in `src/`. The vendored
+lives in `memo.py`, never in `src/`. The vendored
 `memory/graph.py` is a broken one-line upstream stub (`class GraphMem:` with no
 body); it is imported only when `graph_mem=True`, which this baseline never sets,
 so it is kept byte-identical and never loaded.
@@ -69,15 +69,28 @@ This creates `baselines/harness/lightmem/.venv/`. The repo-root
 
 ## Usage
 
-    cd baselines/harness/lightmem && uv run python run.py --config config.example.yaml
+    uv run --project baselines/harness/lightmem python -m baselines.harness.eval_harness \
+        --config baselines/harness/config.example.yaml      # harness: lightmem
 
-`run.py` takes exactly one flag, `--config <yaml>` (required) — there is no
-other CLI surface. Every parameter lives in the config file:
-`config.example.yaml` documents each key inline — copy it, edit the values
-(e.g. `dataset: dynamicmem`, `split: search`), and point `--config` at your
-copy. The YAML must list EXACTLY the keys `run.py`'s `REQUIRED_KEYS`
-expects — a missing key OR an unknown key aborts the run before anything
-executes; a `null` value counts as listed.
+All seven harness baselines share ONE entrypoint
+([`../eval_harness.py`](../eval_harness.py)) and ONE frame config
+([`../config.example.yaml`](../config.example.yaml)): set `harness: lightmem`,
+choose `arm`, dataset/split/sizing and the shared QA + judge models, and point
+`--config` at your copy. The YAML must list EXACTLY the frame keys — a missing
+key OR an unknown key aborts the run before anything executes; a `null` value
+counts as listed. `--project` is not optional: this baseline's deps live only
+in its own venv.
+
+**Method knobs are not in the config file.** Every lightmem-specific parameter is
+declared once, with its justification, as `CONFIG_DEFAULTS` on the memo class
+in [`memo.py`](memo.py) (the faithful arm) plus `UNIFIED_OVERRIDES` (what
+`arm: unified` changes). Print them:
+
+    uv run --project baselines/harness/lightmem python -m baselines.harness.eval_harness --describe lightmem
+
+Every run records the fully merged values in `runs/<run_id>/config.resolved.yaml`.
+To override one for an ablation, add a `memo:` block to your config
+(`memo: {retrieve_k: 5}`) — validated against the class, so a typo aborts.
 
 LightMem-specific keys worth calling out: `pre_compress` / `topic_segment`
 (default on; `topic_segment` requires `pre_compress` — shared LLMlingua-2
@@ -88,11 +101,11 @@ LightMem sends `temperature=0.1`, which the gpt-5 family rejects). The rest
 `embedding_model`, `embedding_dims`, `embedding_device`, `offline_update`,
 `update_sim_threshold`, `retrieve_limit`, `llm_model`, `judge_model`,
 `progressive`, `sampling_seed`, `memory_cache`) are documented inline in
-`config.example.yaml`.
+`../config.example.yaml`.
 
 **Sizing is config-file only** (there is no sizing CLI surface either).
 `progressive: false` (default) REQUIRES a `single_stage` block; `progressive:
-true` sizes from a `stages` block. See `config.example.yaml`.
+true` sizes from a `stages` block. See `../config.example.yaml`.
 
 ## Ingestion mapping (`recorder.init` → LightMem turns)
 
@@ -109,7 +122,7 @@ Turns are ingested in order; the per-user Qdrant index is instance-scoped
 
 Every model this baseline touches is a config parameter, so it runs in two arms:
 
-| | faithful arm (`config.example.yaml`) | unified arm (`config.unified.yaml`) |
+| | faithful arm (`CONFIG_DEFAULTS`, `arm: faithful`) | unified arm (`UNIFIED_OVERRIDES`, `arm: unified`) |
 |---|---|---|
 | internal LLM (`lightmem_llm_model`) | `gpt-4o-mini` — LightMem's own default | `gpt-5-mini` |
 | embedder (`embedding_model` + `embedding_dims`) | `all-MiniLM-L6-v2`, local, 384-dim — the paper's | `text-embedding-3-small`, API, 1536-dim |
@@ -193,11 +206,11 @@ end-to-end** here (this baseline's own uv env, incl. `llmlingua`/`qdrant-client`
 pass `py_compile`. To smoke each ingestion branch cheaply on the search split:
 
     cd baselines/harness/lightmem
-    uv run python run.py --config smoke_locomo.yaml
-    uv run python run.py --config smoke_dynamicmem.yaml
-    uv run python run.py --config smoke_longmemeval.yaml
+    uv run --project baselines/harness/lightmem python -m baselines.harness.eval_harness --config smoke_locomo.yaml
+    uv run --project baselines/harness/lightmem python -m baselines.harness.eval_harness --config smoke_dynamicmem.yaml
+    uv run --project baselines/harness/lightmem python -m baselines.harness.eval_harness --config smoke_longmemeval.yaml
 
-Read `results/<dataset>/search/traces/<user>.json` to confirm build → retrieve →
+Read `runs/<run_id>/traces/<user>.json` to confirm build → retrieve →
 QA runs, `invalid_users` is empty, and the retrieved `passages` are non-empty
 memory strings in the expected `timestamp weekday memory` format.
 
@@ -205,7 +218,7 @@ memory strings in the expected `timestamp weekday memory` format.
 
     baselines/harness/lightmem/
     ├── outputs/<instance_id>/     # per-user Qdrant index (on-disk) — gitignored
-    └── results/<dataset>/<split>/
+    └── runs/<run_id>/
         ├── score.json             # {"benchmark_eval_score": {...}, "per_user": {...}, ...}
         ├── token_usage.json        # per-(model, phase) tokens + call counts (common.tokens)
         ├── run_record.json         # local models that ran (+device), per-phase wall-clock

@@ -47,12 +47,12 @@ reproduced here.
   end-to-end HippoRAG pipeline comparison.
 
 hipporag2 runs through the **same shared runner** as cc
-(`baselines.harness.eval_utility.run_baseline`), which resolves the SAME production
+(`baselines.harness.eval_harness.run_baseline`), which resolves the SAME production
 per-dataset workflow the main method uses (`baselines.registry.resolve`) —
 so DynamicMem gets the official TCE v2 checkpoint protocol + holistic judge,
 not a compat-shim script. The old single-dataset `eval_hipporag2.py` was
-replaced by `run.py` (2026-07); numbers from that script are NOT comparable
-to `run.py`'s DynamicMem output (different protocol).
+replaced by the shared entrypoint (2026-07); numbers from that script are NOT
+comparable to `eval_harness`'s DynamicMem output (different protocol).
 
 Per the standardized `MemoClass` contract, `build_memory_from_data` is called
 ONCE per build call with the whole newly-visible data already in
@@ -100,47 +100,59 @@ dominated by torch + gritlm's own transitive deps (mteb, wandb).
 ## Usage
 
 ```bash
-cd baselines/harness/hipporag2 && uv run python run.py --config config.example.yaml
+uv run --project baselines/harness/hipporag2 python -m baselines.harness.eval_harness \
+        --config baselines/harness/config.example.yaml      # harness: hipporag2
 ```
 
-`run.py` takes exactly one flag, `--config <yaml>` (required) — there is no
-other CLI surface (dataset, split, progressive, embedding, etc. are no
-longer flags). Every parameter lives in the config file: `config.example.yaml` documents
-each key inline — copy it, edit the values, and point `--config` at your
-copy. The YAML must list EXACTLY the keys `run.py`'s `REQUIRED_KEYS`
-expects — a missing key OR an unknown key aborts the run before anything
-executes; a `null` value counts as listed. Sizing fields (`single_stage` /
-`stages`) are checked down to the leaf, and `null` there means "whole
-split" for that dimension (see "Sizing" below).
+All seven harness baselines share ONE entrypoint
+([`../eval_harness.py`](../eval_harness.py)) and ONE frame config
+([`../config.example.yaml`](../config.example.yaml)): set `harness: hipporag2`,
+choose `arm`, dataset/split/sizing and the shared QA + judge models, and point
+`--config` at your copy. The YAML must list EXACTLY the frame keys — a missing
+key OR an unknown key aborts the run before anything executes; a `null` value
+counts as listed. Sizing fields (`single_stage` / `stages`) are checked down to
+the leaf, and `null` there means "whole split" for that dimension (see "Sizing"
+below). `--project` is not optional: this baseline's deps live only in its own
+venv.
 
-A couple of keys are worth calling out beyond what the YAML comments say:
+**Method knobs are not in the config file.** Every hipporag2-specific parameter
+is declared once, with its justification, as `CONFIG_DEFAULTS` on
+`HippoRAGMemo` in [`memo.py`](memo.py) (the faithful arm) plus
+`UNIFIED_OVERRIDES` (what `arm: unified` changes). Print them:
+
+    uv run --project baselines/harness/hipporag2 python -m baselines.harness.eval_harness --describe hipporag2
+
+Every run records the fully merged values in `runs/<run_id>/config.resolved.yaml`.
+
+A couple of those defaults are worth calling out:
 
 - `embedding` — any OpenAI embedding model name (API, no GPU needed) or a
   local HF/NV embedding model (GPU, loaded in-process by HippoRAG).
-- `llm_model` — used BOTH as HippoRAG's internal OpenIE/triple-extraction
-  LLM and as the shared QA agent's model. The two are still told apart in
-  cost accounting: `memo.py` installs `common.openai_usage`, and tokens are
-  keyed by `(model, phase)`, so OpenIE lands under `build` and the QA agent
-  under `answer` even though the model name is identical. (Before the phase
-  dimension, this baseline was exactly the case the "internal model differs
-  from the QA model" heuristic could not handle.)
+- `hipporag2_llm_model` — HippoRAG's internal OpenIE/triple-extraction LLM
+  (`gpt-4o-mini`, parity with the other five baselines' internal model). It is
+  deliberately decoupled from the frame's `llm_model` (the shared QA agent):
+  changing the answerer must never silently change how the memory is built.
+  Tokens are keyed by `(model, phase)`, so OpenIE lands under `build` and the
+  QA agent under `answer`.
 - `embedding_batch_size` / `embedding_dtype` — leave `null`: for API
   embeddings (the default `text-embedding-3-small`) this resolves to
   batch 16 / dtype auto; for local embeddings, batch 4 / dtype float16 —
   computed automatically in `_ensure_hippo`.
 
-To switch embedders, datasets, etc., edit those keys in your config yaml —
-e.g.:
+To switch embedders for an ablation, override the class defaults through the
+`memo:` block of your config (validated against the class — a typo aborts):
 
 ```yaml
 # my_hr.yaml — local GPU embedding, LongMemEval-s
+harness: hipporag2
 dataset: longmemeval_s
-embedding: nvidia/NV-Embed-v2
-embedding_batch_size: 2
-embedding_dtype: float16
+memo:
+  embedding: nvidia/NV-Embed-v2
+  embedding_batch_size: 2
+  embedding_dtype: float16
 ```
 
-then `uv run python run.py --config my_hr.yaml`.
+then `uv run --project baselines/harness/hipporag2 python -m baselines.harness.eval_harness --config my_hr.yaml`.
 
 ## Sizing (config file only)
 
@@ -183,7 +195,7 @@ Each eval run creates a fresh per-instance `outputs/<uuid>_<embedding>/` HippoRA
 baselines/harness/hipporag2/
 ├── outputs/<instance_id>_<embedding>/   # HippoRAG's own per-instance graph
 │                                       # cache (OpenIE, embeddings, KG) — gitignored
-└── results/<dataset>/<split>/
+└── runs/<run_id>/
     ├── score.json          # {"benchmark_eval_score": {...}, "per_user": {...}, "invalid_users": [...]}
     ├── token_usage.json     # per-(model, phase) tokens + call counts (common.tokens)
     ├── run_record.json      # local models that ran (+device), per-phase wall-clock
@@ -203,7 +215,7 @@ baselines/harness/hipporag2/
 
 Every model this baseline touches is a config parameter, so it runs in two arms:
 
-| | paper (arXiv 2502.14802 §4.4) | default arm (`config.example.yaml`) | unified arm (`config.unified.yaml`) |
+| | paper (arXiv 2502.14802 §4.4) | default arm (`CONFIG_DEFAULTS`, `arm: faithful`) | unified arm (`UNIFIED_OVERRIDES`, `arm: unified`) |
 |---|---|---|---|
 | internal LLM (`hipporag2_llm_model`) | **Llama-3.3-70B-Instruct** | `gpt-4o-mini` | `gpt-5-mini` |
 | embedder (`embedding`) | **nvidia/NV-Embed-v2** (7B) | `text-embedding-3-small` | **unchanged** |
@@ -242,6 +254,6 @@ normalise identically.
   shared QA agent the main method uses) perform on these benchmarks versus
   forge-evolved harnesses?
 - The old `eval_hipporag2.py` (DynamicMem-only, compat-shim last-checkpoint
-  data) was fully replaced by `run.py` + `memo.py` — do not resurrect it;
+  data) was fully replaced by `eval_harness.py` + `memo.py` — do not resurrect it;
   its results are not comparable (different protocol, no full TCE
   checkpoint interleaving).

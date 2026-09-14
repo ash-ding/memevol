@@ -69,7 +69,7 @@ config comment names the paper's value:
 
 Every model this baseline touches is a config parameter, so it runs in two arms:
 
-| | faithful arm (`config.example.yaml`) | unified arm (`config.unified.yaml`) |
+| | faithful arm (`CONFIG_DEFAULTS`, `arm: faithful`) | unified arm (`UNIFIED_OVERRIDES`, `arm: unified`) |
 |---|---|---|
 | internal LLM (`memoryos_llm_model`) | `gpt-4o-mini` — the paper's headline backbone (Tables 1-2) | `gpt-5-mini` |
 | embedder (`memoryos_embedding_model`) | `all-MiniLM-L6-v2`, local, 384-dim — **the code's, not the paper's** | `text-embedding-3-small`, API, 1536-dim |
@@ -112,8 +112,9 @@ possible:
 # build memoryos's isolated env
 cd baselines/harness/memoryos && uv sync
 
-# run it (from the baseline dir)
-cd baselines/harness/memoryos && uv run python run.py --config config.example.yaml
+# run it (from the repo root)
+uv run --project baselines/harness/memoryos python -m baselines.harness.eval_harness \
+        --config baselines/harness/config.example.yaml      # harness: memoryos
 
 # its unit test (from the repo root)
 uv run --project baselines/harness/memoryos python tests/test_memoryos_baseline.py
@@ -123,7 +124,7 @@ uv run --project baselines/harness/memoryos python tests/test_memoryos_baseline.
 
 `config.paper.yaml` — LoCoMo **search** split, all 6 conversations × 60
 randomly-sampled QA = **360 questions**, answerer **gpt-4o-mini** (what the paper
-reports on; `config.example.yaml` keeps the repo's shared gpt-5-mini agent), with
+reports on; the shared `../config.example.yaml` keeps the repo's gpt-5-mini agent), with
 the paper's `retrieval_queue_capacity: 10` and `mid_term_capacity: 200`.
 6/6 conversations, **3.5 hours**, **2,778 tokens/question**.
 

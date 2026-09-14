@@ -185,6 +185,52 @@ def _page_to_passage(page: Dict[str, Any]) -> str:
 
 
 class MemoryOSMemo(DiskStoreCache, MemoClass):
+    # Vendored @ memoryos-pro 0.1.0. Paper = arXiv 2506.06326 §4.1
+    # "Implementation Details". Where the shipped code and the paper disagree,
+    # the paper's value is the default here and the code's is named in the
+    # comment (this repo's chosen values — see README).
+    CONFIG_DEFAULTS = {
+        # PAPER Tables 1-2: GPT-4o-mini is the headline backbone on both GVD and
+        # LoCoMo (the paper also reports Qwen2.5-7B/3B). Drives page/segment
+        # summarisation, keyword extraction, persona + knowledge distillation.
+        # Its vendored chat_completion hardcodes temperature+max_tokens, which
+        # the gpt-5 family rejects — model_config normalises those away, so a
+        # gpt-5 model IS runnable here.
+        "memoryos_llm_model": "gpt-4o-mini",
+        # THE PAPER NAMES NO EMBEDDER — §4.1 covers hardware and the
+        # STM/MTM/LPM capacities but never states an embedding model. This is
+        # therefore the VENDORED CODE's value (utils.get_embedding's default
+        # argument), the only evidence available. 384-dim, local. Because that
+        # default argument means the requested name is never the configured
+        # one, the key is applied by seeding MemoryOS's own model cache under
+        # the requested name (_seed_embedder). A `text-embedding-*` name
+        # switches to the OpenAI API embedder; no dimension knob is needed
+        # (MemoryOS sizes its FAISS indexes from the embedding array itself).
+        "memoryos_embedding_model": "all-MiniLM-L6-v2",
+        "base_url": None,              # OpenAI-compatible base URL for the internal LLM (None = OpenAI default)
+        "short_term_capacity": 7,      # STM dialogue-page queue length. Paper: 7 (vendored default is 10)
+        # Max MTM segments before LFU eviction. PAPER: 200. The vendored default
+        # is 2000, which never binds — one LoCoMo conversation produces ~176
+        # segments, so 200 evicts and 2000 does not.
+        "mid_term_capacity": 200,
+        # tau: Heat = a*N_visit + b*L_interaction + c*R_recency above which a
+        # segment is distilled into the LPM. Paper: 5 (a=b=c=1)
+        "mid_term_heat_threshold": 5.0,
+        # theta in `F_score = cos(e_s,e_p) + Jaccard(K_s,K_p) > theta` for
+        # merging a page into a segment. Paper: 0.6
+        "mid_term_similarity_threshold": 0.6,
+        # MTM pages returned per query (the paper's top-k). PAPER: 10 on LoCoMo
+        # (5 on GVD). The vendored default is 7.
+        "retrieval_queue_capacity": 10,
+        "long_term_knowledge_capacity": 100,   # FIFO capacity of User KB / Assistant Traits. Paper: 100
+    }
+    # UNIFIED arm: MemoryOS publishes its headline LoCoMo numbers on gpt-4o-mini
+    # with a local all-MiniLM-L6-v2 index; both change here. Do not quote this
+    # arm as MemoryOS's published result.
+    UNIFIED_OVERRIDES = {
+        "memoryos_llm_model": "gpt-5-mini",
+        "memoryos_embedding_model": "text-embedding-3-small",
+    }
 
     def __init__(self, config=None):
         super().__init__(config)
@@ -202,7 +248,7 @@ class MemoryOSMemo(DiskStoreCache, MemoClass):
         if self._memo is not None:
             return
         cfg = self.config
-        _seed_embedder(cfg.get("memoryos_embedding_model") or "all-MiniLM-L6-v2")
+        _seed_embedder(cfg["memoryos_embedding_model"])
         save_dir = OUTPUTS_DIR / self._instance_id
         # Never wipe a store restored from the memory cache (DiskStoreCache).
         if save_dir.exists() and not self.restored_from_cache:
@@ -214,15 +260,15 @@ class MemoryOSMemo(DiskStoreCache, MemoClass):
                 user_id=f"u_{self._instance_id}",
                 assistant_id=f"a_{self._instance_id}",
                 openai_api_key=os.environ.get("OPENAI_API_KEY", ""),
-                openai_base_url=cfg.get("base_url") or "",
+                openai_base_url=cfg["base_url"] or "",
                 data_storage_path=str(save_dir),
-                llm_model=cfg.get("memoryos_llm_model"),
-                short_term_capacity=cfg.get("short_term_capacity"),
-                mid_term_capacity=cfg.get("mid_term_capacity"),
-                mid_term_heat_threshold=cfg.get("mid_term_heat_threshold"),
-                mid_term_similarity_threshold=cfg.get("mid_term_similarity_threshold"),
-                retrieval_queue_capacity=cfg.get("retrieval_queue_capacity"),
-                long_term_knowledge_capacity=cfg.get("long_term_knowledge_capacity"),
+                llm_model=cfg["memoryos_llm_model"],
+                short_term_capacity=cfg["short_term_capacity"],
+                mid_term_capacity=cfg["mid_term_capacity"],
+                mid_term_heat_threshold=cfg["mid_term_heat_threshold"],
+                mid_term_similarity_threshold=cfg["mid_term_similarity_threshold"],
+                retrieval_queue_capacity=cfg["retrieval_queue_capacity"],
+                long_term_knowledge_capacity=cfg["long_term_knowledge_capacity"],
             )
         # No dimension knob is needed: MemoryOS sizes its FAISS indexes from the
         # embedding array itself (`dim = embeddings_np.shape[1]`, long_term.py

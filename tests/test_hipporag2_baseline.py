@@ -60,7 +60,8 @@ def test_internal_llm_key_is_separate_from_the_shared_qa_model():
     """hipporag2 used to build its graph with the frame's `llm_model` — the
     SHARED QA-agent model — which is why it was the only baseline building
     memory with gpt-5-mini while the other six used gpt-4o-mini. It now has its
-    own key, falling back to the old behaviour when null."""
+    own key (CONFIG_DEFAULTS: gpt-4o-mini, parity with the other five), and the
+    frame model is never consulted."""
     from baselines.harness.hipporag2.memo import HippoRAGMemo
 
     seen = {}
@@ -88,14 +89,10 @@ def test_internal_llm_key_is_separate_from_the_shared_qa_model():
                 sys.modules.pop(m, None)
         return dict(seen)
 
-    base = dict(embedding="text-embedding-3-small", llm_model="gpt-5-mini",
-                embedding_batch_size=None, embedding_dtype=None)
-
-    # explicit key wins
-    assert _build({**base, "hipporag2_llm_model": "gpt-4o-mini"})["llm_name"] == "gpt-4o-mini"
-    # null / absent falls back to the frame model (historical behaviour)
-    assert _build({**base, "hipporag2_llm_model": None})["llm_name"] == "gpt-5-mini"
-    assert _build(base)["llm_name"] == "gpt-5-mini"
+    # the class default, and an explicit override, both win over the frame model
+    assert _build({"llm_model": "gpt-5-mini"})["llm_name"] == "gpt-4o-mini"
+    assert _build({"llm_model": "gpt-5-mini", "hipporag2_llm_model": "gpt-4.1"})["llm_name"] == "gpt-4.1"
+    assert HippoRAGMemo.resolve_config("unified")["hipporag2_llm_model"] == "gpt-5-mini"
 
 
 # -------------------- runner --------------------

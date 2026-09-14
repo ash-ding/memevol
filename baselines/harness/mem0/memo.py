@@ -131,6 +131,33 @@ def _init_to_messages(init: Dict) -> List[Dict[str, str]]:
 
 
 class Mem0Memo(DiskStoreCache, MemoClass):
+    CONFIG_DEFAULTS = {
+        # PAPER (arXiv 2504.19413) §2: "LLM-based extractors and update module
+        # leverage GPT-4o-mini with function calling". Reads each batch of
+        # messages, extracts standalone facts, and decides ADD / UPDATE / DELETE
+        # against what is already stored. This IS the method — not a summariser.
+        "mem0_llm_model": "gpt-4o-mini",
+        # PAPER §3.3 names text-embedding-3-small (written there as
+        # "text-embedding-small-3") across its evaluation stack; also Mem0's own
+        # library default. OpenAI provider, 1536-dim.
+        "embedding_model": "text-embedding-3-small",
+        "base_url": None,          # OpenAI-compatible base URL for the internal LLM; None = OpenAI
+        # Messages per Memory.add() extraction call. Mem0 reads a whole message
+        # list at once; batching is its intended usage and keeps the build to
+        # dozens of LLM calls rather than one per turn.
+        "add_batch_size": 20,
+        # True = LLM fact extraction (the method). False = store messages
+        # verbatim, which turns Mem0 into a plain vector store — ablation only.
+        "infer": True,
+        "top_k": 10,               # Memory.search hits per query. PAPER: s=10 (library default is 20)
+        "threshold": 0.0,          # min similarity for a hit (0 = keep all top_k; library default 0.1)
+    }
+    # UNIFIED arm: one LLM (gpt-5-mini) fleet-wide. The embedder is already the
+    # fleet's API model, so mem0 is one of two baselines whose embedder does not
+    # change between arms. Mem0's OpenAI provider sends temperature +
+    # max_tokens, which the gpt-5 family rejects — model_config normalises both
+    # away at the SDK boundary, so no edit under src/.
+    UNIFIED_OVERRIDES = {"mem0_llm_model": "gpt-5-mini"}
 
     def __init__(self, config=None):
         super().__init__(config)
@@ -154,8 +181,8 @@ class Mem0Memo(DiskStoreCache, MemoClass):
         if store.exists() and not self.restored_from_cache:
             shutil.rmtree(store, ignore_errors=True)
         store.mkdir(parents=True, exist_ok=True)
-        llm_conf: Dict[str, Any] = {"model": cfg.get("mem0_llm_model")}
-        if cfg.get("base_url"):
+        llm_conf: Dict[str, Any] = {"model": cfg["mem0_llm_model"]}
+        if cfg["base_url"]:
             llm_conf["openai_base_url"] = cfg["base_url"]
         self._memory = Memory.from_config({
             # Embedded Qdrant on disk — per-user collection, no server process.
@@ -166,7 +193,7 @@ class Mem0Memo(DiskStoreCache, MemoClass):
             }},
             "llm": {"provider": "openai", "config": llm_conf},
             "embedder": {"provider": "openai",
-                         "config": {"model": cfg.get("embedding_model")}},
+                         "config": {"model": cfg["embedding_model"]}},
             "history_db_path": str(store / "history.db"),
         })
 
@@ -179,10 +206,10 @@ class Mem0Memo(DiskStoreCache, MemoClass):
         # message list at once, so batching is both its intended usage and the
         # difference between a few dozen LLM calls and several hundred. The
         # batch size is a knob because the extraction prompt has to fit.
-        size = max(1, int(self.config.get("add_batch_size") or 20))
+        size = max(1, int(self.config["add_batch_size"]))
         for i in range(0, len(messages), size):
             self._memory.add(messages[i:i + size], user_id=self._user_id,
-                             infer=bool(self.config.get("infer", True)))
+                             infer=bool(self.config["infer"]))
 
     async def retrieve_memory_for_query(self, recorder) -> Dict:
         self._ensure_system()
@@ -190,8 +217,8 @@ class Mem0Memo(DiskStoreCache, MemoClass):
         res = self._memory.search(
             query,
             filters={"user_id": self._user_id},
-            top_k=int(self.config.get("top_k") or 20),
-            threshold=float(self.config.get("threshold") or 0.0),
+            top_k=int(self.config["top_k"]),
+            threshold=float(self.config["threshold"]),
         )
         results = res.get("results") if isinstance(res, dict) else res
         passages = [str(r.get("memory", "")) for r in (results or []) if r.get("memory")]

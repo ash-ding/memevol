@@ -7,16 +7,20 @@ is created per user/sample BY THE FRAMEWORK (the per-dataset workflow), so no
 cross-user state is possible.
 
 Configuration: the framework passes an optional `config` dict to the
-constructor (each instance gets its own copy at `self.config`). Parameterized
-memory systems (the harness baselines) receive their run.py-resolved settings
-this way — `run_baseline(memo_class=MyMemo, memo_config={...})`; a subclass
-that overrides `__init__` must accept and forward it:
+constructor; each instance gets its own copy at `self.config`, laid over the
+class's `CONFIG_DEFAULTS`. Parameterized memory systems (the harness
+baselines) declare every method knob ONCE, as a class-level default with the
+comment that justifies it (paper value, upstream default, deliberate
+deviation), plus the model swap the unified arm applies
+(baselines/harness/eval_harness.py):
 
     class MyMemo(MemoClass):
+        CONFIG_DEFAULTS = {"top_k": 10}            # PAPER §4: k=10
+        UNIFIED_OVERRIDES = {"llm": "gpt-5-mini"}  # arm: unified
         def __init__(self, config=None):
             super().__init__(config)
             ...
-        # read settings via self.config.get("top_k", 10)
+        # read settings via self.config["top_k"] — never a second inline default
 
 forge-evolved harnesses are never handed a config (their settings live in the
 generated code itself), so a plain `def __init__(self)` override also keeps
@@ -38,12 +42,31 @@ from common.recorder import Basic_Recorder  # noqa: F401  (re-export: legacy imp
 
 
 class MemoClass(ABC):
+    #: Method knobs (faithful / paper values) — the ONE declaration per knob.
+    CONFIG_DEFAULTS: Dict[str, Any] = {}
+    #: The subset the unified arm changes (one LLM + one API embedder fleet-wide).
+    UNIFIED_OVERRIDES: Dict[str, Any] = {}
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         # Per-instance copy — instances must never share mutable config state
         # (the fresh-instance-per-user guarantee extends to configuration).
-        self.config: Dict[str, Any] = dict(config) if config else {}
+        self.config: Dict[str, Any] = {**self.CONFIG_DEFAULTS, **(config or {})}
         self.database: Optional[Any] = None
+
+    @classmethod
+    def resolve_config(cls, arm: str = "faithful",
+                       overrides: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """The full method config for one run: CONFIG_DEFAULTS, then
+        UNIFIED_OVERRIDES when `arm == "unified"`, then `overrides` (the
+        config file's `memo:` block). A key unknown to the class aborts — a
+        typo must never silently become a no-op."""
+        unknown = sorted((set(cls.UNIFIED_OVERRIDES) | set(overrides or {})) - set(cls.CONFIG_DEFAULTS))
+        if unknown:
+            raise KeyError(f"{cls.__name__}: unknown memo config key(s) {unknown}; "
+                           f"known: {sorted(cls.CONFIG_DEFAULTS)}")
+        return {**cls.CONFIG_DEFAULTS,
+                **(cls.UNIFIED_OVERRIDES if arm == "unified" else {}),
+                **(overrides or {})}
 
     # -------- Standardized eval hooks (all OPTIONAL overrides) --------
 

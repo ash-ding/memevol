@@ -2,10 +2,12 @@
 
 Two schemes coexist (2026-08-06):
 
-- HARNESS baselines (hipporag2/amem/...) are config-file-ONLY: run.py has
-  no DEFAULT_CONFIG and no CLI parameter flags — just `--config`, validated by
-  `common.config.validate_exact_config` against run.py's REQUIRED_KEYS
+- HARNESS baselines (hipporag2/amem/...) share ONE entrypoint
+  (baselines/harness/eval_harness.py) and ONE frame config, validated by
+  `common.config.validate_exact_config` against eval_harness.FRAME_KEYS
   (missing keys AND unknown keys both abort; sizing checked to the leaf).
+  Method knobs are class defaults (MemoClass.CONFIG_DEFAULTS), overridable
+  only through the validated `memo:` block.
 - alma (evolve baseline) keeps the layered scheme (DEFAULT_CONFIG < YAML < CLI
   + strict_on gate) because its CLI carries genuine runtime knobs
   (--status/--steps/--memo_SHA).
@@ -26,8 +28,7 @@ from common.config import (
     ConfigCompletenessError, load_config_file, validate_exact_config,
 )
 
-HIPPORAG2_EXAMPLE = PROJECT_ROOT / "baselines" / "harness" / "hipporag2" / "config.example.yaml"
-AMEM_EXAMPLE = PROJECT_ROOT / "baselines" / "harness" / "amem" / "config.example.yaml"
+HARNESS_EXAMPLE = PROJECT_ROOT / "baselines" / "harness" / "config.example.yaml"
 ALMA_EXAMPLE = PROJECT_ROOT / "baselines" / "evolve" / "alma" / "config.example.yaml"
 
 
@@ -47,26 +48,25 @@ def _load(mod_name, rel):
 
 
 # ---------------------------------------------------------------------------
-# Harness baselines — config-file-only exact validation
+# Harness baselines — one shared frame config, exact validation
 # ---------------------------------------------------------------------------
 
-def _harness_required(name):
-    mod = _load(f"_{name}_run", f"baselines/harness/{name}/run.py")
-    assert not hasattr(mod, "DEFAULT_CONFIG"), f"{name}: DEFAULT_CONFIG must be gone"
-    return mod.REQUIRED_KEYS
+def _frame_cfg(**changes):
+    cfg = dict(load_config_file(HARNESS_EXAMPLE))
+    cfg.update(changes)
+    return cfg
 
 
-def test_hipporag2_example_passes_exactly():
-    req = _harness_required("hipporag2")
-    validate_exact_config(load_config_file(HIPPORAG2_EXAMPLE), req, "hipporag2")
+def test_shared_example_passes_exactly():
+    from baselines.harness.eval_harness import load_frame_config
+    load_frame_config(HARNESS_EXAMPLE)   # no raise
 
 
 def test_missing_key_raises():
-    req = _harness_required("hipporag2")
-    cfg = dict(load_config_file(HIPPORAG2_EXAMPLE))
-    del cfg["llm_model"]
+    from baselines.harness.eval_harness import FRAME_KEYS
+    cfg = _frame_cfg(); del cfg["llm_model"]; del cfg["run_name"]
     try:
-        validate_exact_config(cfg, req, "hipporag2")
+        validate_exact_config(cfg, FRAME_KEYS, "harness")
     except ConfigCompletenessError as e:
         assert "llm_model" in str(e)
     else:
@@ -74,38 +74,52 @@ def test_missing_key_raises():
 
 
 def test_unknown_key_raises():
-    # Typo protection: an unknown key must abort, not silently ride along.
-    req = _harness_required("hipporag2")
-    cfg = dict(load_config_file(HIPPORAG2_EXAMPLE))
-    cfg["llm_modle"] = "typo"
-    try:
-        validate_exact_config(cfg, req, "hipporag2")
-    except ConfigCompletenessError as e:
-        assert "llm_modle" in str(e)
-    else:
-        raise AssertionError("expected ConfigCompletenessError")
+    # Typo protection: an unknown key must abort, not silently ride along —
+    # and a METHOD knob at the top level is an unknown key now (it belongs
+    # under `memo:`).
+    from baselines.harness.eval_harness import FRAME_KEYS
+    for bad in ("llm_modle", "retrieve_k"):
+        cfg = _frame_cfg(**{bad: 1}); del cfg["run_name"]
+        try:
+            validate_exact_config(cfg, FRAME_KEYS, "harness")
+        except ConfigCompletenessError as e:
+            assert bad in str(e)
+        else:
+            raise AssertionError("expected ConfigCompletenessError")
 
 
-def test_amem_example_passes_exactly():
-    req = _harness_required("amem")
-    validate_exact_config(load_config_file(AMEM_EXAMPLE), req, "amem")
-
-
-def test_amem_missing_sizing_leaf_raises():
+def test_missing_sizing_leaf_raises():
     # Second check layer: every top-level key present, but the active
     # single_stage block misses one native sizing leaf — must still raise,
     # naming the sizing path.
-    req = _harness_required("amem")
-    cfg = dict(load_config_file(AMEM_EXAMPLE))
-    cfg["progressive"] = False
-    cfg["single_stage"] = {"n_conversations": 2}   # n_qa leaf missing
-    cfg["dataset"] = "locomo"
+    from baselines.harness.eval_harness import FRAME_KEYS
+    cfg = _frame_cfg(progressive=False, dataset="locomo",
+                     single_stage={"n_conversations": 2})   # n_qa leaf missing
+    del cfg["run_name"]
     try:
-        validate_exact_config(cfg, req, "amem")
+        validate_exact_config(cfg, FRAME_KEYS, "harness")
     except ConfigCompletenessError as e:
         assert "single_stage" in str(e)
     else:
         raise AssertionError("expected ConfigCompletenessError")
+
+
+def test_memo_override_of_unknown_key_raises():
+    # The `memo:` escape hatch is validated against the class: a typo must
+    # abort rather than silently become a no-op.
+    from common.memo_class import MemoClass
+
+    class M(MemoClass):
+        CONFIG_DEFAULTS = {"top_k": 5}
+        UNIFIED_OVERRIDES = {}
+
+    assert M.resolve_config("faithful", {"top_k": 9}) == {"top_k": 9}
+    try:
+        M.resolve_config("faithful", {"topk": 9})
+    except KeyError as e:
+        assert "topk" in str(e)
+    else:
+        raise AssertionError("expected KeyError")
 
 
 # ---------------------------------------------------------------------------
