@@ -46,7 +46,7 @@ reproduced here.
   the main method — this is a fair "HippoRAG-as-memory" comparison, not an
   end-to-end HippoRAG pipeline comparison.
 
-hipporag2 runs through the **same shared runner** as cc
+hipporag2 runs through the **same shared runner** as every harness baseline
 (`baselines.harness.eval_harness.run_baseline`), which resolves the SAME production
 per-dataset workflow the main method uses (`baselines.registry.resolve`) —
 so DynamicMem gets the official TCE v2 checkpoint protocol + holistic judge,
@@ -116,13 +116,14 @@ below). `--project` is not optional: this baseline's deps live only in its own
 venv.
 
 **Method knobs are not in the config file.** Every hipporag2-specific parameter
-is declared once, with its justification, as `CONFIG_DEFAULTS` on
-`HippoRAGMemo` in [`memo.py`](memo.py) (the faithful arm) plus
-`UNIFIED_OVERRIDES` (what `arm: unified` changes). Print them:
+is declared once, with its justification, in `CONFIG_DEFAULTS` at the top of
+[`memo.py`](memo.py) (the faithful arm); `UNIFIED_MODEL_KEYS` names the keys
+`arm: unified` writes `unified_models` into. Print them:
 
     uv run --project baselines/harness/hipporag2 python -m baselines.harness.eval_harness --describe hipporag2
 
-Every run records the fully merged values in `runs/<run_id>/config.resolved.yaml`.
+Every run keeps its config as `runs/<run_id>/config.yaml` (copy it to re-run) and
+the fully resolved values in `runs/<run_id>/memo_config.resolved.yaml`.
 
 A couple of those defaults are worth calling out:
 
@@ -215,7 +216,7 @@ baselines/harness/hipporag2/
 
 Every model this baseline touches is a config parameter, so it runs in two arms:
 
-| | paper (arXiv 2502.14802 §4.4) | default arm (`CONFIG_DEFAULTS`, `arm: faithful`) | unified arm (`UNIFIED_OVERRIDES`, `arm: unified`) |
+| | paper (arXiv 2502.14802 §4.4) | default arm (`arm: faithful` — `CONFIG_DEFAULTS`) | unified arm (`arm: unified` — example `unified_models`) |
 |---|---|---|---|
 | internal LLM (`hipporag2_llm_model`) | **Llama-3.3-70B-Instruct** | `gpt-4o-mini` | `gpt-5-mini` |
 | embedder (`embedding`) | **nvidia/NV-Embed-v2** (7B) | `text-embedding-3-small` | **unchanged** |

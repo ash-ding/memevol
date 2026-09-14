@@ -14,6 +14,16 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
+def _resolved(arm="faithful", **memo):
+    """The complete config eval_harness would hand this memo (plus `memo:` overrides)."""
+    from baselines.harness import eval_harness as eh
+    from baselines.harness.mem0 import memo as memo_module
+    unified_models = ({"llm": "gpt-5-mini", "embedding": "text-embedding-3-small"}
+                      if arm == "unified" else None)
+    return eh.resolve_memo_config(memo_module.CONFIG_DEFAULTS, memo_module.UNIFIED_MODEL_KEYS,
+                                  arm=arm, unified_models=unified_models, overrides=memo)
+
+
 def test_locomo_turns_carry_speaker_and_date():
     # Mem0's extractor sees only role+content, so speaker and timestamp have to
     # be inside the content or "who said it / when" becomes unanswerable.
@@ -71,12 +81,22 @@ def test_dynamicmem_uses_shared_passage_text():
 def test_config_defaults_cover_every_memo_read():
     # Every knob the memo reads from self.config must have a CONFIG_DEFAULT, or a
     # run dies with KeyError (there are no inline fallbacks any more).
-    from baselines.harness.mem0.memo import Mem0Memo
+    from baselines.harness.mem0.memo import CONFIG_DEFAULTS, Mem0Memo
     for key in ("mem0_llm_model", "embedding_model", "base_url",
                 "add_batch_size", "infer", "top_k", "threshold"):
-        assert key in Mem0Memo.CONFIG_DEFAULTS, key
-    assert Mem0Memo.resolve_config("unified")["mem0_llm_model"] == "gpt-5-mini"
-    assert Mem0Memo(config={"top_k": 3}).config["top_k"] == 3
+        assert key in CONFIG_DEFAULTS, key
+    assert _resolved("unified")["mem0_llm_model"] == "gpt-5-mini"
+    assert Mem0Memo(config=_resolved(top_k=3)).config["top_k"] == 3
+
+
+def test_telemetry_is_switched_off_without_touching_the_environment():
+    import os
+    had = "MEM0_TELEMETRY" in os.environ
+    import baselines.harness.mem0.memo  # noqa: F401  (sets the flags at import)
+    import mem0.memory.main as mem0_main
+    import mem0.memory.telemetry as mem0_telemetry
+    assert mem0_main.MEM0_TELEMETRY is False and mem0_telemetry.MEM0_TELEMETRY is False
+    assert ("MEM0_TELEMETRY" in os.environ) == had
 
 
 def test_memo_implements_the_three_hook_contract():

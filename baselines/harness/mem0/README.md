@@ -77,7 +77,7 @@ identical across baselines.
 
 Every model this baseline touches is a config parameter, so it runs in two arms:
 
-| | faithful arm (`CONFIG_DEFAULTS`, `arm: faithful`) | unified arm (`UNIFIED_OVERRIDES`, `arm: unified`) |
+| | faithful arm (`arm: faithful` — `CONFIG_DEFAULTS`) | unified arm (`arm: unified` — example `unified_models`) |
 |---|---|---|
 | internal LLM (`mem0_llm_model`) | `gpt-4o-mini` — Mem0's own default | `gpt-5-mini` |
 | embedder (`embedding_model`) | `text-embedding-3-small`, API, 1536-dim | **unchanged** |
@@ -102,8 +102,8 @@ same wrap-don't-rewrite technique is used, so the pin stays honest.
 `mem0ai` is NOT a dependency — the source is vendored under `src/` (see
 Provenance), so `uv sync` alone is the whole setup. `pyproject.toml` carries only
 what the vendored slice imports: qdrant-client, pydantic, posthog (eagerly
-imported by `memory/telemetry.py` even with `MEM0_TELEMETRY=False`, which
-`memo.py` sets), plus openai/httpx from the shared-core block. Upstream's
+imported by `memory/telemetry.py` even with telemetry off, which `memo.py` sets
+explicitly on the module — not through the `MEM0_TELEMETRY` env var), plus openai/httpx from the shared-core block. Upstream's
 sqlalchemy / pytz / protobuf / spacy are not imported by the slice (protobuf
 arrives transitively via qdrant-client; spaCy only via the optional BM25
 lemmatization path, which falls back to the raw text when it is absent).
@@ -155,9 +155,6 @@ only against the **unweighted** mean: it is what the papers' "Avg." is.
 > LLM and OpenAI-embedder calls did not reach `common.tokens` — only the
 > shared QA + judge did. Runs from now on capture them under the `build` /
 > `retrieve` phases, so the number WILL rise. (2026-08-14)
-
-Scored with `baselines/harness/score_paper_metrics.py`, which recomputes the
-papers' metrics — the shared judge is binary and is not what they report.
 
 | category | our F1 | paper F1 | paper BLEU-1 | n |
 |---|---|---|---|---|

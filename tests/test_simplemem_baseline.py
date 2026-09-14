@@ -14,6 +14,16 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
+def _resolved(arm="faithful", **memo):
+    """The complete config eval_harness would hand this memo (plus `memo:` overrides)."""
+    from baselines.harness import eval_harness as eh
+    from baselines.harness.simplemem import memo as memo_module
+    unified_models = ({"llm": "gpt-5-mini", "embedding": "text-embedding-3-small"}
+                      if arm == "unified" else None)
+    return eh.resolve_memo_config(memo_module.CONFIG_DEFAULTS, memo_module.UNIFIED_MODEL_KEYS,
+                                  arm=arm, unified_models=unified_models, overrides=memo)
+
+
 # ---- _init_to_dialogues ----
 
 def test_locomo_dialogues_carry_speaker_and_session_time_in_order():
@@ -83,7 +93,7 @@ def test_entry_to_passage_renders_only_present_fields():
 
 # ---- _ensure_system wiring (fake SimpleMemSystem) ----
 
-def test_ensure_system_stamps_env_settings_and_builds_a_fresh_store():
+def test_ensure_system_pins_settings_explicitly_and_builds_a_fresh_store():
     from baselines.harness.simplemem import memo as sm
     built = {}
 
@@ -93,26 +103,26 @@ def test_ensure_system_stamps_env_settings_and_builds_a_fresh_store():
 
     tmp = Path(tempfile.mkdtemp())
     real_system, real_outputs = sm.SimpleMemSystem, sm.OUTPUTS_DIR
-    saved_env = {v: os.environ.get(v) for v in list(sm._ENV_FROM_CFG.values()) + ["USE_STREAMING"]}
+    env_before = dict(os.environ)
     sm.SimpleMemSystem, sm.OUTPUTS_DIR = _FakeSystem, tmp
+    os.environ["WINDOW_SIZE"] = "99"          # ambient value that must NOT win
     try:
-        m = sm.SimpleMemMemo(config={"window_size": 7})
+        m = sm.SimpleMemMemo(config=_resolved(window_size=7))
         m._ensure_system()
-        # settings SimpleMem only reads from env reach it (the paper's W unless overridden)
-        assert os.environ["WINDOW_SIZE"] == "7"
-        assert os.environ["EMBEDDING_MODEL"] == "Qwen/Qwen3-Embedding-0.6B"
-        assert os.environ["USE_STREAMING"] == "false"
-        assert built["model"] == "gpt-4.1-mini"
+        settings = sm._simplemem_settings
+        assert settings.WINDOW_SIZE == 7, "the memo config, not the environment"
+        assert settings.EMBEDDING_MODEL == "Qwen/Qwen3-Embedding-0.6B"
+        assert settings.LLM_MODEL == "gpt-4.1-mini"
+        assert settings.USE_STREAMING is False and settings.USE_JSON_FORMAT is False
+        assert built["model"] == "gpt-4.1-mini" and built["api_key"] is None
         assert built["clear_db"] is True
         assert built["db_path"] == str(tmp / m._instance_id)
         assert built["enable_parallel_processing"] is True and built["max_parallel_workers"] == 16
+        os.environ.pop("WINDOW_SIZE")
+        assert dict(os.environ) == env_before, "the memo wrote to the environment"
     finally:
         sm.SimpleMemSystem, sm.OUTPUTS_DIR = real_system, real_outputs
-        for k, v in saved_env.items():
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
+        os.environ.clear(); os.environ.update(env_before)
         shutil.rmtree(tmp, ignore_errors=True)
 
 
@@ -138,7 +148,7 @@ class _FakeSystem:
 
 def _memo_with_fake(entries=()):
     from baselines.harness.simplemem.memo import SimpleMemMemo
-    m = SimpleMemMemo()
+    m = SimpleMemMemo(config=_resolved())
     m._system = _FakeSystem(entries)   # pre-set → _ensure_system no-ops
     return m
 
@@ -166,10 +176,10 @@ def test_retrieve_empty_returns_empty_dict():
 
 # ---- config + contract ----
 
-def test_config_defaults_and_unified_overrides():
-    from baselines.harness.simplemem.memo import SimpleMemMemo
-    assert SimpleMemMemo.CONFIG_DEFAULTS["window_size"] == 20   # the paper's W, not the code's 40
-    unified = SimpleMemMemo.resolve_config("unified")
+def test_config_defaults_and_unified_models():
+    from baselines.harness.simplemem.memo import CONFIG_DEFAULTS
+    assert CONFIG_DEFAULTS["window_size"] == 20   # the paper's W, not the code's 40
+    unified = _resolved("unified")
     assert unified["simplemem_llm_model"] == "gpt-5-mini"
     assert unified["embedding_model"] == "text-embedding-3-small"
 

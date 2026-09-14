@@ -28,7 +28,6 @@ Ingestion units (recorder.init dispatch, cf. hipporag2's _init_to_passages):
 """
 from __future__ import annotations
 
-import os
 import shutil
 import sys
 import uuid
@@ -61,17 +60,24 @@ if _SRC not in sys.path:
 # captures both.
 _install_openai_usage()
 
-# Must be set BEFORE importing mem0: the flag is read at module import time
-# (mem0/memory/telemetry.py), and with it on, every Memory() additionally opens a
-# telemetry vector store at the process-global path ~/.mem0/migrations_qdrant.
-# Local-mode Qdrant takes an exclusive lock on a storage folder, so the second
+from mem0 import Memory  # noqa: E402
+import mem0.memory.main as _mem0_main  # noqa: E402
+import mem0.memory.telemetry as _mem0_telemetry  # noqa: E402
+
+# Telemetry OFF, set explicitly on the modules rather than through the
+# MEM0_TELEMETRY env var. With it on, every Memory() additionally opens a
+# telemetry vector store at the process-global path ~/.mem0/migrations_qdrant;
+# local-mode Qdrant takes an exclusive lock on a storage folder, so the second
 # concurrent user in the same process dies with "already accessed by another
 # instance of Qdrant client" — which is what happens here, since the workflow
 # builds several users' memories concurrently. Off is also simply correct: a
-# benchmark run should not phone the evaluation home.
-os.environ.setdefault("MEM0_TELEMETRY", "False")
-
-from mem0 import Memory  # noqa: E402
+# benchmark run should not phone the evaluation home. Both names are needed:
+# main.py binds MEM0_TELEMETRY by value at import, while telemetry.py and
+# notices.py read the telemetry module's attribute at call time. (Importing
+# telemetry.py still constructs one idle PostHog client object; it sends
+# nothing, because every capture path checks the flag.)
+_mem0_main.MEM0_TELEMETRY = False
+_mem0_telemetry.MEM0_TELEMETRY = False
 
 OUTPUTS_DIR = Path(__file__).resolve().parent / "outputs"
 
@@ -129,35 +135,39 @@ def _init_to_messages(init: Dict) -> List[Dict[str, str]]:
     return out
 
 
-class Mem0Memo(MemoClass):
-    CONFIG_DEFAULTS = {
-        # PAPER (arXiv 2504.19413) §2: "LLM-based extractors and update module
-        # leverage GPT-4o-mini with function calling". Reads each batch of
-        # messages, extracts standalone facts, and decides ADD / UPDATE / DELETE
-        # against what is already stored. This IS the method — not a summariser.
-        "mem0_llm_model": "gpt-4o-mini",
-        # PAPER §3.3 names text-embedding-3-small (written there as
-        # "text-embedding-small-3") across its evaluation stack; also Mem0's own
-        # library default. OpenAI provider, 1536-dim.
-        "embedding_model": "text-embedding-3-small",
-        "base_url": None,          # OpenAI-compatible base URL for the internal LLM; None = OpenAI
-        # Messages per Memory.add() extraction call. Mem0 reads a whole message
-        # list at once; batching is its intended usage and keeps the build to
-        # dozens of LLM calls rather than one per turn.
-        "add_batch_size": 20,
-        # True = LLM fact extraction (the method). False = store messages
-        # verbatim, which turns Mem0 into a plain vector store — ablation only.
-        "infer": True,
-        "top_k": 10,               # Memory.search hits per query. PAPER: s=10 (library default is 20)
-        "threshold": 0.0,          # min similarity for a hit (0 = keep all top_k; library default 0.1)
-    }
-    # UNIFIED arm: one LLM (gpt-5-mini) fleet-wide. The embedder is already the
-    # fleet's API model, so mem0 is one of two baselines whose embedder does not
-    # change between arms. Mem0's OpenAI provider sends temperature +
-    # max_tokens, which the gpt-5 family rejects — model_config normalises both
-    # away at the SDK boundary, so no edit under src/.
-    UNIFIED_OVERRIDES = {"mem0_llm_model": "gpt-5-mini"}
+# Method config, faithful arm — module-level DATA: eval_harness.py resolves it
+# (with `arm` / `unified_models` / `memo:`) and hands the result to the memo's
+# constructor; the class itself only reads self.config.
+CONFIG_DEFAULTS = {
+    # PAPER (arXiv 2504.19413) §2: "LLM-based extractors and update module
+    # leverage GPT-4o-mini with function calling". Reads each batch of
+    # messages, extracts standalone facts, and decides ADD / UPDATE / DELETE
+    # against what is already stored. This IS the method — not a summariser.
+    "mem0_llm_model": "gpt-4o-mini",
+    # PAPER §3.3 names text-embedding-3-small (written there as
+    # "text-embedding-small-3") across its evaluation stack; also Mem0's own
+    # library default. OpenAI provider, 1536-dim.
+    "embedding_model": "text-embedding-3-small",
+    "base_url": None,          # OpenAI-compatible base URL for the internal LLM; None = OpenAI
+    # Messages per Memory.add() extraction call. Mem0 reads a whole message
+    # list at once; batching is its intended usage and keeps the build to
+    # dozens of LLM calls rather than one per turn.
+    "add_batch_size": 20,
+    # True = LLM fact extraction (the method). False = store messages
+    # verbatim, which turns Mem0 into a plain vector store — ablation only.
+    "infer": True,
+    "top_k": 10,               # Memory.search hits per query. PAPER: s=10 (library default is 20)
+    "threshold": 0.0,          # min similarity for a hit (0 = keep all top_k; library default 0.1)
+}
+# `arm: unified` writes unified_models.llm / .embedding into these keys. Mem0's
+# faithful embedder is already an API model, so under the default
+# unified_models only the internal LLM actually changes. Mem0's OpenAI provider
+# sends temperature + max_tokens, which the gpt-5 family rejects — model_config
+# normalises both away at the SDK boundary, so no edit under src/.
+UNIFIED_MODEL_KEYS = {"llm": ("mem0_llm_model",), "embedding": ("embedding_model",)}
 
+
+class Mem0Memo(MemoClass):
     def __init__(self, config=None):
         super().__init__(config)
         self._memory: Optional[Memory] = None

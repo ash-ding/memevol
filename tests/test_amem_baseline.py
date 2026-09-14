@@ -12,6 +12,16 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
+def _resolved(arm="faithful", **memo):
+    """The complete config eval_harness would hand this memo (plus `memo:` overrides)."""
+    from baselines.harness import eval_harness as eh
+    from baselines.harness.amem import memo as memo_module
+    unified_models = ({"llm": "gpt-5-mini", "embedding": "text-embedding-3-small"}
+                      if arm == "unified" else None)
+    return eh.resolve_memo_config(memo_module.CONFIG_DEFAULTS, memo_module.UNIFIED_MODEL_KEYS,
+                                  arm=arm, unified_models=unified_models, overrides=memo)
+
+
 def test_sentence_transformers_coexists_with_memevol_benchmarks():
     # Regression guard for the name clash that once needed a sys.modules shim:
     # sentence-transformers eagerly imports HF `datasets`, which collided with
@@ -47,7 +57,7 @@ class _FakeLLMController:
 
 def _memo_with_fakes(ret="MEMSTR"):
     from baselines.harness.amem.memo import AMemMemo
-    m = AMemMemo()
+    m = AMemMemo(config=_resolved())
     m._system = _FakeSystem(ret=ret)          # pre-set → _ensure_system no-ops
     m._retriever_llm = _FakeLLMController()
     return m
@@ -156,16 +166,15 @@ def test_embedder_key_reaches_the_system():
     amem_memo.AgenticMemorySystem = _FakeAgenticMemorySystem
     amem_memo.LLMController = lambda **kw: object()
     try:
-        m = amem_memo.AMemMemo(config={"amem_llm_model": "gpt-5-mini",
-                                       "amem_embedding_model": "text-embedding-3-small"})
+        m = amem_memo.AMemMemo(config=_resolved("unified"))
         m._ensure_system()
         assert built == {"model_name": "text-embedding-3-small", "llm_model": "gpt-5-mini"}
 
-        # absent key keeps A-mem's published embedder
+        # the faithful arm keeps A-mem's published models
         built.clear()
-        m2 = amem_memo.AMemMemo(config={"amem_llm_model": "gpt-4o-mini"})
+        m2 = amem_memo.AMemMemo(config=_resolved())
         m2._ensure_system()
-        assert built["model_name"] == "all-MiniLM-L6-v2"
+        assert built == {"model_name": "all-MiniLM-L6-v2", "llm_model": "gpt-4o-mini"}
     finally:
         amem_memo.AgenticMemorySystem, amem_memo.LLMController = real_system, real_llm
 

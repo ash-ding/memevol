@@ -66,6 +66,7 @@ install_openai_param_normalisation()
 
 from simplemem.text.system import SimpleMemSystem  # noqa: E402  (vendored, byte-identical)
 from simplemem.core.models.memory_entry import Dialogue, MemoryEntry  # noqa: E402
+from simplemem.core.settings import settings as _simplemem_settings  # noqa: E402
 
 # SimpleMem's llm_client.py builds its own `openai` client; the SDK-boundary
 # patch captures its calls without editing the vendored file.
@@ -73,25 +74,55 @@ _install_openai_usage()
 
 OUTPUTS_DIR = Path(__file__).resolve().parent / "outputs"
 
-# SimpleMem settings that are read ONLY from its global `settings` singleton
-# (env / config.py), never from the SimpleMemSystem constructor. We stamp them
-# into os.environ before the first system is built so per-run config takes hold.
-# Keyed by config name → SimpleMem env var name. (Settings resolves each
-# attribute through os.getenv on ACCESS, not at import, so stamping here works.)
+# SimpleMem reads part of its configuration ONLY from its global `settings`
+# singleton (simplemem/core/settings.py), whose attribute lookup falls through
+# to a top-level `config.py`, then the environment, then built-in defaults.
+# `_pin_settings` assigns every setting the vendored code reads directly on that
+# object — an instance attribute is found before any of those fallbacks — so
+# the values come from this memo's config and nothing ambient can change them.
+# OPENAI_API_KEY is the one setting left to the environment (a credential).
 #
 # No embedding-dimension key is needed: SimpleMem sizes its LanceDB table from
 # `embedding_model.dimension` (vector_store.py:39), which the APIEmbedder
 # answers for itself — so switching to a 1536-dim API embedder needs no second
 # knob. It does invalidate any index built at the old width; the per-user
 # LanceDB store is created with `clear_db=True`, so that resolves itself.
-_ENV_FROM_CFG = {
-    "embedding_model": "EMBEDDING_MODEL",
-    "window_size": "WINDOW_SIZE",
-    "overlap_size": "OVERLAP_SIZE",
-    "semantic_top_k": "SEMANTIC_TOP_K",
-    "keyword_top_k": "KEYWORD_TOP_K",
-    "structured_top_k": "STRUCTURED_TOP_K",
+_SETTINGS_FROM_CONFIG = {
+    "LLM_MODEL": "simplemem_llm_model",
+    "OPENAI_BASE_URL": "base_url",
+    "EMBEDDING_MODEL": "embedding_model",
+    "WINDOW_SIZE": "window_size",
+    "OVERLAP_SIZE": "overlap_size",
+    "SEMANTIC_TOP_K": "semantic_top_k",
+    "KEYWORD_TOP_K": "keyword_top_k",
+    "STRUCTURED_TOP_K": "structured_top_k",
+    "USE_JSON_FORMAT": "use_json_format",
+    "ENABLE_PLANNING": "enable_planning",
+    "ENABLE_REFLECTION": "enable_reflection",
+    "MAX_REFLECTION_ROUNDS": "max_reflection_rounds",
+    "ENABLE_PARALLEL_PROCESSING": "enable_parallel_processing",
+    "MAX_PARALLEL_WORKERS": "max_parallel_workers",
+    "ENABLE_PARALLEL_RETRIEVAL": "enable_parallel_retrieval",
+    "MAX_RETRIEVAL_WORKERS": "max_retrieval_workers",
 }
+# Integration constants: non-streaming, no thinking mode (identical output, no
+# log flood), and SimpleMem's own table name. LANCEDB_PATH is never used for
+# real — every store gets its per-user `db_path` explicitly — but is pinned too.
+_SETTINGS_FIXED = {
+    "USE_STREAMING": False,
+    "ENABLE_THINKING": False,
+    "MEMORY_TABLE_NAME": "memory_entries",
+    "LANCEDB_PATH": str(OUTPUTS_DIR),
+}
+
+
+def _pin_settings(cfg: Dict) -> None:
+    """Assign every SimpleMem setting explicitly. Process-global, but identical
+    for every user of a run, so safe under concurrent per-user instances."""
+    for setting, key in _SETTINGS_FROM_CONFIG.items():
+        setattr(_simplemem_settings, setting, cfg[key])
+    for setting, value in _SETTINGS_FIXED.items():
+        setattr(_simplemem_settings, setting, value)
 
 
 def _init_to_dialogues(init: Dict, start_id: int) -> Tuple[List[Dialogue], int]:
@@ -142,59 +173,64 @@ def _entry_to_passage(entry: MemoryEntry) -> str:
     return "\n".join(parts)
 
 
-class SimpleMemMemo(MemoClass):
-    # SimpleMem's own defaults @ db80b6a, except where the paper's value wins
-    # (window_size) — see each comment.
-    CONFIG_DEFAULTS = {
-        # PAPER §3.1/§3.3: GPT-4.1-mini is the backbone the headline LoCoMo and
-        # LongMemEval-S tables and the full ablation are run on (the paper also
-        # reports GPT-4o, Qwen-Plus, Qwen2.5-1.5B/3B, Qwen3-1.7B/8B). Its
-        # LLMClient sends temperature=0.1..0.3, which the gpt-5 family rejects
-        # — model_config normalises that away at the OpenAI-SDK boundary, so a
-        # gpt-5 model IS runnable here.
-        "simplemem_llm_model": "gpt-4.1-mini",
-        # PAPER §3.1: "Qwen3-embedding-0.6b (1024 dimensions) for dense semantic
-        # embeddings". Local sentence-transformer; all-MiniLM-L6-v2 is a light
-        # fallback. A `text-embedding-*` name switches to the OpenAI API
-        # embedder. No dimension knob: SimpleMem sizes its LanceDB table from
-        # the embedder itself.
-        "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
-        "base_url": None,          # OpenAI-compatible base URL for the internal LLM (None = OpenAI default)
-        # PAPER §3.1: "we use a sliding window of size W = 20". The VENDORED
-        # code ships WINDOW_SIZE=40; the paper's value wins here (as memoryos
-        # prefers its paper's values over the shipped defaults). Numbers
-        # collected at 40 are NOT comparable to numbers collected at 20.
-        "window_size": 20,
-        # Window overlap for context continuity (SimpleMem OVERLAP_SIZE; the
-        # paper states the window size but not the overlap → the code's value).
-        "overlap_size": 2,
-        # The next three are per-view CAPS in the vendored code. The paper does
-        # not fix a top-k: §3.1 says the retrieval depth is "dynamically
-        # adjusted based on estimated query complexity, ranging from k_min = 3
-        # to k_max = 20 for complex reasoning queries" — that adaptive planner
-        # runs inside the vendored code, under these caps. Left at the code's values.
-        "semantic_top_k": 25,      # max vector-similarity hits per query (SEMANTIC_TOP_K)
-        "keyword_top_k": 5,        # max keyword/BM25 hits per query (KEYWORD_TOP_K)
-        "structured_top_k": 5,     # max structured-metadata hits per query (STRUCTURED_TOP_K)
-        "enable_planning": True,   # intent-aware multi-query retrieval planning
-        "enable_reflection": True, # reflection-based additional retrieval rounds
-        "max_reflection_rounds": 2,
-        # SimpleMem default — parallel window compression. FAITHFUL path (serial
-        # is NOT equivalent: it feeds each window the previous window's entries
-        # as dedup context). Also the main build speed lever.
-        "enable_parallel_processing": True,
-        "max_parallel_workers": 16,    # threads for parallel build (MAX_PARALLEL_WORKERS)
-        "enable_parallel_retrieval": True,   # SimpleMem default — parallel multi-view retrieval
-        "max_retrieval_workers": 8,    # threads for parallel retrieval (MAX_RETRIEVAL_WORKERS)
-    }
-    # UNIFIED arm: SimpleMem publishes on gpt-4.1-mini with a local
-    # Qwen3-Embedding-0.6B (1024-dim) index; both change here. Do not quote this
-    # arm as SimpleMem's published result.
-    UNIFIED_OVERRIDES = {
-        "simplemem_llm_model": "gpt-5-mini",
-        "embedding_model": "text-embedding-3-small",
-    }
+# Method config, faithful arm — module-level DATA: eval_harness.py resolves it
+# (with `arm` / `unified_models` / `memo:`) and hands the result to the memo's
+# constructor; the class itself only reads self.config.
+# SimpleMem's own defaults @ db80b6a, except where the paper's value wins
+# (window_size) — see each comment.
+CONFIG_DEFAULTS = {
+    # PAPER §3.1/§3.3: GPT-4.1-mini is the backbone the headline LoCoMo and
+    # LongMemEval-S tables and the full ablation are run on (the paper also
+    # reports GPT-4o, Qwen-Plus, Qwen2.5-1.5B/3B, Qwen3-1.7B/8B). Its
+    # LLMClient sends temperature=0.1..0.3, which the gpt-5 family rejects
+    # — model_config normalises that away at the OpenAI-SDK boundary, so a
+    # gpt-5 model IS runnable here.
+    "simplemem_llm_model": "gpt-4.1-mini",
+    # PAPER §3.1: "Qwen3-embedding-0.6b (1024 dimensions) for dense semantic
+    # embeddings". Local sentence-transformer; all-MiniLM-L6-v2 is a light
+    # fallback. A `text-embedding-*` name switches to the OpenAI API
+    # embedder. No dimension knob: SimpleMem sizes its LanceDB table from
+    # the embedder itself.
+    "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
+    "base_url": None,          # OpenAI-compatible base URL for the internal LLM (None = OpenAI default)
+    # PAPER §3.1: "we use a sliding window of size W = 20". The VENDORED
+    # code ships WINDOW_SIZE=40; the paper's value wins here (as memoryos
+    # prefers its paper's values over the shipped defaults). Numbers
+    # collected at 40 are NOT comparable to numbers collected at 20.
+    "window_size": 20,
+    # Window overlap for context continuity (SimpleMem OVERLAP_SIZE; the
+    # paper states the window size but not the overlap → the code's value).
+    "overlap_size": 2,
+    # The next three are per-view CAPS in the vendored code. The paper does
+    # not fix a top-k: §3.1 says the retrieval depth is "dynamically
+    # adjusted based on estimated query complexity, ranging from k_min = 3
+    # to k_max = 20 for complex reasoning queries" — that adaptive planner
+    # runs inside the vendored code, under these caps. Left at the code's values.
+    "semantic_top_k": 25,      # max vector-similarity hits per query (SEMANTIC_TOP_K)
+    "keyword_top_k": 5,        # max keyword/BM25 hits per query (KEYWORD_TOP_K)
+    "structured_top_k": 5,     # max structured-metadata hits per query (STRUCTURED_TOP_K)
+    # SimpleMem's USE_JSON_FORMAT (default False): whether its LLM calls request
+    # a JSON response format. Left at the code's value; the paper does not say.
+    "use_json_format": False,
+    "enable_planning": True,   # intent-aware multi-query retrieval planning
+    "enable_reflection": True, # reflection-based additional retrieval rounds
+    "max_reflection_rounds": 2,
+    # SimpleMem default — parallel window compression. FAITHFUL path (serial
+    # is NOT equivalent: it feeds each window the previous window's entries
+    # as dedup context). Also the main build speed lever.
+    "enable_parallel_processing": True,
+    "max_parallel_workers": 16,    # threads for parallel build (MAX_PARALLEL_WORKERS)
+    "enable_parallel_retrieval": True,   # SimpleMem default — parallel multi-view retrieval
+    "max_retrieval_workers": 8,    # threads for parallel retrieval (MAX_RETRIEVAL_WORKERS)
+}
+# `arm: unified` writes unified_models.llm / .embedding into these keys.
+# SimpleMem publishes on gpt-4.1-mini with a local Qwen3-Embedding-0.6B
+# (1024-dim) index; both change. Do not quote the unified arm as SimpleMem's
+# published result.
+UNIFIED_MODEL_KEYS = {"llm": ("simplemem_llm_model",), "embedding": ("embedding_model",)}
 
+
+class SimpleMemMemo(MemoClass):
     def __init__(self, config=None):
         super().__init__(config)
         self._system: Optional[SimpleMemSystem] = None   # lazy — built on first hook call
@@ -205,20 +241,14 @@ class SimpleMemMemo(MemoClass):
         if self._system is not None:
             return
         cfg = self.config
-        # Stamp settings that SimpleMem reads only from env (idempotent; identical
-        # for every user, so process-global env is safe).
-        for key, env in _ENV_FROM_CFG.items():
-            val = cfg.get(key)
-            if val is not None:
-                os.environ[env] = str(val)
-        os.environ["USE_STREAMING"] = "false"   # integration: non-streaming (identical output, no log flood)
+        _pin_settings(cfg)
 
         save_dir = str(OUTPUTS_DIR / self._instance_id)
         OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
         with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
             # EmbeddingModel is constructed here → patched SentenceTransformer
             self._system = SimpleMemSystem(
-                api_key=os.environ.get("OPENAI_API_KEY"),
+                api_key=None,                  # credential: resolved from the environment by SimpleMem
                 model=cfg["simplemem_llm_model"],
                 base_url=cfg["base_url"] or None,
                 db_path=save_dir,
@@ -249,7 +279,6 @@ class SimpleMemMemo(MemoClass):
 
     async def build_memory_from_data(self, recorder) -> None:
         self._ensure_system()
-        # _init_to_dialogues touches memevol's `datasets` (locomo branch) — compute
         dialogues, self._next_id = _init_to_dialogues(recorder.init, self._next_id)
         # add_dialogues + finalize is ADDITIVE across checkpoints; SimpleMem's LLM
         # compression + LanceDB indexing run here (synchronous, no await → the

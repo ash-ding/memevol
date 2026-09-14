@@ -94,24 +94,29 @@ def _init_to_passages(init: Dict) -> List[str]:
     raise KeyError(f"unrecognized recorder.init keys: {list(init)}")
 
 
-class HippoRAGMemo(MemoClass):
-    CONFIG_DEFAULTS = {
-        "embedding": "text-embedding-3-small",   # API embedder (1536-dim). PAPER: nvidia/NV-Embed-v2.
-        # HippoRAG2's INTERNAL LLM (NER, triple extraction, graph construction).
-        # PAPER: Llama-3.3-70B-Instruct. gpt-4o-mini is both the paper's
-        # alternative QA-reader model and what the other six baselines build
-        # memory with, so it keeps the fleet comparable. (This key used to fall
-        # back to the frame's `llm_model`, which is why hipporag2 was once the
-        # only baseline building memory with gpt-5-mini.)
-        "hipporag2_llm_model": "gpt-4o-mini",
-        "embedding_batch_size": None,   # None = HippoRAG2's own default (4 local / 16 API)
-        "embedding_dtype": None,        # None = HippoRAG2's own default ("float16" local / "auto" API)
-        "top_k": 5,                     # PAPER §4.4: "Our QA module uses the top-5 retrieved passages as context"
-    }
-    # UNIFIED arm: hipporag2 is already on the fleet's API embedder; only the
-    # graph-construction LLM changes.
-    UNIFIED_OVERRIDES = {"hipporag2_llm_model": "gpt-5-mini"}
+# Method config, faithful arm — module-level DATA: eval_harness.py resolves it
+# (with `arm` / `unified_models` / `memo:`) and hands the result to the memo's
+# constructor; the class itself only reads self.config.
+CONFIG_DEFAULTS = {
+    "embedding": "text-embedding-3-small",   # API embedder (1536-dim). PAPER: nvidia/NV-Embed-v2.
+    # HippoRAG2's INTERNAL LLM (NER, triple extraction, graph construction).
+    # PAPER: Llama-3.3-70B-Instruct. gpt-4o-mini is both the paper's
+    # alternative QA-reader model and what the other six baselines build
+    # memory with, so it keeps the fleet comparable. (This key used to fall
+    # back to the frame's `llm_model`, which is why hipporag2 was once the
+    # only baseline building memory with gpt-5-mini.)
+    "hipporag2_llm_model": "gpt-4o-mini",
+    "embedding_batch_size": None,   # None = HippoRAG2's own default (4 local / 16 API)
+    "embedding_dtype": None,        # None = HippoRAG2's own default ("float16" local / "auto" API)
+    "top_k": 5,                     # PAPER §4.4: "Our QA module uses the top-5 retrieved passages as context"
+}
+# `arm: unified` writes unified_models.llm / .embedding into these keys.
+# hipporag2's faithful embedder is already an API model, so under the default
+# unified_models only the graph-construction LLM actually changes.
+UNIFIED_MODEL_KEYS = {"llm": ("hipporag2_llm_model",), "embedding": ("embedding",)}
 
+
+class HippoRAGMemo(MemoClass):
     def __init__(self, config=None):
         super().__init__(config)
         self._hippo = None

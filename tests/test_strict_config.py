@@ -6,8 +6,8 @@ Two schemes coexist (2026-08-06):
   (baselines/harness/eval_harness.py) and ONE frame config, validated by
   `common.config.validate_exact_config` against eval_harness.FRAME_KEYS
   (missing keys AND unknown keys both abort; sizing checked to the leaf).
-  Method knobs are class defaults (MemoClass.CONFIG_DEFAULTS), overridable
-  only through the validated `memo:` block.
+  Method knobs are each memo.py's module-level CONFIG_DEFAULTS, resolved by
+  eval_harness.resolve_memo_config; `memo:` overrides are validated.
 - alma (evolve baseline) keeps the layered scheme (DEFAULT_CONFIG < YAML < CLI
   + strict_on gate) because its CLI carries genuine runtime knobs
   (--status/--steps/--memo_SHA).
@@ -105,17 +105,14 @@ def test_missing_sizing_leaf_raises():
 
 
 def test_memo_override_of_unknown_key_raises():
-    # The `memo:` escape hatch is validated against the class: a typo must
+    # The `memo:` block is validated against CONFIG_DEFAULTS: a typo must
     # abort rather than silently become a no-op.
-    from common.memo_class import MemoClass
+    from baselines.harness.eval_harness import resolve_memo_config
 
-    class M(MemoClass):
-        CONFIG_DEFAULTS = {"top_k": 5}
-        UNIFIED_OVERRIDES = {}
-
-    assert M.resolve_config("faithful", {"top_k": 9}) == {"top_k": 9}
+    defaults, model_keys = {"top_k": 5, "llm": "m"}, {"llm": ("llm",)}
+    assert resolve_memo_config(defaults, model_keys, arm="faithful", overrides={"top_k": 9}) == {"top_k": 9, "llm": "m"}
     try:
-        M.resolve_config("faithful", {"topk": 9})
+        resolve_memo_config(defaults, model_keys, arm="faithful", overrides={"topk": 9})
     except KeyError as e:
         assert "topk" in str(e)
     else:

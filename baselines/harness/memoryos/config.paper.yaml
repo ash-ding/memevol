@@ -9,6 +9,7 @@
 
 harness: memoryos
 arm: faithful                  # the method's own published models
+unified_models: null
 
 dataset: locomo                # the paper reports on LoCoMo
 split: search

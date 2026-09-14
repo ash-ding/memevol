@@ -98,6 +98,21 @@ def is_api_embedding_model(model_name: Optional[str]) -> bool:
     return str(model_name or "").startswith(_API_EMBEDDING_PREFIX)
 
 
+def api_embedding_dims(model_name: str) -> int:
+    """Native output width of an OpenAI API embedding model.
+
+    Used where a baseline must be TOLD the width explicitly (lightmem sizes its
+    Qdrant collection from it; zep's Graphiti truncates vectors to it). Raises
+    for a model outside the table rather than guessing — a wrong width either
+    fails hard or silently truncates.
+    """
+    if model_name not in _API_EMBEDDING_DIMS:
+        raise ValueError(
+            f"unknown API embedding model {model_name!r}; known: {sorted(_API_EMBEDDING_DIMS)}"
+        )
+    return _API_EMBEDDING_DIMS[model_name]
+
+
 class APIEmbedder:
     """An OpenAI API embedder wearing the `sentence_transformers` interface.
 

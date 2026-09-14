@@ -11,6 +11,16 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
+def _resolved(arm="faithful", **memo):
+    """The complete config eval_harness would hand this memo (plus `memo:` overrides)."""
+    from baselines.harness import eval_harness as eh
+    from baselines.harness.hipporag2 import memo as memo_module
+    unified_models = ({"llm": "gpt-5-mini", "embedding": "text-embedding-3-small"}
+                      if arm == "unified" else None)
+    return eh.resolve_memo_config(memo_module.CONFIG_DEFAULTS, memo_module.UNIFIED_MODEL_KEYS,
+                                  arm=arm, unified_models=unified_models, overrides=memo)
+
+
 # -------------------- hipporag2 (retrieval MemoClass) --------------------
 
 def test_hipporag_memo_passage_conversion():
@@ -42,8 +52,7 @@ def test_hipporag_memo_retrieve_returns_passages(monkeypatch=None):
         def retrieve(self, queries, num_to_retrieve=5):
             class _S: docs = ["passage about hi"]
             return [_S()]
-    memo = HippoRAGMemo(config=dict(embedding="e", llm_model="m", judge_model="j",
-                          _hippo_factory=lambda **kw: _FakeHippo()))
+    memo = HippoRAGMemo(config={**_resolved(), "_hippo_factory": lambda **kw: _FakeHippo()})
     class _Rec:  # minimal recorder
         user_id = "u1"
         init = {"conversation": {"speaker_a": "A", "speaker_b": "B",
@@ -61,7 +70,7 @@ def test_internal_llm_key_is_separate_from_the_shared_qa_model():
     SHARED QA-agent model — which is why it was the only baseline building
     memory with gpt-5-mini while the other six used gpt-4o-mini. It now has its
     own key (CONFIG_DEFAULTS: gpt-4o-mini, parity with the other five), and the
-    frame model is never consulted."""
+    frame model is never consulted — it is not even part of the memo config."""
     from baselines.harness.hipporag2.memo import HippoRAGMemo
 
     seen = {}
@@ -89,10 +98,9 @@ def test_internal_llm_key_is_separate_from_the_shared_qa_model():
                 sys.modules.pop(m, None)
         return dict(seen)
 
-    # the class default, and an explicit override, both win over the frame model
-    assert _build({"llm_model": "gpt-5-mini"})["llm_name"] == "gpt-4o-mini"
-    assert _build({"llm_model": "gpt-5-mini", "hipporag2_llm_model": "gpt-4.1"})["llm_name"] == "gpt-4.1"
-    assert HippoRAGMemo.resolve_config("unified")["hipporag2_llm_model"] == "gpt-5-mini"
+    assert "llm_model" not in _resolved()
+    assert _build(_resolved())["llm_name"] == "gpt-4o-mini"
+    assert _build(_resolved("unified"))["llm_name"] == "gpt-5-mini"
 
 
 # -------------------- runner --------------------

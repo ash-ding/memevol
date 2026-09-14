@@ -6,24 +6,33 @@
 #   uv run --project baselines/harness/<harness> python -m baselines.harness.eval_harness \
 #       --config baselines/harness/config.example.yaml
 #
-# This file is the EVALUATION FRAME only. Every method-specific knob (retrieval
-# k, internal LLM, embedder, capacities, …) is a default on the memo class
-# (`CONFIG_DEFAULTS` in baselines/harness/<harness>/memo.py, with the paper /
-# upstream justification next to each value). Print them with
+# This file is the EVALUATION FRAME. Every method-specific knob (retrieval k,
+# internal LLM, embedder, capacities, …) defaults to `CONFIG_DEFAULTS` in
+# baselines/harness/<harness>/memo.py (the paper / upstream value, justified
+# next to each entry). Print them, and which keys `arm: unified` sets, with
 #   ... eval_harness --describe <harness>
-# and find the fully merged values of any run in its runs/<run_id>/config.resolved.yaml.
+# Every run keeps a copy of this file (runs/<run_id>/config.yaml — edit and
+# re-run it) and the fully resolved method config (memo_config.resolved.yaml).
+#
+# Everything is explicit: no setting is read from the environment (API keys
+# are the one exception), and a run refuses to start if an environment
+# variable would silently change it.
 #
 # EXACT CONFIG (always on): the YAML must list EVERY key below — and ONLY those
-# keys (a null value counts as listed; `run_name` is optional). A missing or
-# unknown key aborts the run, naming the problem; sizing (single_stage/stages)
-# is checked to the leaf. Validated by common.config.validate_exact_config.
+# keys (a null value counts as listed; `run_name` and `memo` are optional). A
+# missing or unknown key aborts the run, naming the problem; sizing
+# (single_stage/stages) is checked to the leaf.
 # =============================================================================
 
 harness: mem0                  # which memory system: amem | hipporag2 | lightmem | mem0 | memoryos | simplemem | zep
-arm: faithful                  # faithful = each method's own published models (paper-faithful defaults)
-                               # unified  = ONE LLM (gpt-5-mini) + ONE API embedder (text-embedding-3-small)
-                               #            fleet-wide, so the comparison against the main method is
-                               #            like-for-like (applies the class's UNIFIED_OVERRIDES)
+arm: faithful                  # faithful = each method's own published models (CONFIG_DEFAULTS as-is)
+                               # unified  = the models below, in every baseline, so the comparison
+                               #            against the main method is like-for-like. Only the models
+                               #            change: method hyper-parameters stay each method's own.
+unified_models: null           # read only under `arm: unified` (must be null for faithful):
+# unified_models:
+#   llm: gpt-5-mini                     # each baseline's INTERNAL LLM (extraction, summaries, graph building)
+#   embedding: text-embedding-3-small   # each baseline's embedder — must be an API model (text-embedding-*)
 
 dataset: locomo                # which benchmark: dynamicmem | locomo | longmemeval_s
 split: search                  # test | search (search = the training split used during evolution)
@@ -53,3 +62,6 @@ stages: null
 #   stage3: {n_conversations: 6, n_qa: 60}
 
 run_name: null                 # optional run directory name; null = <YYYYMMDD_HHMMSS>_<dataset>_<split>
+# memo:                        # optional: override method hyper-parameters, e.g. {retrieve_k: 10}.
+#                              # Validated against CONFIG_DEFAULTS (a typo aborts). It cannot set a
+#                              # model key — models change only through arm / unified_models.

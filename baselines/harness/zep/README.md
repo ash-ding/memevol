@@ -62,25 +62,33 @@ counts as listed. `--project` is not optional: this baseline's deps live only
 in its own venv.
 
 **Method knobs are not in the config file.** Every zep-specific parameter is
-declared once, with its justification, as `CONFIG_DEFAULTS` on the memo class
-in [`memo.py`](memo.py) (the faithful arm) plus `UNIFIED_OVERRIDES` (what
-`arm: unified` changes). Print them:
+declared once, with its justification, in `CONFIG_DEFAULTS` at the top of
+[`memo.py`](memo.py) (the faithful arm); `UNIFIED_MODEL_KEYS` names the keys
+`arm: unified` writes `unified_models` into. Print them:
 
     uv run --project baselines/harness/zep python -m baselines.harness.eval_harness --describe zep
 
-Every run records the fully merged values in `runs/<run_id>/config.resolved.yaml`.
+Every run keeps its config as `runs/<run_id>/config.yaml` (copy it to re-run) and
+the fully resolved values in `runs/<run_id>/memo_config.resolved.yaml`.
 To override one for an ablation, add a `memo:` block to your config
-(`memo: {retrieve_k: 5}`) — validated against the class, so a typo aborts.
+(`memo: {retrieve_k: 5}`) — validated against `CONFIG_DEFAULTS`, so a typo aborts;
+model keys can't be set there (use `arm` / `unified_models`).
 
 Keys worth calling out: `retrieve_k` (default 20, the paper's top-k);
-`embedder` (`bge-m3` paper-faithful local | `openai`); `reranker` (`bge`
-paper-faithful cross-encoder | `openai`); `device` (`cuda`|`cpu`,
-sentence-transformers device for BGE models); `graph_llm_model` (default
-`gpt-4o-mini`, the paper's graph-construction LLM — keep a 4-series model).
-The rest (`embedder_model`, `reranker_model`, `db_root`,
-`graph_llm_small_model`, `llm_model`, `judge_model`, `progressive`,
-`sampling_seed`) are documented inline in
-`../config.example.yaml`.
+`embedder_model` (`BAAI/bge-m3` paper-faithful local; a `text-embedding-*` name
+builds Graphiti's OpenAIEmbedder, told its width explicitly); `reranker` (`bge`
+paper-faithful cross-encoder | `openai`); `device` (`null` = auto-detect, else
+`cpu` / `cuda:N`, sentence-transformers device for the BGE models);
+`graph_llm_model` (default `gpt-4o-mini-2024-07-18`, the paper's
+graph-construction LLM — also used as Graphiti's "small" model);
+`max_coroutines` (default 20, Graphiti's own concurrency limit, passed
+explicitly). The frame keys (`llm_model`, `judge_model`, `progressive`,
+`sampling_seed`, ...) are documented inline in `../config.example.yaml`.
+
+Nothing is read from the environment: Graphiti's own env-driven defaults
+(`EMBEDDING_DIM`, `SEMAPHORE_LIMIT`) are overridden by explicit arguments, the
+ones it reads with no override (`CHUNK_*`, index names, ...) make a run refuse
+to start if set, and Graphiti's PostHog telemetry is switched off in `memo.py`.
 
 **Sizing is config-file only** (there is no sizing CLI surface either) —
 `single_stage` (progressive: false, REQUIRED) or `stages` (progressive:
@@ -90,10 +98,10 @@ true). See `../config.example.yaml`.
 
 Every model this baseline touches is a config parameter, so it runs in two arms:
 
-| | faithful arm (`CONFIG_DEFAULTS`, `arm: faithful`) | unified arm (`UNIFIED_OVERRIDES`, `arm: unified`) |
+| | faithful arm (`arm: faithful` — `CONFIG_DEFAULTS`) | unified arm (`arm: unified` — example `unified_models`) |
 |---|---|---|
 | graph LLM (`graph_llm_model`) | `gpt-4o-mini-2024-07-18` — the paper's exact pin (§4.1) | `gpt-5-mini` |
-| embedder (`embedder` / `embedder_model`) | `BAAI/bge-m3`, local, 1024-dim — the paper's (§4.1) | `text-embedding-3-small`, API, 1536-dim |
+| embedder (`embedder_model`) | `BAAI/bge-m3`, local, 1024-dim — the paper's (§4.1) | `text-embedding-3-small`, API, 1536-dim |
 | reranker (`reranker` / `reranker_model`) | `BAAI/bge-reranker-v2-m3` cross-encoder — the paper's family (§4.1) | **unchanged** — no API equivalent |
 
 The graph LLM pins the **dated** snapshot, quoting §4.1: *"we utilize

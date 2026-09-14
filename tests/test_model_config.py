@@ -330,20 +330,24 @@ def test_api_embedder_encode_shapes(monkeypatched_embedding=None):
 
 # ---------------- the config surface ----------------
 #
-# Every method knob is declared ONCE, as a class attribute on the memo class
-# (CONFIG_DEFAULTS = the faithful arm, UNIFIED_OVERRIDES = what `arm: unified`
-# changes). Read out of memo.py by AST so no baseline's heavy deps are needed.
+# Each memo.py declares its method config as MODULE-LEVEL data —
+# CONFIG_DEFAULTS (the faithful arm) and UNIFIED_MODEL_KEYS (where `arm: unified`
+# writes unified_models) — and eval_harness.py resolves it. Read out of memo.py
+# by AST so no baseline's heavy deps are needed.
 
-def _class_dicts(memo_py: Path):
-    """(CONFIG_DEFAULTS, UNIFIED_OVERRIDES) literals out of memo.py without importing it."""
+EXAMPLE_UNIFIED = {"llm": "gpt-5-mini", "embedding": "text-embedding-3-small"}
+
+
+def _module_data(memo_py: Path):
+    """(CONFIG_DEFAULTS, UNIFIED_MODEL_KEYS) literals from memo.py's MODULE level."""
     found = {}
-    for node in ast.walk(ast.parse(memo_py.read_text(encoding="utf-8"))):
+    for node in ast.parse(memo_py.read_text(encoding="utf-8")).body:
         if isinstance(node, ast.Assign):
             for t in node.targets:
-                if getattr(t, "id", None) in ("CONFIG_DEFAULTS", "UNIFIED_OVERRIDES"):
+                if getattr(t, "id", None) in ("CONFIG_DEFAULTS", "UNIFIED_MODEL_KEYS"):
                     found[t.id] = ast.literal_eval(node.value)
-    assert "CONFIG_DEFAULTS" in found, f"no CONFIG_DEFAULTS in {memo_py}"
-    return found["CONFIG_DEFAULTS"], found.get("UNIFIED_OVERRIDES", {})
+    assert set(found) == {"CONFIG_DEFAULTS", "UNIFIED_MODEL_KEYS"}, f"{memo_py}: {sorted(found)}"
+    return found["CONFIG_DEFAULTS"], found["UNIFIED_MODEL_KEYS"]
 
 
 def _baseline_dirs():
@@ -360,7 +364,7 @@ def test_registry_names_every_baseline_dir_and_nothing_else():
 
 
 def test_no_baseline_ships_a_runner_or_its_own_config():
-    # The whole point of #24: a harness dir provides only its MemoClass.
+    # A harness dir provides only its MemoClass.
     # (config.paper.yaml is the record of a published reproduction — allowed.)
     for d in _baseline_dirs():
         assert not (d / "run.py").exists(), d.name
@@ -368,64 +372,84 @@ def test_no_baseline_ships_a_runner_or_its_own_config():
             assert not (d / stray).exists(), f"{d.name}/{stray}"
 
 
-def test_unified_overrides_are_a_subset_of_the_defaults():
-    # A key that exists only in the unified arm would be a silent no-op in the
-    # faithful arm; resolve_config also rejects it at runtime.
+def test_memo_classes_carry_no_config_machinery():
+    """The class only reads self.config: no defaults or resolution on it."""
     for d in _baseline_dirs():
-        defaults, unified = _class_dicts(d / "memo.py")
-        extra = set(unified) - set(defaults)
-        assert not extra, f"{d.name}: UNIFIED_OVERRIDES not in CONFIG_DEFAULTS: {extra}"
+        for node in ast.walk(ast.parse((d / "memo.py").read_text(encoding="utf-8"))):
+            if isinstance(node, ast.ClassDef):
+                names = {t.id for stmt in node.body if isinstance(stmt, ast.Assign)
+                         for t in stmt.targets if isinstance(t, ast.Name)}
+                names |= {stmt.name for stmt in node.body if isinstance(stmt, ast.FunctionDef)}
+                leaked = names & {"CONFIG_DEFAULTS", "UNIFIED_OVERRIDES", "UNIFIED_MODEL_KEYS", "resolve_config"}
+                assert not leaked, f"{d.name}.{node.name}: {sorted(leaked)}"
 
 
-def test_unified_arm_is_one_llm_and_one_embedder_everywhere():
-    """The point of the unified arm: everything except the memory design is
-    held fixed, so a difference in score is a difference in method."""
-    llm_keys = {"amem_llm_model", "hipporag2_llm_model", "lightmem_llm_model",
-                "mem0_llm_model", "memoryos_llm_model", "simplemem_llm_model",
-                "graph_llm_model"}
-    embedder_keys = {"amem_embedding_model", "memoryos_embedding_model",
-                     "embedding_model", "embedder_model", "embedding"}
+def test_no_memo_py_touches_the_environment():
+    """Configuration is explicit: integration code never reads or writes a
+    setting through os.environ / os.getenv (credentials are left to the SDKs)."""
+    import re
+    pattern = re.compile(r"os\.(environ|getenv|putenv)")
+    for path in [*(d / "memo.py" for d in _baseline_dirs()), HARNESS_DIR / "model_config.py"]:
+        hits = [f"{path.parent.name}/{path.name}:{i}" for i, line in
+                enumerate(path.read_text(encoding="utf-8").splitlines(), 1)
+                if pattern.search(line) and not line.lstrip().startswith("#")]
+        assert not hits, hits
+
+
+def test_unified_model_keys_are_declared_defaults_with_known_roles():
+    from baselines.harness.eval_harness import MODEL_ROLES
     for d in _baseline_dirs():
-        defaults, unified = _class_dicts(d / "memo.py")
-        resolved = {**defaults, **unified}
-        assert llm_keys & set(resolved), f"{d.name}: no internal-LLM key"
-        for key in llm_keys & set(resolved):
-            assert resolved[key] == "gpt-5-mini", f"{d.name}: {key}={resolved[key]!r}"
-        for key in embedder_keys & set(resolved):
-            assert resolved[key] == "text-embedding-3-small", f"{d.name}: {key}={resolved[key]!r}"
+        defaults, model_keys = _module_data(d / "memo.py")
+        assert set(model_keys) <= MODEL_ROLES, f"{d.name}: {sorted(model_keys)}"
+        assert {"llm", "embedding"} <= set(model_keys), f"{d.name}: must map both models"
+        keys = {k for ks in model_keys.values() for k in ks}
+        assert keys <= set(defaults), f"{d.name}: undeclared {sorted(keys - set(defaults))}"
 
 
-def test_the_two_arms_differ_only_in_models():
-    """The invariant the whole comparison rests on: switching arms must change
-    the MODELS and nothing else. If a method knob drifts between the two, a
-    score difference stops being attributable to the model swap."""
-    model_keys = {
-        "amem_llm_model", "amem_embedding_model", "hipporag2_llm_model",
-        "lightmem_llm_model", "mem0_llm_model", "memoryos_llm_model",
-        "memoryos_embedding_model", "simplemem_llm_model", "graph_llm_model",
-        "graph_llm_small_model", "embedding_model", "embedder", "embedder_model",
-        "embedding", "embedding_dims",
-    }
+def test_unified_arm_is_one_llm_and_one_embedder_and_nothing_else():
+    """Switching arms must change the MODELS and nothing else, or a score
+    difference stops being attributable to the model swap."""
+    from baselines.harness.eval_harness import resolve_memo_config
     for d in _baseline_dirs():
-        _, unified = _class_dicts(d / "memo.py")
-        drift = set(unified) - model_keys
-        assert not drift, f"{d.name}: non-model keys in UNIFIED_OVERRIDES: {drift}"
+        defaults, model_keys = _module_data(d / "memo.py")
+        faithful = resolve_memo_config(defaults, model_keys, arm="faithful")
+        unified = resolve_memo_config(defaults, model_keys, arm="unified", unified_models=EXAMPLE_UNIFIED)
+        for key in model_keys["llm"]:
+            assert unified[key] == "gpt-5-mini", f"{d.name}: {key}"
+        for key in model_keys["embedding"]:
+            assert unified[key] == "text-embedding-3-small", f"{d.name}: {key}"
+        controlled = {k for ks in model_keys.values() for k in ks}
+        drift = {k for k in defaults if k not in controlled and faithful[k] != unified[k]}
+        assert not drift, f"{d.name}: non-model keys differ between arms: {drift}"
 
 
 def test_unified_lightmem_moves_its_dimension_with_the_embedder():
     # lightmem is the one baseline carrying an explicit dims knob: it sizes the
     # Qdrant collection AND is sent as the API `dimensions` parameter, so a
     # stale 384 against a 1536-dim embedder is a hard failure.
-    _, unified = _class_dicts(HARNESS_DIR / "lightmem" / "memo.py")
+    from baselines.harness.eval_harness import resolve_memo_config
+    defaults, model_keys = _module_data(HARNESS_DIR / "lightmem" / "memo.py")
+    unified = resolve_memo_config(defaults, model_keys, arm="unified", unified_models=EXAMPLE_UNIFIED)
     assert unified["embedding_model"] == "text-embedding-3-small"
     assert unified["embedding_dims"] == 1536
+
+
+def test_api_embedding_dims_knows_the_openai_models_and_refuses_the_rest():
+    assert mc.api_embedding_dims("text-embedding-3-small") == 1536
+    assert mc.api_embedding_dims("text-embedding-3-large") == 3072
+    try:
+        mc.api_embedding_dims("text-embedding-9")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected ValueError for an unknown model")
 
 
 def test_no_default_hardcodes_cuda():
     # The regression this replaces: lightmem (x2) and zep (x1) defaulted to
     # "cuda" and crashed outright on a CPU-only box.
     for d in _baseline_dirs():
-        defaults, _ = _class_dicts(d / "memo.py")
+        defaults, _ = _module_data(d / "memo.py")
         for key in ("device", "embedding_device", "llmlingua_device"):
             if key in defaults:
                 assert defaults[key] is None, f"{d.name}: {key}={defaults[key]!r}"
