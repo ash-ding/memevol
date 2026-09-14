@@ -133,6 +133,38 @@ def test_use_memory_to_answer_gets_query_scoped_recorder():
         "DynamicMemWorkflow._run_item must pass retrieve_recorder to use_memory_to_answer"
 
 
+def test_dynamicmem_ingests_each_checkpoint_segment_from_scratch():
+    """DynamicMem's per-checkpoint loop hands BUILD exactly the newly visible
+    log segment at each checkpoint (checkpoint isolation), on a memo built
+    with `memo_config`, and a second run rebuilds everything — no memory is
+    carried across runs or stages."""
+    import os
+    os.environ.setdefault("OPENAI_API_KEY", "test-dummy-key")
+    from benchmarks.dynamicmem.workflow import DynamicMemWorkflow
+    from common.memo_class import MemoClass
+
+    batches, configs = [], []
+
+    class _CountingMemo(MemoClass):
+        async def build_memory_from_data(self, recorder):
+            configs.append(self.config.get("tag"))
+            batches.append(len(recorder.init.get("app_logs", [])))
+
+    user_dir = str(PROJECT_ROOT / "benchmarks" / "dynamicmem" / "user_data" / "001_user_001")
+    # no items sampled → pure Phase-1 exercise, no QA/judge calls
+    spec = {"n_samples": 1, "n_checkpoints": 3, "n_task_a": 0, "n_task_c": 0}
+
+    for _ in range(2):
+        batches.clear()
+        wf = DynamicMemWorkflow(memo_class=_CountingMemo, model="gpt-5-mini",
+                                memo_config={"tag": "cfg"})
+        wf.status = "search"
+        asyncio.run(wf.run_single_user(user_dir, stage="stage2", stage_spec=spec))
+        # user_001's first three checkpoints end at logs 180 / 466 / 716
+        assert batches == [180, 466 - 180, 716 - 466], batches
+    assert set(configs) == {"cfg"}, configs
+
+
 def main():
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = []

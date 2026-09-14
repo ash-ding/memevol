@@ -66,7 +66,6 @@ class Memo_Manager:
         step_index: int = 0,
         stages: Optional[dict] = None,
         single_stage: Optional[dict] = None,
-        memory_cache: bool = True,
     ):
         """
         Extract python code from markdown-like LLM output, persist it, run the
@@ -109,7 +108,6 @@ class Memo_Manager:
             step_index=step_index,
             stages=stages,
             single_stage=single_stage,
-            memory_cache=memory_cache,
             dataset=self.dataset,
         )
 

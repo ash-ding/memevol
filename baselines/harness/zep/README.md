@@ -78,7 +78,7 @@ sentence-transformers device for BGE models); `graph_llm_model` (default
 `gpt-4o-mini`, the paper's graph-construction LLM — keep a 4-series model).
 The rest (`embedder_model`, `reranker_model`, `db_root`,
 `graph_llm_small_model`, `llm_model`, `judge_model`, `progressive`,
-`sampling_seed`, `memory_cache`) are documented inline in
+`sampling_seed`) are documented inline in
 `../config.example.yaml`.
 
 **Sizing is config-file only** (there is no sizing CLI surface either) —
@@ -130,8 +130,7 @@ Both arms leave `src/` **byte-identical** — the `diff -r` above still passes.
 `device` now defaults to `null` = **auto-detect** (cuda if a GPU is visible,
 else cpu); it used to default to a hardcoded `cuda` and crashed outright on a
 CPU-only box. Switching the embedder changes the vector width (1024 → 1536), so
-any FalkorDB store or `memory_cache: true` snapshot built on the other arm is
-invalid.
+any FalkorDB store built on the other arm is invalid.
 
 ## Faithfulness boundary
 

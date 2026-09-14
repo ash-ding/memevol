@@ -73,7 +73,6 @@ async def evaluate_candidate(
         "--step-index", str(step_index),
         "--progressive" if cfg["progressive"] else "--no-progressive",
         "--random-sample" if cfg["random_sample"] else "--no-random-sample",
-        "--memory-cache" if cfg["memory_cache"] else "--no-memory-cache",
         "--smoke" if smoke else "--no-smoke",
     ]
     if cfg["max_logs"] is not None:

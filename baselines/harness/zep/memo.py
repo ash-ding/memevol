@@ -315,7 +315,7 @@ class ZepMemo(MemoClass):
     }
     # UNIFIED arm: the graph-construction LLM and the embedder change (Graphiti's
     # own OpenAIEmbedder — an injected EmbedderClient, no adapter). 1536-dim:
-    # any FalkorDB store or `memory_cache` snapshot built at 1024-dim is invalid.
+    # any FalkorDB store built at 1024-dim is invalid.
     # WHAT STAYS LOCAL: the reranker. bge-reranker-v2-m3 is a CROSS-ENCODER
     # scoring (query, doc) pairs, so it has no API equivalent; Graphiti's
     # OpenAIRerankerClient is an LLM-scoring reranker — a materially different

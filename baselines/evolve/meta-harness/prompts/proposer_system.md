@@ -199,18 +199,13 @@ class MyHarness(MemoClass):
         return {"inline_memory_blocks": ["..."]}
 ```
 
-Three rules that trip up new harnesses:
+Two rules that trip up new harnesses:
 
 1. **BUILD accumulates.** LoCoMo and LongMemEval hand you everything in one
    call; DynamicMem calls you once per checkpoint with only that checkpoint's
    new logs, interleaved with queries. Never assume the stream is complete.
 2. **RETRIEVE is read-only.** DynamicMem interleaves queries with ingestion —
-   a retrieve that mutates memory breaks checkpoint isolation and the
-   cross-stage memory cache.
-3. **Keep `self` picklable.** The evaluator snapshots built memory after
-   Phase 1 and reuses it at later stages. Plain data (dicts, lists, numpy
-   arrays) pickles; live clients, locks and loaded models do not — build them
-   lazily, or override `save_memory` / `load_memory`.
+   a retrieve that mutates memory breaks checkpoint isolation.
 
 The return dict is rendered into the QA prompt. `{"inline_memory_blocks":
 [str, ...]}` renders each block verbatim; any other shape is serialized as one

@@ -368,8 +368,7 @@ def _per_user_stddev(score: Dict[str, Any]) -> Optional[float]:
     return (sum((r - mean) ** 2 for r in rewards) / len(rewards)) ** 0.5
 
 
-def _stage_cost_metrics(stage_usage: Dict[str, Any],
-                        workflow: Any) -> Dict[str, Any]:
+def _stage_cost_metrics(stage_usage: Dict[str, Any]) -> Dict[str, Any]:
     """Cost block for one stage's metrics dict, from that stage's usage delta.
 
     `tokens` stays the ALL-PHASE total (unchanged semantics — forge's
@@ -383,10 +382,6 @@ def _stage_cost_metrics(stage_usage: Dict[str, Any],
       tokens_answer    the QA agent (cost of answering, not of the memory)
       tokens_judge     evaluation overhead — never part of a cost claim
       llm_calls        request count, all phases
-
-    `build_cache_hits` rides along because a cached build spends no tokens:
-    a `tokens_build` of 0 next to a non-zero hit count means "not measured
-    here", not "free".
     """
     from common.tokens import (ANSWER, BUILD, JUDGE, MEMORY_PHASES, RETRIEVE,
                                phase_tokens, total_tokens)
@@ -399,8 +394,6 @@ def _stage_cost_metrics(stage_usage: Dict[str, Any],
         "tokens_judge": phase_tokens(stage_usage, JUDGE),
         "llm_calls": int(stage_usage.get("totals", {}).get("calls", 0)),
         "phase_seconds": dict(stage_usage.get("phase_seconds", {})),
-        "build_cache_hits": int(getattr(workflow, "build_cache_hits", 0)),
-        "build_cache_misses": int(getattr(workflow, "build_cache_misses", 0)),
     }
 
 
@@ -417,7 +410,7 @@ COST_COVERAGE_CAVEAT = (
 )
 
 
-def _run_record(stage_usage: Dict[str, Any], workflow: Any,
+def _run_record(stage_usage: Dict[str, Any],
                 local: List[Dict[str, Any]]) -> Dict[str, Any]:
     """What this stage actually spent, including the parts tokens can't say."""
     return {
@@ -425,10 +418,6 @@ def _run_record(stage_usage: Dict[str, Any], workflow: Any,
         "phase_seconds": dict(stage_usage.get("phase_seconds", {})),
         "llm_calls_by_phase": {
             ph: c.get("calls", 0) for ph, c in stage_usage.get("by_phase", {}).items()
-        },
-        "build_cache": {
-            "hits": int(getattr(workflow, "build_cache_hits", 0)),
-            "misses": int(getattr(workflow, "build_cache_misses", 0)),
         },
         "coverage_caveat": COST_COVERAGE_CAVEAT,
     }
@@ -462,41 +451,15 @@ def _memory_token_metrics(recorder_list: List[Any]) -> Dict[str, Any]:
 
 
 #: Cost fields accumulated ACROSS executed stages (cost accounting spans the
-#: whole gauntlet, not just the last stage). `phase_seconds` and the cache
-#: tallies are merged separately — they are not flat ints.
+#: whole gauntlet, not just the last stage). `phase_seconds` is merged
+#: separately — it is not a flat int.
 _CUMULATIVE_COST_FIELDS = (
     "tokens", "tokens_build", "tokens_retrieve", "tokens_memory",
     "tokens_answer", "tokens_judge", "llm_calls",
-    "build_cache_hits", "build_cache_misses",
     "memory_tokens_total", "memory_tokens_n_queries", "memory_tokens_n_answered",
     # NOTE: memory_tokens_per_query is a RATIO — recomputed from the
     # accumulated total/denominator, never summed.
 )
-
-
-def _memo_source_dir(memo_class: type) -> Optional["Path"]:
-    """Directory holding the memo module — fingerprinted (common.memory_cache.
-    harness_fingerprint) so a change to the memo's source invalidates the
-    cross-stage cache. `memo_class` may be a configured wrapper subclass whose
-    source file is elsewhere; walk the MRO to the first class defined in its own
-    real file (skipping this module)."""
-    import inspect
-    from pathlib import Path
-    this_file = Path(__file__).resolve()
-    for cls in memo_class.__mro__:
-        try:
-            src = inspect.getsourcefile(cls)
-        except TypeError:
-            src = None
-        if not src:
-            continue
-        srcp = Path(src).resolve()
-        if srcp == this_file:
-            continue
-        if cls.__module__ in ("common.memo_class", "forge.memo_class", "abc", "builtins"):
-            break  # reached the framework base — no useful source dir above it
-        return srcp.parent
-    return None
 
 
 async def evaluate_memo(
@@ -512,9 +475,6 @@ async def evaluate_memo(
     single_stage: Optional[Dict[str, Any]] = None,
     max_sample_concurrent: int = 3,
     sample_seed: Optional[str] = None,
-    memory_cache: Any = True,        # True | False | "rebuild" (see resolve_cache_mode)
-    memcache_fingerprint: Optional[str] = None,
-    memcache_dir: Optional["Path"] = None,
     smoke: bool = False,
     max_logs: Optional[int] = None,
     memo_sha: str = "",
@@ -554,9 +514,6 @@ async def evaluate_memo(
       llm_calls                  request count
       phase_seconds              wall-clock per phase — the only cost signal
                                  that also covers local models
-      build_cache_hits/_misses   a cached build spends no tokens; a
-                                 tokens_build of 0 beside a non-zero hit
-                                 count means "not measured", not "free"
       memory_tokens_total        tokens the memory added to the QA prompts
       memory_tokens_per_query    the recurring cost of USING the memory
       memory_tokens_n_queries    denominator: queries actually prompted
@@ -565,21 +522,15 @@ async def evaluate_memo(
     (stage: 1/2/3 gauntlet tier, FULL_STAGE for the single pass, 0.0 for smoke.)
 
     ``sample_seed`` rides every stage spec (constant across stages so the
-    stage1 ⊂ stage2 ⊂ stage3 nesting holds). ``memory_cache`` mounts the
-    cross-stage Phase-1 memory cache at ``memcache_dir`` (default
-    out_dir/memory_cache; forge's container passes its persistent host-bound
-    /memcache so snapshots survive across evaluator invocations), skipped for
-    smoke; ``memcache_fingerprint`` overrides the source-dir fingerprint
-    (alma fingerprints its single staged memo file; forge fingerprints the
-    whole harness dir). ``max_logs`` / ``memo_sha`` are forwarded to the
-    workflow (alma's knobs — forge passes memo_sha=harness id)."""
+    stage1 ⊂ stage2 ⊂ stage3 nesting holds). Every stage builds its users'
+    memory from scratch — nothing is carried across stages or runs.
+    ``max_logs`` / ``memo_sha`` are forwarded to the workflow (alma's knobs —
+    forge passes memo_sha=harness id)."""
     import json as _json
     import shutil as _shutil
     from pathlib import Path
     from benchmarks.registry import resolve as _resolve_dataset
     from common.tokens import diff_summary as _diff_summary, init_global_tracker
-    from common.memory_cache import harness_fingerprint as _dir_fingerprint
-    from common.memory_cache import resolve_cache_mode as _resolve_cache_mode
 
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -613,24 +564,6 @@ async def evaluate_memo(
     from common.tokens import install_thread_context_propagation
     install_thread_context_propagation()
 
-    # ---- cross-stage memory cache (gauntlet + single; never smoke/sanity) ----
-    fingerprint = ""
-    cache_enabled, cache_read = _resolve_cache_mode(memory_cache)
-    # Under "rebuild" this starts False and flips True after the FIRST
-    # cache-enabled stage, so Phase 1 is built once and the later stages reuse
-    # that build. Leaving it False for the whole run would rebuild at every
-    # stage — i.e. `memory_cache: false` with extra disk writes.
-    cache_read_now = cache_read
-    if cache_enabled and not smoke:
-        fingerprint = memcache_fingerprint if memcache_fingerprint is not None else ""
-        if not fingerprint:
-            src_dir = _memo_source_dir(memo_class)
-            fingerprint = _dir_fingerprint(src_dir) if src_dir is not None else ""
-        memcache_dir = Path(memcache_dir) if memcache_dir is not None else out_dir / "memory_cache"
-        memcache_dir.mkdir(parents=True, exist_ok=True)
-    else:
-        memcache_dir = None
-
     stage_summary: Dict[str, Any] = {}
     final_metrics: Dict[str, Any] = {}
     reached = ""
@@ -657,12 +590,6 @@ async def evaluate_memo(
         workflow.memo_sha = memo_sha
         workflow.status = split
         workflow.output_run_dir = stage_dir
-        if memcache_dir is not None:
-            workflow.memory_cache_dir = memcache_dir
-            workflow.memory_cache_read = cache_read_now
-            workflow.harness_fingerprint = fingerprint
-            # This stage writes its snapshot; every stage after it must reuse it.
-            cache_read_now = True
 
         # The tracker is process-global and CUMULATIVE, but each stage's
         # token_usage.json must describe that stage alone — snapshot before,
@@ -703,7 +630,7 @@ async def evaluate_memo(
                 _json.dump(stage_usage, f, indent=2, ensure_ascii=False)
             with (stage_dir / "run_record.json").open("w", encoding="utf-8") as f:
                 _json.dump(
-                    _run_record(stage_usage, workflow, _local_models.summary()),
+                    _run_record(stage_usage, _local_models.summary()),
                     f, indent=2, ensure_ascii=False,
                 )
         except Exception as exc:  # a crashed stage eliminates + stops
@@ -712,7 +639,7 @@ async def evaluate_memo(
         if not stage_usage:
             stage_usage = _diff_summary(tracker.summary(), usage_before)
 
-        cost = {**_stage_cost_metrics(stage_usage, workflow),
+        cost = {**_stage_cost_metrics(stage_usage),
                 **_memory_token_metrics(stage_records)}
         m: Dict[str, Any] = {
             "raw_score": raw_score,

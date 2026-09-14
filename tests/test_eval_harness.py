@@ -91,7 +91,8 @@ def test_instances_see_defaults_under_any_partial_config():
 def test_frame_config_rejects_bad_arm_and_non_mapping_memo():
     tmp = Path(tempfile.mkdtemp())
     try:
-        for bad, needle in (({"arm": "paper"}, "arm"), ({"memo": [1]}, "memo")):
+        for bad, needle in (({"arm": "paper"}, "arm"), ({"memo": [1]}, "memo"),
+                            ({"memory_cache": True}, "memory cache was removed")):
             p = tmp / "c.yaml"; p.write_text(yaml.safe_dump(_frame(**bad)), encoding="utf-8")
             try:
                 eh.load_frame_config(p)
@@ -126,10 +127,9 @@ def test_main_writes_one_directory_per_run_with_records():
 
             run_dir = tmp / "fake" / "runs" / "r1"
             assert run_dir.is_dir()
-            # the evaluator got the run dir as out_dir and a run-INDEPENDENT cache dir
+            # the evaluator got the run dir as out_dir
             kw = calls[0]
             assert kw["out_dir"] == run_dir
-            assert kw["memcache_dir"] == tmp / "fake" / "runs" / "memory_cache" / kw["dataset"] / kw["split"]
             assert kw["memo_class"] is _FakeMemo
             assert kw["memo_config"] == {"top_k": 7, "llm": "gpt-5-mini", "device": None}
 

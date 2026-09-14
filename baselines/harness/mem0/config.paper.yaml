@@ -13,7 +13,6 @@ dataset: locomo                # the paper reports on LoCoMo
 split: search
 progressive: false
 sampling_seed: 42
-memory_cache: true
 
 llm_model: gpt-4o-mini         # PAPER-ALIGNED answerer: the paper reports LoCoMo on gpt-4o-mini.
                                # The repo-comparable arm uses gpt-5-mini (config.example.yaml).

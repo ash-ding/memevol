@@ -44,7 +44,7 @@ DEFAULT_CONFIG = {
     # Evaluation SIZES are config-file-only (no CLI flag): `stages` overrides the
     # progressive gauntlet's family DEFAULT_STAGES; `single_stage` sizes the
     # progressive=false single pass (REQUIRED when progressive=false).
-    "stages": None, "single_stage": None, "memory_cache": True,
+    "stages": None, "single_stage": None,
     "strict_config": True,
 }
 
@@ -85,7 +85,7 @@ def parse_args():
     # (common.evaluate.DEFAULT_STAGES), and each candidate is scored through
     # the same stage1→2→3 gauntlet forge uses.
     # NOTE (Task 4): default=None is the resolve_config sentinel — the real
-    # defaults (progressive=True / random_sample=False / memory_cache=True) live
+    # defaults (progressive=True / random_sample=False) live
     # in DEFAULT_CONFIG; BooleanOptionalAction still yields True/False when the
     # flag (or its --no- form) is given.
     parser.add_argument("--progressive", action=argparse.BooleanOptionalAction, default=None,
@@ -100,8 +100,6 @@ def parse_args():
     # in the --config YAML, not on the CLI. `stages` overrides the gauntlet's
     # family DEFAULT_STAGES; `single_stage` sizes the progressive=false single
     # pass (required when --no-progressive). The old `--stages` CLI flag is gone.
-    parser.add_argument("--memory_cache", action=argparse.BooleanOptionalAction, default=None,
-                        help="Cross-stage Phase-1 memory reuse inside the gauntlet.")
 
     return parser.parse_args()
 
@@ -118,7 +116,8 @@ def build_cfg(args):
     cli.update({k: None for k in _config_only})
     cfg = resolve_config(DEFAULT_CONFIG, args.config, cli)
 
-    from common.config import strict_on, load_config_file, provided_keys, require_present_keys, ConfigCompletenessError
+    from common.config import strict_on, load_config_file, provided_keys, require_present_keys, ConfigCompletenessError, reject_removed_keys
+    reject_removed_keys(cfg, "alma config")
     from common.evaluate import missing_sizing_config
     if strict_on(args.config, cfg):
         _fc = load_config_file(args.config)
@@ -161,7 +160,6 @@ async def main(cfg):
             sampling_seed=cfg["sampling_seed"],
             stages=stages,
             single_stage=single_stage,
-            memory_cache=cfg["memory_cache"],
         )
     else:
         await meta_agent.run_single_memo(
@@ -177,7 +175,6 @@ async def main(cfg):
             sampling_seed=cfg["sampling_seed"],
             stages=stages,
             single_stage=single_stage,
-            memory_cache=cfg["memory_cache"],
         )
 
 

@@ -66,7 +66,6 @@ async def run_evaluation(
     step_index: int = 0,
     stages: Optional[dict] = None,
     single_stage: Optional[dict] = None,
-    memory_cache: bool = True,
     source_path: Optional[Path] = None,
     output_run_dir: Optional[Path] = None,
     dataset: str = "dynamicmem",
@@ -150,7 +149,6 @@ async def run_evaluation(
         "--random_sample" if random_sample else "--no-random_sample",
         "--sampling_seed", str(sampling_seed),
         "--step_index", str(step_index),
-        "--memory_cache" if memory_cache else "--no-memory_cache",
     ]
     if max_logs is not None:
         launch_args += ["--max_logs", str(max_logs)]

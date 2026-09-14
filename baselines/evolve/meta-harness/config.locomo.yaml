@@ -58,8 +58,6 @@ random_sample: false          # FIXED search set across iterations. The paper's
                               # moving subset would make scores non-comparable
                               # between iterations, which the frontier relies on.
 sampling_seed: 42
-memory_cache: true            # no cross-stage reuse to do with one stage; left
-                              # on so a resumed run can still reuse a snapshot
 
 # --- sizing (LoCoMo family: n_conversations / n_qa) --------------------------
 # ACTIVE block (progressive: false). 6 conversations is the WHOLE search split

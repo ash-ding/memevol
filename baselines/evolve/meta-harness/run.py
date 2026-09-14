@@ -31,8 +31,8 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 from benchmarks.registry import DATASETS
 from common.config import (
-    ConfigCompletenessError, load_config_file, provided_keys, require_present_keys,
-    resolve_config, strict_on,
+    ConfigCompletenessError, load_config_file, provided_keys, reject_removed_keys,
+    require_present_keys, resolve_config, strict_on,
 )
 from common.evaluate import missing_sizing_config
 
@@ -70,7 +70,6 @@ DEFAULT_CONFIG = {
     "sampling_seed": 42,
     "stages": None,
     "single_stage": None,
-    "memory_cache": True,
     "strict_config": True,
 }
 
@@ -112,6 +111,7 @@ def build_cfg(args: argparse.Namespace) -> dict:
     cli = {k: getattr(args, k, None) for k in DEFAULT_CONFIG if k not in CONFIG_ONLY}
     cli.update({k: None for k in CONFIG_ONLY})
     cfg = resolve_config(DEFAULT_CONFIG, args.config, cli)
+    reject_removed_keys(cfg, "meta-harness config")
 
     if strict_on(args.config, cfg):
         file_cfg = load_config_file(args.config)

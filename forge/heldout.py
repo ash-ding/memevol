@@ -115,7 +115,6 @@ async def _run(cfg: Dict[str, Any], harness_paths: List[str]) -> None:
             split="test",
             model=cfg["model"], judge_model=cfg["judge_model"],
             max_sample_concurrent=cfg["max_sample_concurrent"],
-            memory_cache=cfg.get("memory_cache", True),
             gpu=cfg["gpu"]["enabled"],
             llm_cfg=cfg.get("llm"),
             progressive=cfg["progressive"],

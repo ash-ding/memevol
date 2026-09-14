@@ -39,7 +39,7 @@ def test_gauntlet_passes_seed_into_every_stage_spec():
         out = asyncio.run(evaluate_memo(
             memo_class=_M, dataset="locomo", split="test", progressive=True,
             out_dir=out_dir, qa_model="m", judge_model="m",
-            max_sample_concurrent=1, memory_cache=False, sample_seed="SEED7"))
+            max_sample_concurrent=1, sample_seed="SEED7"))
     finally:
         LoCoMoWorkflow.run_all_users = orig
         shutil.rmtree(out_dir, ignore_errors=True)
@@ -82,7 +82,7 @@ def _run_evaluate_memo(reward, seen, **kwargs):
         return asyncio.run(evaluate_memo(
             memo_class=_StubMemo, dataset="locomo", split="test",
             out_dir=out_dir, qa_model="gpt-5-mini", judge_model="gpt-5-mini",
-            max_sample_concurrent=1, memory_cache=False, **kwargs))
+            max_sample_concurrent=1, **kwargs))
     finally:
         LoCoMoWorkflow.run_all_users = orig
         shutil.rmtree(out_dir, ignore_errors=True)

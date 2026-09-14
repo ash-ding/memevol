@@ -43,7 +43,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from common.memo_class import MemoClass
-from common.store_cache import DiskStoreCache
 from baselines.harness.hipporag2.memo import app_log_to_passage
 from baselines.harness.model_config import (
     get_embedder, install_openai_param_normalisation,
@@ -184,7 +183,7 @@ def _page_to_passage(page: Dict[str, Any]) -> str:
     return f"{head}{body}"
 
 
-class MemoryOSMemo(DiskStoreCache, MemoClass):
+class MemoryOSMemo(MemoClass):
     # Vendored @ memoryos-pro 0.1.0. Paper = arXiv 2506.06326 §4.1
     # "Implementation Details". Where the shipped code and the paper disagree,
     # the paper's value is the default here and the code's is named in the
@@ -237,21 +236,13 @@ class MemoryOSMemo(DiskStoreCache, MemoClass):
         self._memo: Optional[Memoryos] = None
         self._instance_id = uuid.uuid4().hex[:12]   # per-user on-disk store
 
-    # -- memory-cache hooks (common/store_cache.py) --
-    _store_handle = "_memo"
-
-    def _store_path(self):
-        """Per-user data_storage_path — STM/MTM/LPM all persist under it."""
-        return OUTPUTS_DIR / self._instance_id
-
     def _ensure_system(self) -> None:
         if self._memo is not None:
             return
         cfg = self.config
         _seed_embedder(cfg["memoryos_embedding_model"])
         save_dir = OUTPUTS_DIR / self._instance_id
-        # Never wipe a store restored from the memory cache (DiskStoreCache).
-        if save_dir.exists() and not self.restored_from_cache:
+        if save_dir.exists():
             shutil.rmtree(save_dir, ignore_errors=True)
         save_dir.mkdir(parents=True, exist_ok=True)
         with open(os.devnull, "w") as devnull, \

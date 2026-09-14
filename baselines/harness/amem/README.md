@@ -66,7 +66,7 @@ default) and `amem_embedding_model` (default `all-MiniLM-L6-v2`, the
 paper's local 384-dim index) — see **Model configuration** below;
 `retrieve_k` (default 10, upstream default); `llm_model` / `judge_model`
 (default `gpt-5-mini` — shared QA agent + judge, baseline convention).
-`progressive`, `sampling_seed`, and `memory_cache` behave as documented
+`progressive` and `sampling_seed` behave as documented
 inline in `../config.example.yaml`.
 
 **Sizing is config-file only** (there is no sizing CLI surface either).
@@ -109,8 +109,7 @@ passes, because nothing under `src/` is edited. Two boundary levers in
   renames `max_tokens` → `max_completion_tokens` at the OpenAI-SDK boundary.
 
 A-mem holds its index in a plain numpy array sized from the embeddings, so no
-dimension knob has to move with the embedder. A `memory_cache: true` gauntlet
-snapshot taken at 384-dim is still invalid under the 1536-dim arm.
+dimension knob has to move with the embedder.
 
 ## Faithfulness boundary
 

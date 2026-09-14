@@ -12,8 +12,7 @@ Covers:
   - evaluate_harness progressive=false: single "single" stage plan sized by the
     REQUIRED single_stage config block (fake run_evaluation writing
     score.json), stages.json reached="single", stage metric = FULL_STAGE,
-    memcache_dir wired when memory_cache=True, ValueError when single_stage
-    is absent
+    no memory-cache mount on any eval, ValueError when single_stage is absent
 """
 import asyncio
 import contextlib
@@ -111,7 +110,7 @@ def test_run_wires_progressive_and_writes_results():
     cfg = {
         "progressive": False, "model": "gpt-5-mini", "judge_model": "gpt-5-mini",
         "max_sample_concurrent": 3,
-        "memory_cache": True, "gpu": {"enabled": False}, "llm": {},
+        "gpu": {"enabled": False}, "llm": {},
         "datasets": {"locomo": {}},
     }
     with tempfile.TemporaryDirectory() as td, _test_workspace() as ws:
@@ -309,8 +308,8 @@ def test_reject_progressive_on_heldout_explicit_false_passes():
 def _fake_run_evaluation_factory(calls, *, stage="single", stage_num=4.0,
                                  raw=0.42, write_metrics=True):
     async def fake_run_evaluation(*, harness_dir, image_path, out_dir, dataset,
-                                  split, plan, memcache_dir=None, **kw):
-        calls.append({"plan": plan, "split": split, "memcache_dir": memcache_dir})
+                                  split, plan, **kw):
+        calls.append({"plan": plan, "split": split, "kwargs": sorted(kw)})
         out_dir.mkdir(parents=True, exist_ok=True)
         smoke = bool(plan.get("smoke"))
         (out_dir / "score.json").write_text(json.dumps({
@@ -357,7 +356,7 @@ def test_evaluate_harness_full_single_pass():
                 datasets_config={"locomo": {"single_stage": {"n_conversations": None, "n_qa": None}}},
                 split="test", model="gpt-5-mini", judge_model="gpt-5-mini",
                 max_sample_concurrent=1,
-                memory_cache=False, progressive=False,
+                progressive=False,
             ))
         finally:
             O.run_evaluation = orig
@@ -390,17 +389,17 @@ def test_evaluate_harness_full_missing_single_stage_raises():
                 datasets_config={"locomo": {"stages": {}}},
                 split="test", model="gpt-5-mini", judge_model="gpt-5-mini",
                 max_sample_concurrent=1,
-                memory_cache=False, progressive=False,
+                progressive=False,
             ))
         except ValueError as e:
             raised = "single_stage" in str(e)
         assert raised
 
 
-def test_evaluate_harness_wires_memcache_dir_eval_not_smoke():
-    """memory_cache=True must pass the persistent memcache dir to
-    run_evaluation for evals (gauntlet AND the progressive=false single pass)
-    and NEVER for smoke runs (harness code can change during sanity retries)."""
+def test_evaluate_harness_mounts_no_memory_cache():
+    """The cross-stage memory cache is gone: neither an eval nor a smoke run
+    hands run_evaluation a cache mount, and no memory_cache/ dir appears under
+    the harness's dataset dir."""
     with tempfile.TemporaryDirectory() as td, _test_workspace():
         src = _mk_src_harness(td)
         hid = H._stage_harness(src)
@@ -414,27 +413,20 @@ def test_evaluate_harness_wires_memcache_dir_eval_not_smoke():
             asyncio.run(O.evaluate_harness(
                 hid, Path("/fake.sif"), datasets_config=ds_cfg,
                 split="test", model="gpt-5-mini", judge_model="gpt-5-mini",
-                max_sample_concurrent=1, memory_cache=True, progressive=False,
+                max_sample_concurrent=1, progressive=False,
             ))
-        finally:
-            O.run_evaluation = orig
-        assert calls[0]["memcache_dir"] is not None
-        expected_dir = paths.harnesses_dir / hid / "locomo" / "memory_cache"
-        assert calls[0]["memcache_dir"] == expected_dir and expected_dir.is_dir()
-
-        # smoke: never mounted
-        calls2 = []
-        O.run_evaluation = _fake_run_evaluation_factory(calls2)
-        try:
             asyncio.run(O.evaluate_harness(
                 hid, Path("/fake.sif"), datasets_config=ds_cfg,
                 split="search", smoke=True, model="gpt-5-mini",
                 judge_model="gpt-5-mini", max_sample_concurrent=1,
-                memory_cache=True, progressive=False,
+                progressive=False,
             ))
         finally:
             O.run_evaluation = orig
-        assert calls2[0]["memcache_dir"] is None
+        assert len(calls) == 2, calls
+        for call in calls:
+            assert "memcache_dir" not in call["kwargs"], call
+        assert not (paths.harnesses_dir / hid / "locomo" / "memory_cache").exists()
 
 
 def test_evaluate_harness_gauntlet_plan():
@@ -455,7 +447,6 @@ def test_evaluate_harness_gauntlet_plan():
                 datasets_config=ds_cfg,
                 split="test", model="gpt-5-mini", judge_model="gpt-5-mini",
                 max_sample_concurrent=1,
-                memory_cache=False,
             ))
         finally:
             O.run_evaluation = orig
@@ -484,7 +475,6 @@ def test_evaluate_harness_smoke_single_sanity_pass():
                 split="search", smoke=True,
                 model="gpt-5-mini", judge_model="gpt-5-mini",
                 max_sample_concurrent=1,
-                memory_cache=False,
             ))
         finally:
             O.run_evaluation = orig
@@ -517,7 +507,7 @@ def test_evaluate_harness_missing_metrics_degrades():
             per_ds = asyncio.run(O.evaluate_harness(
                 hid, Path("/fake.sif"), datasets_config=ds_cfg,
                 split="test", model="gpt-5-mini", judge_model="gpt-5-mini",
-                max_sample_concurrent=1, memory_cache=False,
+                max_sample_concurrent=1,
             ))
         finally:
             O.run_evaluation = orig

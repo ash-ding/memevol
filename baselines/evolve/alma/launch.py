@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import hashlib
 import importlib.util
 import inspect
 import json
@@ -80,22 +79,6 @@ def _write_error_score(output_run_dir: Path, error_info: str) -> None:
         json.dump(payload, f, indent=2, ensure_ascii=False)
 
 
-def _module_fingerprint(module_path: Path) -> str:
-    """sha256[:16] over the SINGLE staged memo file (name + content). alma
-    stages every memo into the shared memo_test/ dir, so the dir-scoped
-    common.memory_cache.harness_fingerprint would churn as sibling memos land;
-    a per-file fingerprint is stable within one launch.py run and distinct per
-    memo — exactly what the cross-stage cache needs to gate reuse."""
-    h = hashlib.sha256()
-    p = Path(module_path)
-    try:
-        h.update(p.name.encode("utf-8"))
-        h.update(p.read_bytes())
-    except OSError:
-        return ""
-    return h.hexdigest()[:16]
-
-
 async def main(
     module_path: str,
     memory_id: str,
@@ -113,7 +96,6 @@ async def main(
     step_index: int = 0,
     stages: Optional[dict] = None,
     single_stage: Optional[dict] = None,
-    memory_cache: bool = True,
 ):
     from common.evaluate import evaluate_memo
     from common.sampling import derive_sample_seed
@@ -154,8 +136,6 @@ async def main(
         stages=stages, single_stage=single_stage,
         max_sample_concurrent=max_sample_concurrent,
         sample_seed=sample_seed,
-        memory_cache=memory_cache,
-        memcache_fingerprint=_module_fingerprint(Path(module_path)),
         smoke=(mode == "check"),
         max_logs=max_logs, memo_sha=memory_id,
     )
@@ -201,8 +181,6 @@ if __name__ == "__main__":
                         help="JSON single-pass size block (progressive=false only; "
                              "same size fields as a stage, no threshold). REQUIRED "
                              "when --no-progressive; a null field = whole split.")
-    parser.add_argument("--memory_cache", action=argparse.BooleanOptionalAction, default=True,
-                        help="Cross-stage Phase-1 memory reuse in the gauntlet.")
 
     args = parser.parse_args()
     asyncio.run(main(
@@ -222,7 +200,6 @@ if __name__ == "__main__":
         step_index=args.step_index,
         stages=json.loads(args.stages) if args.stages else None,
         single_stage=json.loads(args.single_stage) if args.single_stage else None,
-        memory_cache=args.memory_cache,
     ))
 
     # Force immediate process termination. Python's normal shutdown runs

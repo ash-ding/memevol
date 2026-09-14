@@ -29,16 +29,6 @@ dataset: locomo                # which benchmark: dynamicmem | locomo | longmeme
 split: search                  # test | search (search = the training split used during evolution)
 progressive: false             # false = ONE single pass (sized by single_stage); true = staged stage1->2->3 gauntlet (sized by stages)
 sampling_seed: 42              # seeds the sampled subset (both paths; a no-op at whole-split)
-memory_cache: true             # cross-run Phase-1 memory reuse. Values:
-                               #   true      reuse a snapshot — INCLUDING one from a previous run; the cache
-                               #             is runs/memory_cache/<dataset>/<split>, NOT run-scoped, so a
-                               #             re-run skips the build. What you measure is yesterday's memory
-                               #   rebuild   build fresh ONCE this run, then let the later gauntlet stages
-                               #             reuse it and overwrite the stale entry — reproducible from scratch
-                               #   false     off entirely — every stage rebuilds
-                               # Any change to the method config invalidates an entry (the sidecar
-                               # fingerprints the resolved memo config), so two different configs can
-                               # never reuse each other's memory.
 
 # --- Shared eval knobs (the layer that makes scores comparable: the answerer
 #     and the judge are the same for every baseline) ---

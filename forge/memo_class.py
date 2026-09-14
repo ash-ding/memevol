@@ -51,29 +51,4 @@ class MemoClass(_CommonMemoClass):
         class MyHarness(MemoClass):
             async def build_memory_from_data(self, recorder) -> None: ...
             async def retrieve_memory_for_query(self, recorder) -> dict: ...
-
-    MEMORY CACHING (staged evaluation): the evaluator snapshots your built
-    memory after Phase 1 (per checkpoint for DynamicMem) and reuses it at
-    deeper stages instead of rebuilding — evals of your harness get much
-    faster/cheaper when your state is serializable. The DEFAULT snapshot
-    mechanism is `pickle` of the whole memo object, which works when your
-    state on `self` is plain data (dicts, lists, numpy arrays, BM25Okapi,
-    `common.llm.Agent`/`Embedding` config objects are all fine). Do NOT keep
-    unpicklable handles on `self` (open clients, locks, loaded torch models,
-    chromadb clients) — build such things lazily and cache them in attributes
-    you can drop, or override the two hooks below. If pickling fails, the
-    eval still runs; it just rebuilds memory at every stage.
     """
-
-    # ---- Optional memory-cache hooks -------------------------------------
-    # Override BOTH when the default pickle can't capture your state (e.g. a
-    # chromadb PersistentClient). `path` is a per-snapshot filename PREFIX —
-    # write/read any file(s) at `str(path) + <your suffix>`. Return True on
-    # success; returning False (the default) tells the evaluator to use its
-    # default pickle (save) or rebuild from scratch (load).
-
-    def save_memory(self, path) -> bool:
-        return False
-
-    def load_memory(self, path) -> bool:
-        return False

@@ -34,7 +34,6 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from common.memo_class import MemoClass
-from common.store_cache import DiskStoreCache
 
 from common.openai_usage import install as _install_openai_usage
 from baselines.harness.hipporag2.memo import app_log_to_passage
@@ -84,8 +83,7 @@ OUTPUTS_DIR = Path(__file__).resolve().parent / "outputs"
 # `embedding_model.dimension` (vector_store.py:39), which the APIEmbedder
 # answers for itself — so switching to a 1536-dim API embedder needs no second
 # knob. It does invalidate any index built at the old width; the per-user
-# LanceDB store is created with `clear_db=True`, so that resolves itself, but a
-# `memory_cache: true` gauntlet snapshot taken at the old dimension does NOT.
+# LanceDB store is created with `clear_db=True`, so that resolves itself.
 _ENV_FROM_CFG = {
     "embedding_model": "EMBEDDING_MODEL",
     "window_size": "WINDOW_SIZE",
@@ -144,7 +142,7 @@ def _entry_to_passage(entry: MemoryEntry) -> str:
     return "\n".join(parts)
 
 
-class SimpleMemMemo(DiskStoreCache, MemoClass):
+class SimpleMemMemo(MemoClass):
     # SimpleMem's own defaults @ db80b6a, except where the paper's value wins
     # (window_size) — see each comment.
     CONFIG_DEFAULTS = {
@@ -203,13 +201,6 @@ class SimpleMemMemo(DiskStoreCache, MemoClass):
         self._instance_id = uuid.uuid4().hex[:12]        # per-user LanceDB scoping
         self._next_id = 1                                # sequential Dialogue ids across BUILD calls
 
-    # -- memory-cache hooks (common/store_cache.py) --
-    _store_handle = "_system"
-
-    def _store_path(self):
-        """Per-user LanceDB directory — the whole of SimpleMem's persistent state."""
-        return OUTPUTS_DIR / self._instance_id
-
     def _ensure_system(self):
         if self._system is not None:
             return
@@ -231,8 +222,7 @@ class SimpleMemMemo(DiskStoreCache, MemoClass):
                 model=cfg["simplemem_llm_model"],
                 base_url=cfg["base_url"] or None,
                 db_path=save_dir,
-                # A restored LanceDB store must NOT be cleared (DiskStoreCache).
-                clear_db=not self.restored_from_cache,
+                clear_db=True,
                 enable_thinking=False,
                 use_streaming=False,
                 enable_planning=cfg["enable_planning"],

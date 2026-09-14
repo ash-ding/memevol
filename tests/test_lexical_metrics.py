@@ -280,7 +280,7 @@ def _run_locomo_eval(steps_per_user, patch_hook=None):
             memo_class=_M, dataset="locomo", split="test", progressive=False,
             single_stage={"n_conversations": 1, "n_qa": 2},
             out_dir=out_dir, qa_model="m", judge_model="m",
-            max_sample_concurrent=1, memory_cache=False))
+            max_sample_concurrent=1))
         return json.loads((out_dir / "score.json").read_text(encoding="utf-8"))
     finally:
         LoCoMoWorkflow.run_all_users = orig_run

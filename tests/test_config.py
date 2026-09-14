@@ -60,6 +60,18 @@ def test_resolve_non_mapping_yaml_raises():
     assert raised
 
 
+def test_reject_removed_keys():
+    from common.config import reject_removed_keys
+    reject_removed_keys({"dataset": "locomo"}, "ctx")   # no raise
+    reject_removed_keys(None, "ctx")                    # non-mapping: nothing to reject
+    try:
+        reject_removed_keys({"memory_cache": False}, "ctx")
+    except ValueError as e:
+        assert str(e).startswith("ctx: `memory_cache:`") and "Delete it" in str(e)
+    else:
+        raise AssertionError("expected ValueError for a removed key")
+
+
 def test_harness_frame_config_surface():
     # Harness baselines share ONE frame config (eval_harness.FRAME_KEYS, no
     # method knobs) and the shipped example passes exact validation as-is.
