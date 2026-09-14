@@ -1,4 +1,4 @@
-"""SimpleMem (arXiv 2510.xxxxx, https://github.com/aiming-lab/SimpleMem) as a
+"""SimpleMem (arXiv 2601.02553, https://github.com/aiming-lab/SimpleMem) as a
 retrieval MemoClass.
 
 BUILD: every ingestion unit becomes one SimpleMem ``Dialogue``; the vendored

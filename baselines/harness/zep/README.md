@@ -1,6 +1,6 @@
 # Zep baseline
 
-[Zep: A Temporal Knowledge Graph Architecture for Agent Memory](zep.pdf)
+[Zep: A Temporal Knowledge Graph Architecture for Agent Memory](https://arxiv.org/abs/2501.13956)
 (arXiv:2501.13956) as a ready-made memory system on the 3-hook `MemoClass`
 contract. Zep's memory engine is **Graphiti**; the baseline vendors and drives
 `graphiti_core` directly.
@@ -28,8 +28,9 @@ returned as `{"inline_memory_blocks": [...]}`. The shared QA agent answers —
 the retrieved context; hipporag2/amem pattern).
 
 **Backend: embedded FalkorDB Lite** (`falkordblite`, in-process, on-disk, no
-server) — each user gets its own `outputs/<uuid>.db` store (+ Graphiti `group_id`),
-so there is no cross-user state. This is the operational model of amem/simplemem/
+server) — each user gets its own `<db_root>/zep_falkordb/<uuid>.db` store (+ Graphiti
+`group_id`; `db_root` defaults to the system temp dir, see Caveats), so there is no
+cross-user state. This is the operational model of amem/simplemem/
 lightmem (pip-only, no daemon), not Graphiti's default Neo4j server.
 
 ## Setup
