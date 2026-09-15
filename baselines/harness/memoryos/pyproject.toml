@@ -26,9 +26,21 @@ dependencies = [
     "faiss-cpu",                   # mid_term.py / retriever.py: `import faiss`
     "sentence-transformers>=3.2.1",# utils.py: SentenceTransformer
     "transformers",                # ST backend
-    "torch",                       # ST dep
+    "torch==2.6.0",                   # ST dep. Newest CUDA 12.4 build — see [tool.uv.sources]
     "datasets",                    # HF datasets — sentence-transformers imports it eagerly
 ]
 
 [tool.uv]
 package = false   # this dir is an app env, not a buildable package
+
+# torch comes from PyTorch's CUDA 12.4 index, not PyPI: PyPI's Linux torch
+# wheels now bundle CUDA 13, which needs NVIDIA driver >= 580. A CUDA 12.4 build
+# runs on drivers >= 550 (e.g. penguin). 2.6.0 is the newest torch published for
+# cu124. `explicit` keeps every other package on PyPI.
+[tool.uv.sources]
+torch = { index = "pytorch-cu124" }
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
