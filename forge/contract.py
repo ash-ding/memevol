@@ -61,16 +61,14 @@ def load_harness_class(harness_dir: Path) -> Type[MemoClass]:
     except Exception as exc:
         raise HarnessError(f"Import failed: {type(exc).__name__}: {exc}") from exc
 
-    candidates = [
-        obj for _, obj in inspect.getmembers(module, inspect.isclass)
-        # select the class defined in this harness file; imported bases like
-        # forge.memo_class.MemoClass are no longer abstract, so an
-        # isabstract filter would wrongly match them.
-        if issubclass(obj, MemoClass) and obj.__module__ == module.__name__
-    ]
-    if not candidates:
-        raise HarnessError(f"No MemoClass subclass found in {harness_py}")
-    return candidates[0]
+    from common.memo_select import select_memo_class
+    # Only classes DEFINED in this harness file (not imported bases), concrete first.
+    defined = [obj for _, obj in inspect.getmembers(module, inspect.isclass)
+               if obj.__module__ == module.__name__]
+    try:
+        return select_memo_class(defined, str(harness_py))
+    except TypeError as exc:
+        raise HarnessError(str(exc)) from exc
 
 
 def validate(harness_dir: Path) -> None:

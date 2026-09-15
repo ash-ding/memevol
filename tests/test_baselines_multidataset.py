@@ -13,6 +13,14 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from common.memo_class import MemoClass  # noqa: E402
+
+
+class _PlainMemo(MemoClass):
+    """Minimal concrete memo (module level, so instances pickle)."""
+    async def build_memory_from_data(self, recorder): return None
+    async def retrieve_memory_for_query(self, recorder): return {}
+
 
 def test_shared_registry_resolves_all_datasets():
     from baselines.registry import REGISTRY, DATASETS, resolve
@@ -50,6 +58,7 @@ def test_base_workflow_default_answer_call_signature():
         return "ANSWER"
 
     class _Memo(MemoClass):
+        async def build_memory_from_data(self, r): return None
         async def retrieve_memory_for_query(self, r): return {}
         # use_memory_to_answer NOT overridden -> defaults to None (defers to agent)
 
@@ -118,6 +127,7 @@ def test_dynamicmem_default_answer_call_signature():
         return 1.0, "fake-judge", raw_answer, {}
 
     class _Memo(MemoClass):
+        async def build_memory_from_data(self, r): return None
         async def retrieve_memory_for_query(self, r): return {}
         # use_memory_to_answer NOT overridden -> defaults to None (defers to agent)
 
@@ -198,18 +208,17 @@ def test_memo_constructor_config():
     instances (the fresh-instance-per-user guarantee extends to config), and
     plain instances pickle without any class-anchoring magic."""
     import pickle
-    from common.memo_class import MemoClass
 
     cfg = {"model": "x", "k": 3}
-    a = MemoClass(config=cfg)
-    b = MemoClass(config=cfg)
+    a = _PlainMemo(config=cfg)
+    b = _PlainMemo(config=cfg)
     assert a.config == {"model": "x", "k": 3}
     # per-instance copy: mutating one instance (or the caller dict) leaks nowhere
     a.config["k"] = 99
     cfg["model"] = "mutated"
     assert b.config == {"model": "x", "k": 3}
     # zero-arg still works (forge-evolved harnesses are never handed a config)
-    assert MemoClass().config == {}
+    assert _PlainMemo().config == {}
     # plain instances pickle round-trip, config included
     restored = pickle.loads(pickle.dumps(a))
     assert restored.config["k"] == 99

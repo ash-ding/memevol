@@ -266,6 +266,7 @@ def _run_locomo_eval(steps_per_user, patch_hook=None):
         return recs, len(recs)
 
     class _M(MemoClass):
+        async def build_memory_from_data(self, r): return None
         async def retrieve_memory_for_query(self, r): return {}
 
     out_dir = Path(tempfile.mkdtemp(prefix="test_lexical_"))

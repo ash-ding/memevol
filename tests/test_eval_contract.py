@@ -13,26 +13,72 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 
-def test_three_hooks_optional_with_defaults():
+def test_build_and_retrieve_are_required_answer_is_optional():
     from common.memo_class import MemoClass
 
     class Bare(MemoClass):
-        pass  # overrides nothing — must be instantiable now (hooks non-abstract)
+        pass
 
-    m = Bare()
-    loop = asyncio.new_event_loop()
+    class Misspelled(MemoClass):
+        async def build_memory_from_data(self, recorder): return None
+        async def retrieve_memory_for_querry(self, recorder): return {}   # typo
 
-    class _Rec:
-        init = {"query": "q"}
+    for cls, missing in ((Bare, "build_memory_from_data"), (Misspelled, "retrieve_memory_for_query")):
+        try:
+            cls()
+        except TypeError as e:
+            assert missing in str(e), str(e)
+        else:
+            raise AssertionError(f"{cls.__name__} must not be instantiable")
 
-    assert loop.run_until_complete(m.build_memory_from_data(_Rec())) is None
-    assert loop.run_until_complete(m.retrieve_memory_for_query(_Rec())) == {}
-    assert loop.run_until_complete(m.use_memory_to_answer(_Rec(), {}, "PROMPT")) is None
+    class Minimal(MemoClass):
+        async def build_memory_from_data(self, recorder): return None
+        async def retrieve_memory_for_query(self, recorder): return {}
+
+    m = Minimal()
+    assert not hasattr(m, "database")
+    assert asyncio.new_event_loop().run_until_complete(m.use_memory_to_answer(None, {}, "PROMPT")) is None
+
+
+def test_harness_loaders_name_the_unimplemented_hook():
+    """Every loader of candidate / generated harness files picks the concrete
+    class and, when there is none, says which hook is missing."""
+    import tempfile
+    from pathlib import Path
+    from common.memo_select import select_memo_class
+    from forge.launch import _load_harness_class
+    from forge.contract import HarnessError, load_harness_class
+
+    with tempfile.TemporaryDirectory() as td:
+        d = Path(td)
+        (d / "harness.py").write_text(
+            "from forge.memo_class import MemoClass\n"
+            "class Half(MemoClass):\n"
+            "    async def build_memory_from_data(self, recorder): return None\n",
+            encoding="utf-8")
+        for load, exc in ((_load_harness_class, ImportError), (load_harness_class, HarnessError)):
+            try:
+                load(d)
+            except exc as e:
+                assert "retrieve_memory_for_query" in str(e) and "Half" in str(e), str(e)
+            else:
+                raise AssertionError(f"{load.__name__} accepted an abstract harness")
+
+    from common.memo_class import MemoClass
+
+    class _AbstractHelper(MemoClass):
+        async def build_memory_from_data(self, recorder): return None
+
+    class _Concrete(_AbstractHelper):
+        async def retrieve_memory_for_query(self, recorder): return {}
+
+    # an abstract helper base listed first is skipped, not returned
+    assert select_memo_class([MemoClass, _AbstractHelper, _Concrete], "x.py") is _Concrete
 
 
 def test_forge_loads_the_harness_class_not_the_base():
-    """De-abstracting the base must not make the class-discriminator pick the
-    imported base instead of the harness's own class."""
+    """The class-discriminator must pick the harness's own class, not the
+    imported base."""
     from pathlib import Path
     from forge.launch import _load_harness_class
     from forge.contract import load_harness_class
@@ -51,6 +97,7 @@ def test_phase1_update_calls_build_memory_once():
     class _Memo(MemoClass):
         async def build_memory_from_data(self, recorder):
             calls.append(list(recorder.init.get("items", [])))
+        async def retrieve_memory_for_query(self, recorder): return {}
 
     # minimal BaseWorkflow with the 7 abstract hooks stubbed + a recorder that
     # stores init under "items" via phase1_log_init.
@@ -78,11 +125,15 @@ def test_use_memory_to_answer_used_else_agent():
     from common.workflow import BaseWorkflow  # noqa: F401 (import proves module loads post-refactor)
     from common.memo_class import MemoClass
 
-    class _Answering(MemoClass):
+    class _Base(MemoClass):
+        async def build_memory_from_data(self, recorder): return None
+        async def retrieve_memory_for_query(self, recorder): return {}
+
+    class _Answering(_Base):
         async def use_memory_to_answer(self, recorder, retrieved, prompt):
             return "MEMO:" + prompt
 
-    class _Deferring(MemoClass):
+    class _Deferring(_Base):
         pass  # use_memory_to_answer default None → agent answers
 
     loop = asyncio.new_event_loop()
@@ -149,6 +200,8 @@ def test_dynamicmem_ingests_each_checkpoint_segment_from_scratch():
         async def build_memory_from_data(self, recorder):
             configs.append(self.config.get("tag"))
             batches.append(len(recorder.init.get("app_logs", [])))
+
+        async def retrieve_memory_for_query(self, recorder): return {}
 
     user_dir = str(PROJECT_ROOT / "benchmarks" / "dynamicmem" / "user_data" / "001_user_001")
     # no items sampled → pure Phase-1 exercise, no QA/judge calls

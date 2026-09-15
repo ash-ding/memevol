@@ -132,19 +132,20 @@ overlay during search.
 
 Everything this repo evaluates — forge-evolved harnesses AND ready-made
 baseline memory systems — is a subclass of
-[`common.memo_class.MemoClass`](common/memo_class.py) implementing
-three optional-override hooks:
+[`common.memo_class.MemoClass`](common/memo_class.py). BUILD and RETRIEVE
+are required (abstract — a missing or misspelled hook fails when the harness
+is loaded, naming the hook); ANSWER is optional:
 
 ```python
 class MyMemory(MemoClass):
 
     async def build_memory_from_data(self, recorder) -> None:
-        """BUILD. recorder.init holds the data newly visible for THIS call.
+        """BUILD (required). recorder.init holds the data newly visible for THIS call.
         Called once per visible-data batch (per checkpoint for DynamicMem);
         accumulate across calls and choose your own ingestion granularity."""
 
     async def retrieve_memory_for_query(self, recorder) -> Dict:
-        """RETRIEVE. recorder.init holds the query (+ per-benchmark metadata).
+        """RETRIEVE (required). recorder.init holds the query (+ per-benchmark metadata).
         Return the dict fed to the QA agent. Must be READ-ONLY w.r.t. memory
         state (DynamicMem interleaves queries with ingestion at checkpoints)."""
 

@@ -36,7 +36,6 @@ _project_root = Path(__file__).resolve().parents[3]
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
-from common.memo_class import MemoClass
 from baselines.registry import DATASETS
 from common.logger import get_logger
 
@@ -46,8 +45,9 @@ log = get_logger("main", level_styles={
 })
 
 
-def find_subclass_in_file(file_path: str, base_class: type):
-    """Dynamically load a Python file and return the first subclass of base_class."""
+def find_memo_class_in_file(file_path: str):
+    """Dynamically load a Python file and return its first concrete MemoClass
+    subclass (an unimplemented BUILD/RETRIEVE hook is reported by name)."""
     spec = importlib.util.spec_from_file_location("dynamic_module", file_path)
     if spec is None:
         raise ImportError(f"Cannot find spec for file {file_path}")
@@ -55,13 +55,9 @@ def find_subclass_in_file(file_path: str, base_class: type):
     sys.modules["dynamic_module"] = module
     spec.loader.exec_module(module)
 
-    subclasses = [
-        obj for name, obj in inspect.getmembers(module, inspect.isclass)
-        if issubclass(obj, base_class) and obj is not base_class
-    ]
-    if not subclasses:
-        raise ValueError(f"No class in {file_path} inherits from {base_class.__name__}")
-    return subclasses[0]
+    from common.memo_select import select_memo_class
+    return select_memo_class((obj for _, obj in inspect.getmembers(module, inspect.isclass)),
+                             str(file_path))
 
 
 def _write_error_score(output_run_dir: Path, error_info: str) -> None:
@@ -105,7 +101,7 @@ async def main(
 
     # 1. Load MemoClass class
     try:
-        memo_class = find_subclass_in_file(module_path, MemoClass)
+        memo_class = find_memo_class_in_file(module_path)
     except Exception as exc:
         err = f"[{type(exc).__name__}] {exc}\n{traceback.format_exc()}"
         log.warning(f"Failed to load memo structure {memory_id}: {exc}")
