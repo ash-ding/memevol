@@ -25,13 +25,13 @@ Ingestion units (recorder.init dispatch, cf. hipporag2's _init_to_passages):
 """
 from __future__ import annotations
 
-import contextlib
+import asyncio
 import json
-import os
 from typing import Dict, List, Tuple
 
 from common.memo_class import MemoClass
 from common.openai_usage import install as _install_openai_usage
+from baselines.harness.concurrency import model_load_lock, quiet_stdout
 from baselines.harness.hipporag2.memo import app_log_to_passage
 from baselines.harness.model_config import (
     install_embedder_factory, install_openai_param_normalisation,
@@ -133,29 +133,40 @@ class AMemMemo(MemoClass):
     def _ensure_system(self):
         if self._system is not None:
             return
-        model = self.config["amem_llm_model"]
-        # A-mem's embedder IS a constructor parameter (AgenticMemorySystem's
-        # `model_name`), so the config key needs no special plumbing: the name
-        # flows to SimpleEmbeddingRetriever, which calls the patched
-        # SentenceTransformer factory installed above. That factory both shares
-        # ONE embedder across users (a fresh MemoClass is built per user, so
-        # otherwise the weights reload per conversation) and returns an
-        # APIEmbedder when the name is a `text-embedding-*` model.
-        embedder = self.config["amem_embedding_model"]
-        # Mirrors test_advanced.py::advancedMemAgent.__init__ (openai backend):
-        # one AgenticMemorySystem + a separate retriever_llm, same model.
-        self._system = AgenticMemorySystem(
-            model_name=embedder, llm_backend="openai", llm_model=model,
-        )
-        self._retriever_llm = LLMController(backend="openai", model=model, api_key=None)
+        # One user at a time: construction loads local models (concurrency.model_load_lock).
+        with model_load_lock:
+            model = self.config["amem_llm_model"]
+            # A-mem's embedder IS a constructor parameter (AgenticMemorySystem's
+            # `model_name`), so the config key needs no special plumbing: the name
+            # flows to SimpleEmbeddingRetriever, which calls the patched
+            # SentenceTransformer factory installed above. That factory both shares
+            # ONE embedder across users (a fresh MemoClass is built per user, so
+            # otherwise the weights reload per conversation) and returns an
+            # APIEmbedder when the name is a `text-embedding-*` model.
+            embedder = self.config["amem_embedding_model"]
+            # Mirrors test_advanced.py::advancedMemAgent.__init__ (openai backend):
+            # one AgenticMemorySystem + a separate retriever_llm, same model.
+            self._system = AgenticMemorySystem(
+                model_name=embedder, llm_backend="openai", llm_model=model,
+            )
+            self._retriever_llm = LLMController(backend="openai", model=model, api_key=None)
+
+    # A-mem is synchronous end to end (LLM calls, embedding, evolution): each hook
+    # runs its body on a worker thread so other users keep going meanwhile
+    # (see baselines/harness/concurrency.py).
 
     async def build_memory_from_data(self, recorder) -> None:
+        await asyncio.to_thread(self._build, recorder)
+
+    async def retrieve_memory_for_query(self, recorder) -> Dict:
+        return await asyncio.to_thread(self._retrieve, recorder)
+
+    def _build(self, recorder) -> None:
         self._ensure_system()
         units = _init_to_note_units(recorder.init)
         # A-mem prints every analysis + evolution prompt; silence the flood
-        # (console-output-only adaptation — the algorithm is untouched). The
-        # block contains no awaits, so redirect_stdout can't leak across tasks.
-        with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
+        # (console-output-only adaptation — the algorithm is untouched).
+        with quiet_stdout():
             for content, t in units:
                 self._system.add_note(content, time=t)
 
@@ -169,11 +180,11 @@ class AMemMemo(MemoClass):
         except Exception:
             return response.strip()
 
-    async def retrieve_memory_for_query(self, recorder) -> Dict:
+    def _retrieve(self, recorder) -> Dict:
         self._ensure_system()
         query = recorder.init.get("query", "")
         k = int(self.config["retrieve_k"])
-        with open(os.devnull, "w") as devnull, contextlib.redirect_stdout(devnull):
+        with quiet_stdout():
             keywords = self._rewrite_query(query)   # LLM call
             memory_str = self._system.find_related_memories_raw(keywords, k=k)
         if not memory_str:   # upstream returns [] when the store is empty

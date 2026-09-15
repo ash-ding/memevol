@@ -177,13 +177,15 @@ prompts, which would invalidate every historical LoCoMo number in this repo.
 
 ### Cost and concurrency
 
-Phase 1 is 20–43 min per conversation. `Memoryos.add_memory` is a blocking
-synchronous call inside an async hook, so it holds the event loop and the
-nominal `max_sample_concurrent: 3` does not actually overlap users — the build is
-serial. It is left that way on purpose: `src/memoryos/utils.py`'s
-`_embedding_cache` evicts by listing keys and deleting them one by one, which
-races under threads, so wrapping the call in `asyncio.to_thread` would trade a
-known cost for an unknown corruption.
+Phase 1 is 20–43 min per conversation (measured when users still ran one at a
+time). `Memoryos.add_memory` is synchronous, so each hook runs it on a worker
+thread and up to `max_sample_concurrent: 3` conversations overlap. That needed
+one fix outside `src/`: `src/memoryos/utils.py`'s `get_embedding` shares a
+process-global `_embedding_cache` that evicts by listing keys and deleting them
+one by one, which races under threads (a double `del` raises KeyError). memo.py
+wraps the function in a single lock and swaps that locked version into every
+module that imported it, so embedding lookups run one at a time while the LLM
+calls around them overlap.
 
 `mid_term_capacity: 200` binds in **1 of 6** conversations (segment counts:
 79 / 109 / 155 / 171 / 179 / **200** — landing exactly on the cap is the LFU

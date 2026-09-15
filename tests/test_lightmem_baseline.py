@@ -205,6 +205,75 @@ def test_memo_implements_the_three_hook_contract():
     assert "use_memory_to_answer" not in vars(LightMemMemo)
 
 
+def test_system_construction_holds_the_model_load_lock():
+    """Users' hooks run on worker threads and construction loads Hugging Face
+    models (LLMlingua-2, the embedder); two loads at once corrupt each other
+    ("Cannot copy out of meta tensor"), so construction takes turns."""
+    import threading
+    import time
+    from baselines.harness import concurrency
+    from baselines.harness.lightmem import memo as lm
+
+    active, peak, held = [0], [0], []
+    guard = threading.Lock()
+
+    def fake_from_config(config):
+        held.append(concurrency.model_load_lock._is_owned())
+        with guard:
+            active[0] += 1
+            peak[0] = max(peak[0], active[0])
+        time.sleep(0.1)
+        with guard:
+            active[0] -= 1
+        return object()
+
+    real = lm.LightMemory.from_config
+    lm.LightMemory.from_config = staticmethod(fake_from_config)
+    try:
+        memos = [lm.LightMemMemo(config=_resolved()) for _ in range(3)]
+        threads = [threading.Thread(target=m._ensure_system) for m in memos]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    finally:
+        lm.LightMemory.from_config = real
+    assert held == [True, True, True], held
+    assert peak[0] == 1, peak[0]
+
+
+def test_hooks_run_off_the_event_loop():
+    """The vendored system is synchronous; the hooks hand it to a worker thread,
+    so several users' calls overlap instead of queueing behind one another."""
+    import asyncio, time
+    from baselines.harness.lightmem.memo import LightMemMemo
+
+    def slow(result):
+        def call(recorder):
+            time.sleep(0.4)
+            return result
+        return call
+
+    memos = []
+    for _ in range(3):
+        m = LightMemMemo(config=_resolved())
+        m._build, m._retrieve = slow(None), slow({})   # stand-ins for the synchronous bodies
+        memos.append(m)
+    rec = SimpleNamespace(init={"query": "q"})
+
+    async def all_users():
+        t0 = time.perf_counter()
+        await asyncio.gather(*(m.build_memory_from_data(rec) for m in memos))
+        build = time.perf_counter() - t0
+        t0 = time.perf_counter()
+        out = await asyncio.gather(*(m.retrieve_memory_for_query(rec) for m in memos))
+        return build, time.perf_counter() - t0, out
+
+    build, retrieve, out = asyncio.run(all_users())
+    assert build < 0.9 and retrieve < 0.9, (build, retrieve)   # serial would take 1.2s each
+    assert out == [{}, {}, {}]
+
+
 if __name__ == "__main__":
     failed = 0
     for name, fn in sorted(list(globals().items())):

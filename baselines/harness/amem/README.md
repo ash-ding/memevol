@@ -153,11 +153,13 @@ cannot be counted is the local **all-MiniLM-L6-v2** embedder — not an API
 call, so no usage object exists; `run_record.json` names it with its device,
 and `phase_seconds` is the only cost figure that covers it.
 
-Build is **serial + blocking** (A-mem is synchronous), and
-`consolidate_memories` re-embeds the whole accumulated corpus every 100
-evolutions (≈ O(n²) local MiniLM work), so per-note wall-clock GROWS with
-corpus size (~3 s/note at ~500 notes, more beyond). Samples run at
-`max_sample_concurrent` (default 3).
+Within one sample the build is **serial** (A-mem is synchronous: one note at a
+time), and `consolidate_memories` re-embeds the whole accumulated corpus every
+100 evolutions (≈ O(n²) local MiniLM work), so per-note wall-clock GROWS with
+corpus size (~3 s/note at ~500 notes, more beyond). Across samples, the hooks
+run A-mem on worker threads, so up to `max_sample_concurrent` (default 3)
+samples build at once; the shared MiniLM model encodes one call at a time
+(see `baselines/harness/concurrency.py`).
 
 ### Full held-out test-set estimate (per dataset)
 
@@ -171,13 +173,14 @@ $2.00 per 1M in/out (plug in real rates — the total is gpt-4o-mini-build-domin
 | longmemeval_s (200 q) | ~101 k | 200 | ~$40 | ~2.5 days |
 
 - **≈ $55 total, ≈ 3 days wall-clock** across the three benchmarks (dominated
-  by longmemeval_s's serial build). The per-message note model + O(n²)
+  by longmemeval_s's serial per-note build). The per-message note model + O(n²)
   consolidate is what makes amem expensive; scaling it further would need
   engineering changes (coarser ingestion / lower consolidate frequency) that
   would depart from the faithful method.
 
-Time, not money, is the binding constraint. The build is API-bound, so raising
-`max_sample_concurrent` (within OpenAI rate limits) is the main lever.
+Time, not money, is the binding constraint. The build is mostly API-bound, so
+raising `max_sample_concurrent` (within OpenAI rate limits) is the main lever;
+the wall-clock estimates above predate cross-sample overlap and are upper bounds.
 
 Tests: `cd baselines/harness/amem && uv run python tests/test_amem_baseline.py`
 (amem's own project — heavy imports; the repo-root `.venv/` is dev/test

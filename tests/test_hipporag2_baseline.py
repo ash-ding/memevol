@@ -5,6 +5,7 @@ project (baselines/harness/hipporag2/.venv/), not the repo-root dev env:
     uv run --project baselines/harness/hipporag2 python tests/test_hipporag2_baseline.py
 """
 import sys, traceback
+from types import SimpleNamespace
 from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -116,6 +117,38 @@ def main():
     print(f"\n{len(tests) - len(failed)}/{len(tests)} passed")
     if failed:
         print("failed:", ", ".join(failed)); sys.exit(1)
+
+
+def test_hooks_run_off_the_event_loop():
+    """The vendored system is synchronous; the hooks hand it to a worker thread,
+    so several users' calls overlap instead of queueing behind one another."""
+    import asyncio, time
+    from baselines.harness.hipporag2.memo import HippoRAGMemo
+
+    def slow(result):
+        def call(recorder):
+            time.sleep(0.4)
+            return result
+        return call
+
+    memos = []
+    for _ in range(3):
+        m = HippoRAGMemo(config=_resolved())
+        m._build, m._retrieve = slow(None), slow({})   # stand-ins for the synchronous bodies
+        memos.append(m)
+    rec = SimpleNamespace(init={"query": "q"})
+
+    async def all_users():
+        t0 = time.perf_counter()
+        await asyncio.gather(*(m.build_memory_from_data(rec) for m in memos))
+        build = time.perf_counter() - t0
+        t0 = time.perf_counter()
+        out = await asyncio.gather(*(m.retrieve_memory_for_query(rec) for m in memos))
+        return build, time.perf_counter() - t0, out
+
+    build, retrieve, out = asyncio.run(all_users())
+    assert build < 0.9 and retrieve < 0.9, (build, retrieve)   # serial would take 1.2s each
+    assert out == [{}, {}, {}]
 
 
 if __name__ == "__main__":

@@ -28,6 +28,7 @@ Ingestion units (recorder.init dispatch, cf. hipporag2's _init_to_passages):
 """
 from __future__ import annotations
 
+import asyncio
 import shutil
 import sys
 import uuid
@@ -35,6 +36,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from common.memo_class import MemoClass
+from baselines.harness.concurrency import model_load_lock
 
 from common.openai_usage import install as _install_openai_usage
 from baselines.harness.hipporag2.memo import app_log_to_passage
@@ -177,28 +179,40 @@ class Mem0Memo(MemoClass):
     def _ensure_system(self) -> None:
         if self._memory is not None:
             return
-        cfg = self.config
-        store = OUTPUTS_DIR / self._instance_id
-        if store.exists():
-            shutil.rmtree(store, ignore_errors=True)
-        store.mkdir(parents=True, exist_ok=True)
-        llm_conf: Dict[str, Any] = {"model": cfg["mem0_llm_model"]}
-        if cfg["base_url"]:
-            llm_conf["openai_base_url"] = cfg["base_url"]
-        self._memory = Memory.from_config({
-            # Embedded Qdrant on disk — per-user collection, no server process.
-            "vector_store": {"provider": "qdrant", "config": {
-                "collection_name": f"c_{self._instance_id}",
-                "path": str(store / "qdrant"),
-                "on_disk": True,
-            }},
-            "llm": {"provider": "openai", "config": llm_conf},
-            "embedder": {"provider": "openai",
-                         "config": {"model": cfg["embedding_model"]}},
-            "history_db_path": str(store / "history.db"),
-        })
+        # One user at a time: construction loads local models (concurrency.model_load_lock).
+        with model_load_lock:
+            cfg = self.config
+            store = OUTPUTS_DIR / self._instance_id
+            if store.exists():
+                shutil.rmtree(store, ignore_errors=True)
+            store.mkdir(parents=True, exist_ok=True)
+            llm_conf: Dict[str, Any] = {"model": cfg["mem0_llm_model"]}
+            if cfg["base_url"]:
+                llm_conf["openai_base_url"] = cfg["base_url"]
+            self._memory = Memory.from_config({
+                # Embedded Qdrant on disk — per-user collection, no server process.
+                "vector_store": {"provider": "qdrant", "config": {
+                    "collection_name": f"c_{self._instance_id}",
+                    "path": str(store / "qdrant"),
+                    "on_disk": True,
+                }},
+                "llm": {"provider": "openai", "config": llm_conf},
+                "embedder": {"provider": "openai",
+                             "config": {"model": cfg["embedding_model"]}},
+                "history_db_path": str(store / "history.db"),
+            })
+
+    # Mem0's Memory API is synchronous (fact extraction LLM calls, embedding,
+    # Qdrant): each hook runs its body on a worker thread so other users keep
+    # going meanwhile (see baselines/harness/concurrency.py).
 
     async def build_memory_from_data(self, recorder) -> None:
+        await asyncio.to_thread(self._build, recorder)
+
+    async def retrieve_memory_for_query(self, recorder) -> Dict:
+        return await asyncio.to_thread(self._retrieve, recorder)
+
+    def _build(self, recorder) -> None:
         self._ensure_system()
         messages = _init_to_messages(recorder.init)
         if not messages:
@@ -212,7 +226,7 @@ class Mem0Memo(MemoClass):
             self._memory.add(messages[i:i + size], user_id=self._user_id,
                              infer=bool(self.config["infer"]))
 
-    async def retrieve_memory_for_query(self, recorder) -> Dict:
+    def _retrieve(self, recorder) -> Dict:
         self._ensure_system()
         query = str(recorder.init.get("query", ""))
         res = self._memory.search(

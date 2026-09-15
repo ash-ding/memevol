@@ -46,6 +46,7 @@ from typing import Any, Dict, List, Optional
 from common.memo_class import MemoClass
 from common.openai_usage import install as _install_openai_usage
 from baselines.harness.hipporag2.memo import app_log_to_passage
+from baselines.harness.concurrency import serialize_calls
 from baselines.harness.model_config import (
     api_embedding_dims, install_openai_param_normalisation, is_api_embedding_model,
     resolve_device,
@@ -118,7 +119,9 @@ def get_bge_embedder(model_name: str, device: str | None = None):
     key = (model_name, device)
     if key not in _embedder_cache:
         from sentence_transformers import SentenceTransformer
-        _embedder_cache[key] = SentenceTransformer(model_name, device=device)
+        # Users encode through the default executor concurrently (BGEM3Embedder):
+        # one encode at a time on the shared model — see concurrency.serialize_calls.
+        _embedder_cache[key] = serialize_calls(SentenceTransformer(model_name, device=device), "encode")
     return _embedder_cache[key]
 
 
@@ -128,7 +131,9 @@ def get_bge_reranker(model_name: str, device: str | None = None):
     key = (model_name, device)
     if key not in _reranker_cache:
         from sentence_transformers import CrossEncoder
-        _reranker_cache[key] = CrossEncoder(model_name, device=device)
+        # graphiti's BGERerankerClient.rank runs `predict` in the default executor,
+        # so concurrent users would share it: one predict at a time.
+        _reranker_cache[key] = serialize_calls(CrossEncoder(model_name, device=device), "predict")
     return _reranker_cache[key]
 
 

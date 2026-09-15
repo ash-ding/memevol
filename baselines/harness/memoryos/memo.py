@@ -34,7 +34,7 @@ per turn, which is also what the upstream LoCoMo scripts do:
 """
 from __future__ import annotations
 
-import contextlib
+import asyncio
 import os
 import shutil
 import sys
@@ -43,13 +43,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from common.memo_class import MemoClass
+from baselines.harness.concurrency import model_load_lock, quiet_stdout, serialize_calls
 from baselines.harness.hipporag2.memo import app_log_to_passage
 from baselines.harness.model_config import (
     get_embedder, install_openai_param_normalisation,
 )
 
 from common.openai_usage import install as _install_openai_usage
-from baselines.harness.hipporag2.memo import app_log_to_passage
 
 # The vendored utils.py builds its own `openai` client; patching the SDK
 # boundary captures its calls with ZERO edits under src/.
@@ -74,6 +74,20 @@ for _p in (str(_SRC / "memoryos"), str(_SRC)):
 
 from memoryos import Memoryos            # noqa: E402  (vendored, byte-identical)
 from memoryos import utils as _mos_utils  # noqa: E402  (for the embedder seed below)
+from memoryos import long_term as _mos_long_term, mid_term as _mos_mid_term  # noqa: E402
+
+# The hooks run on worker threads, so several users call `get_embedding` at
+# once. Its process-global `_embedding_cache` is not thread-safe: a hit is
+# `if key in cache: return cache[key]`, and past 10000 entries it evicts by
+# snapshotting the first 1000 keys and `del`-ing them one by one — two threads
+# evicting together delete the same key twice (KeyError), and an eviction
+# between another thread's `in` and `[]` fails that lookup. One lock around the
+# whole function makes it safe without editing utils.py. long_term / mid_term
+# imported the function by name, so their references are swapped too. The
+# cost is small: local encodes are serialized anyway and the LLM calls around
+# them still overlap.
+serialize_calls(_mos_utils, "get_embedding")
+_mos_long_term.get_embedding = _mos_mid_term.get_embedding = _mos_utils.get_embedding
 
 OUTPUTS_DIR = Path(__file__).resolve().parent / "outputs"
 
@@ -241,49 +255,58 @@ class MemoryOSMemo(MemoClass):
     def _ensure_system(self) -> None:
         if self._memo is not None:
             return
-        cfg = self.config
-        _seed_embedder(cfg["memoryos_embedding_model"])
-        save_dir = OUTPUTS_DIR / self._instance_id
-        if save_dir.exists():
-            shutil.rmtree(save_dir, ignore_errors=True)
-        save_dir.mkdir(parents=True, exist_ok=True)
-        with open(os.devnull, "w") as devnull, \
-                contextlib.redirect_stdout(devnull):
-            self._memo = Memoryos(
-                user_id=f"u_{self._instance_id}",
-                assistant_id=f"a_{self._instance_id}",
-                openai_api_key=None,   # credential: the OpenAI SDK reads it from the environment
-                openai_base_url=cfg["base_url"] or "",
-                data_storage_path=str(save_dir),
-                llm_model=cfg["memoryos_llm_model"],
-                short_term_capacity=cfg["short_term_capacity"],
-                mid_term_capacity=cfg["mid_term_capacity"],
-                mid_term_heat_threshold=cfg["mid_term_heat_threshold"],
-                mid_term_similarity_threshold=cfg["mid_term_similarity_threshold"],
-                retrieval_queue_capacity=cfg["retrieval_queue_capacity"],
-                long_term_knowledge_capacity=cfg["long_term_knowledge_capacity"],
-            )
+        # One user at a time: construction loads local models (concurrency.model_load_lock).
+        with model_load_lock:
+            cfg = self.config
+            _seed_embedder(cfg["memoryos_embedding_model"])
+            save_dir = OUTPUTS_DIR / self._instance_id
+            if save_dir.exists():
+                shutil.rmtree(save_dir, ignore_errors=True)
+            save_dir.mkdir(parents=True, exist_ok=True)
+            with quiet_stdout():
+                self._memo = Memoryos(
+                    user_id=f"u_{self._instance_id}",
+                    assistant_id=f"a_{self._instance_id}",
+                    openai_api_key=None,   # credential: the OpenAI SDK reads it from the environment
+                    openai_base_url=cfg["base_url"] or "",
+                    data_storage_path=str(save_dir),
+                    llm_model=cfg["memoryos_llm_model"],
+                    short_term_capacity=cfg["short_term_capacity"],
+                    mid_term_capacity=cfg["mid_term_capacity"],
+                    mid_term_heat_threshold=cfg["mid_term_heat_threshold"],
+                    mid_term_similarity_threshold=cfg["mid_term_similarity_threshold"],
+                    retrieval_queue_capacity=cfg["retrieval_queue_capacity"],
+                    long_term_knowledge_capacity=cfg["long_term_knowledge_capacity"],
+                )
         # No dimension knob is needed: MemoryOS sizes its FAISS indexes from the
         # embedding array itself (`dim = embeddings_np.shape[1]`, long_term.py
         # and mid_term.py), so a 1536-dim API embedder drops straight in.
 
+    # MemoryOS is synchronous (LLM summarisation, embedding, FAISS, JSON
+    # persistence): each hook runs its body on a worker thread so other users keep
+    # going meanwhile (see baselines/harness/concurrency.py).
+
     async def build_memory_from_data(self, recorder) -> None:
+        await asyncio.to_thread(self._build, recorder)
+
+    async def retrieve_memory_for_query(self, recorder) -> Dict:
+        return await asyncio.to_thread(self._retrieve, recorder)
+
+    def _build(self, recorder) -> None:
         self._ensure_system()
         pages = _pairs_from_init(recorder.init)
         # add_memory drives the whole update chain (STM append -> FIFO ->
         # MTM segmentation -> heat -> LPM distillation), including its LLM calls.
-        with open(os.devnull, "w") as devnull, \
-                contextlib.redirect_stdout(devnull):
+        with quiet_stdout():
             for user_input, agent_response, when in pages:
                 self._memo.add_memory(user_input=user_input,
                                       agent_response=agent_response,
                                       timestamp=when or None)
 
-    async def retrieve_memory_for_query(self, recorder) -> Dict:
+    def _retrieve(self, recorder) -> Dict:
         self._ensure_system()
         query = str(recorder.init.get("query", ""))
-        with open(os.devnull, "w") as devnull, \
-                contextlib.redirect_stdout(devnull):
+        with quiet_stdout():
             res = self._memo.retriever.retrieve_context(user_query=query,
                                                         user_id=self._memo.user_id)
             stm = self._memo.short_term_memory.get_all()

@@ -192,9 +192,10 @@ built at the old width.
   `run_record.json` names both models with their device, and `phase_seconds`
   is the only cost figure that covers them. A cost comparison against another
   baseline must say it covers API calls only.
-- Build/retrieve are synchronous + blocking, so users don't overlap under
-  `max_sample_concurrent` (a blocking hook body stalls the event loop) — the
-  same profile as amem/simplemem.
+- LightMem is synchronous, so each hook runs it on a worker thread and up to
+  `max_sample_concurrent` users overlap. The shared local models run one call at
+  a time, so the gain comes from the overlapping LLM calls (see
+  `baselines/harness/concurrency.py`) — the same profile as amem/simplemem.
 
 ## Validation status
 

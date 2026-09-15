@@ -24,6 +24,7 @@ provenance. Previously an editable install of an external checkout):
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 import uuid
@@ -31,6 +32,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from common.memo_class import MemoClass
+from baselines.harness.concurrency import model_load_lock
 
 # `import hipporag` must resolve to the byte-identical vendored copy under src/,
 # not to an editable install of an external checkout (which is how this baseline
@@ -138,26 +140,38 @@ class HippoRAGMemo(MemoClass):
     def _ensure_hippo(self):
         if self._hippo is not None:
             return
-        cfg = self.config
-        factory = cfg.get("_hippo_factory")
-        embedding = cfg["embedding"]
-        save_dir = str(OUTPUTS_DIR / f"{self._instance_id}_{embedding.replace('/', '_')}")
-        if factory is not None:
-            self._hippo = factory(save_dir=save_dir)
-            return
-        from hipporag import HippoRAG
-        from hipporag.utils.config_utils import BaseConfig
-        is_local = "text-embedding" not in embedding
-        conf = BaseConfig(
-            llm_name=cfg["hipporag2_llm_model"],
-            embedding_model_name=embedding,
-            save_dir=save_dir, response_format=None, temperature=1, seed=None,
-            embedding_batch_size=cfg["embedding_batch_size"] or (4 if is_local else 16),
-            embedding_model_dtype=cfg["embedding_dtype"] or ("float16" if is_local else "auto"),
-        )
-        self._hippo = HippoRAG(global_config=conf)
+        # One user at a time: construction loads local models (concurrency.model_load_lock).
+        with model_load_lock:
+            cfg = self.config
+            factory = cfg.get("_hippo_factory")
+            embedding = cfg["embedding"]
+            save_dir = str(OUTPUTS_DIR / f"{self._instance_id}_{embedding.replace('/', '_')}")
+            if factory is not None:
+                self._hippo = factory(save_dir=save_dir)
+                return
+            from hipporag import HippoRAG
+            from hipporag.utils.config_utils import BaseConfig
+            is_local = "text-embedding" not in embedding
+            conf = BaseConfig(
+                llm_name=cfg["hipporag2_llm_model"],
+                embedding_model_name=embedding,
+                save_dir=save_dir, response_format=None, temperature=1, seed=None,
+                embedding_batch_size=cfg["embedding_batch_size"] or (4 if is_local else 16),
+                embedding_model_dtype=cfg["embedding_dtype"] or ("float16" if is_local else "auto"),
+            )
+            self._hippo = HippoRAG(global_config=conf)
+
+    # HippoRAG is synchronous (OpenIE LLM calls, embedding, graph build, PPR):
+    # each hook runs its body on a worker thread so other users keep going
+    # meanwhile (see baselines/harness/concurrency.py).
 
     async def build_memory_from_data(self, recorder) -> None:
+        await asyncio.to_thread(self._build, recorder)
+
+    async def retrieve_memory_for_query(self, recorder) -> Dict:
+        return await asyncio.to_thread(self._retrieve, recorder)
+
+    def _build(self, recorder) -> None:
         # Called once (all_at_once) for locomo/longmemeval; per checkpoint for
         # DynamicMem TCE — accumulate + index each new segment.
         self._ensure_hippo()
@@ -166,7 +180,7 @@ class HippoRAGMemo(MemoClass):
         if new:
             self._hippo.index(docs=new)   # HippoRAG.index is additive (verified: dedup-by-hash upsert)
 
-    async def retrieve_memory_for_query(self, recorder) -> Dict:
+    def _retrieve(self, recorder) -> Dict:
         self._ensure_hippo()   # defensive no-op if build_memory_from_data already ran
         query = recorder.init.get("query", "")
         k = int(self.config["top_k"])

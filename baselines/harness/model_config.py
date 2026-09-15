@@ -231,23 +231,37 @@ def get_embedder(model_name: str, device: Optional[str] = None, *args: Any, **kw
     if cached is not None:
         return cached
 
-    if is_api_embedding_model(model_name):
-        # Local-loading arguments have no meaning for an API embedder.
-        model = APIEmbedder(model_name)
-    else:
-        import sentence_transformers as _st
+    # Users' hooks run on worker threads, so the first calls can arrive
+    # together; loading under the shared lock loads each model once instead of
+    # once per thread (several copies of a large local embedder can exhaust the
+    # GPU) and never alongside another model load (see concurrency.py).
+    from baselines.harness.concurrency import model_load_lock
+    with model_load_lock:
+        with _cache_lock:
+            cached = _model_cache.get(key)
+        if cached is not None:
+            return cached
 
-        # Resolve the GENUINE class: `install_embedder_factory` may have already
-        # replaced the attribute with the factory that called us, and building
-        # through that would recurse forever.
-        real = getattr(_st.SentenceTransformer, "_real_sentence_transformer",
-                       _st.SentenceTransformer)
-        model = real(model_name, *args, device=device, **kwargs)
+        if is_api_embedding_model(model_name):
+            # Local-loading arguments have no meaning for an API embedder.
+            model = APIEmbedder(model_name)
+        else:
+            import sentence_transformers as _st
 
-    with _cache_lock:
-        # Another thread may have won the race; keep whichever landed first so
-        # every caller shares one object.
-        return _model_cache.setdefault(key, model)
+            # Resolve the GENUINE class: `install_embedder_factory` may have already
+            # replaced the attribute with the factory that called us, and building
+            # through that would recurse forever.
+            real = getattr(_st.SentenceTransformer, "_real_sentence_transformer",
+                           _st.SentenceTransformer)
+            model = real(model_name, *args, device=device, **kwargs)
+            # Shared by every user of the process, and those users' hooks run on
+            # worker threads: one encode at a time (see concurrency.serialize_calls).
+            from baselines.harness.concurrency import serialize_calls
+            serialize_calls(model, "encode")
+
+        with _cache_lock:
+            _model_cache[key] = model
+        return model
 
 
 def install_embedder_factory() -> None:
