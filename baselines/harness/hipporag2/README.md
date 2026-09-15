@@ -127,10 +127,13 @@ the fully resolved values in `runs/<run_id>/memo_config.resolved.yaml`.
 
 A couple of those defaults are worth calling out:
 
-- `embedding` — any OpenAI embedding model name (API, no GPU needed) or a
-  local HF/NV embedding model (GPU, loaded in-process by HippoRAG).
+- `embedding` — the retrieval embedder: `text-embedding-3-small` (OpenAI API,
+  no GPU) under `arm: faithful`, `unified_models.embedding` (also an API model)
+  under `arm: unified`. It is a model key, so nothing else can set it — see
+  "Model configuration" for why the paper's local NV-Embed-v2 is not reachable.
 - `hipporag2_llm_model` — HippoRAG's internal OpenIE/triple-extraction LLM
-  (`gpt-4o-mini`, parity with the other five baselines' internal model). It is
+  (`gpt-4o-mini`, the internal model of five of the other six baselines;
+  simplemem uses its paper's `gpt-4.1-mini`). It is
   deliberately decoupled from the frame's `llm_model` (the shared QA agent):
   changing the answerer must never silently change how the memory is built.
   Tokens are keyed by `(model, phase)`, so OpenIE lands under `build` and the
@@ -140,20 +143,16 @@ A couple of those defaults are worth calling out:
   batch 16 / dtype auto; for local embeddings, batch 4 / dtype float16 —
   computed automatically in `_ensure_hippo`.
 
-To switch embedders for an ablation, override the class defaults through the
-`memo:` block of your config (validated against the class — a typo aborts):
+The config's optional `memo:` block overrides the NON-model defaults
+(validated against `CONFIG_DEFAULTS` — a typo aborts), e.g.:
 
 ```yaml
-# my_hr.yaml — local GPU embedding, LongMemEval-s
-harness: hipporag2
-dataset: longmemeval_s
 memo:
-  embedding: nvidia/NV-Embed-v2
-  embedding_batch_size: 2
-  embedding_dtype: float16
+  top_k: 10
 ```
 
-then `uv run --project baselines/harness/hipporag2 python -m baselines.harness.eval_harness --config my_hr.yaml`.
+It cannot set `embedding` or `hipporag2_llm_model`: models change only through
+`arm` / `unified_models`, so the run aborts if `memo:` names either.
 
 ## Sizing (config file only)
 
@@ -210,11 +209,11 @@ baselines/harness/hipporag2/
 | Verbatim | the whole `hipporag` package (@ c617143, 61 files, 0 diffs): OpenIE (NER + triple extraction), knowledge-graph construction, synonym/entity linking, personalized-PageRank retrieval, fact reranking, all prompts and thresholds, the parquet embedding store's dedup-by-hash upsert |
 | Integration adaptations (not algorithm) | `src/` prepended to `sys.path` in `memo.py` so `import hipporag` resolves to the vendored copy; retrieval via `HippoRAG.retrieve()` only — HippoRAG's own `rag_qa` reader is NOT used, the shared QA agent answers from the returned passages (fair "HippoRAG-as-memory" comparison); per-dataset passage mappings (`_init_to_passages`: app_logs / conversation turns / session messages) — upstream ran QA corpora, not conversational memory benchmarks; one graph per `MemoClass` instance under `outputs/<instance_id>_<embedding>/`, keyed on an instance-scoped id rather than `recorder.user_id` (which is always `""` in practice — see the note in `memo.py`); incremental `index()` per build call, relying on upstream's additive dedup-by-hash behaviour |
 | Not installed, so unavailable | the vLLM / offline-transformers LLM + OpenIE backends (vendored but `vllm`/`outlines` are not deps — see Setup); the chroma / milvus / qdrant vector-store backends (lazy imports, un-installed; the default parquet store is what runs) |
-| Upstream quirks preserved | `embedding_model/__init__.py` and `llm/__init__.py` import every backend eagerly (hence gritlm/boto3/litellm in the deps); internal OpenIE LLM cost is not tracked by `common.tokens` (same caveat as amem/zep/simplemem/lightmem) |
+| Upstream quirks preserved | `embedding_model/__init__.py` and `llm/__init__.py` import every backend eagerly (hence gritlm/boto3/litellm in the deps) |
 
 ## Model configuration (two arms)
 
-Every model this baseline touches is a config parameter, so it runs in two arms:
+Both models are chosen by `arm`:
 
 | | paper (arXiv 2502.14802 §4.4) | default arm (`arm: faithful` — `CONFIG_DEFAULTS`) | unified arm (`arm: unified` — example `unified_models`) |
 |---|---|---|---|
@@ -228,16 +227,26 @@ triple filtering, and nvidia/NV-Embed-v2 as the retriever — a 70B instruct mod
 and a 7B embedder, both local, both needing GPU infrastructure this repo's
 API-based harness does not have. The defaults are the runnable API equivalents
 instead. `gpt-4o-mini` is defensible as a stand-in: the paper itself uses it as
-the alternative QA reader (§4.4, Appendix C Table 8), and it is what the other
-six baselines build memory with, so the fleet stays comparable. Point the two
-keys at the paper's models if you have the hardware — `llm_name` and
-`embedding_model_name` reach HippoRAG unchanged.
+the alternative QA reader (§4.4, Appendix C Table 8), and five of the other six
+baselines build memory with it, so the fleet stays comparable.
+
+**The paper's setup is not supported.** No config reaches it: `faithful` and
+`unified` both resolve to API models, and `memo:` cannot set a model key. It is
+not only a matter of size:
+
+- **NV-Embed-v2** is a local encoder like the other baselines' embedders, just
+  7B (GPU only in practice). Vendored HippoRAG loads it in-process from the
+  model name, so it would work if `embedding` were set to it — which today means
+  editing `CONFIG_DEFAULTS`.
+- **Llama-3.3-70B-Instruct** is a local *generative* LLM. It needs a separate
+  OpenAI-compatible inference server (e.g. vLLM across several GPUs), and this
+  memo exposes no `base_url` key to point HippoRAG's LLM at one (mem0, lightmem,
+  memoryos and simplemem have such a key; amem, hipporag2 and zep do not).
 
 A second thing `hipporag2_llm_model` fixes: the key did not exist before, so
 HippoRAG read the frame's `llm_model` — the SHARED QA-agent model. That is why
-hipporag2 was the only baseline building memory with `gpt-5-mini` while the
-other six used `gpt-4o-mini`. It was an accident of plumbing, not a choice. A
-`null` value still reproduces that old behaviour for archived configs.
+hipporag2 once built memory with `gpt-5-mini` while every other baseline used
+its own internal model. It was an accident of plumbing, not a choice.
 
 HippoRAG already passes `temperature=1` — the only value the gpt-5 family
 accepts — so this is the one baseline that could always run a gpt-5 model. The
