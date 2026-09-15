@@ -34,7 +34,8 @@ FAKE_MODEL_KEYS = {"llm": ("llm",), "embedding": ("embedder",), "embedding_dims"
 
 
 class _FakeMemo(MemoClass):
-    pass
+    async def build_memory_from_data(self, recorder): return None
+    async def retrieve_memory_for_query(self, recorder): return {}
 
 
 def _frame(**changes):

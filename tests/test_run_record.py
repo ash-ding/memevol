@@ -164,6 +164,7 @@ def _run_stage(out_dir: Path):
     from common.memo_class import MemoClass
 
     class _StubMemo(MemoClass):
+        async def build_memory_from_data(self, r): return None
         async def retrieve_memory_for_query(self, r): return {}
 
     async def _fake(self, task_list, *, stage="stage3", stage_spec=None,

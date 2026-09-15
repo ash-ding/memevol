@@ -1,9 +1,11 @@
 """The standardized memory-system contract every benchmark evaluates through.
 
-`MemoClass` exposes three OPTIONAL-override hooks — BUILD
-(`build_memory_from_data`) / RETRIEVE (`retrieve_memory_for_query`) /
-ANSWER (`use_memory_to_answer`) — all with safe defaults. A fresh instance
-is created per user/sample BY THE FRAMEWORK (the per-dataset workflow), so no
+`MemoClass` exposes three hooks. BUILD (`build_memory_from_data`) and
+RETRIEVE (`retrieve_memory_for_query`) are ABSTRACT — a subclass that misses
+either (a typo'd name included) fails at instantiation instead of silently
+evaluating as a no-memory system. ANSWER (`use_memory_to_answer`) is optional:
+its default defers to the benchmark's shared QA agent. A fresh instance is
+created per user/sample BY THE FRAMEWORK (the per-dataset workflow), so no
 cross-user state is possible.
 
 Configuration: the framework may pass a `config` dict to the constructor;
@@ -28,37 +30,40 @@ imports `common.memo_class.MemoClass`.)
 
 from __future__ import annotations
 
-from abc import ABC
+from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
 
 from common.recorder import Basic_Recorder  # noqa: F401  (re-export: legacy import path)
 
 
 class MemoClass(ABC):
+    #: Declared here for readers and type checkers; assigned per instance in
+    #: __init__ — a class-level dict would be shared across users.
+    config: Dict[str, Any]
 
     def __init__(self, config: Optional[Dict[str, Any]] = None):
         # Per-instance copy — instances must never share mutable config state
         # (the fresh-instance-per-user guarantee extends to configuration).
-        self.config: Dict[str, Any] = dict(config) if config else {}
-        self.database: Optional[Any] = None
+        self.config = dict(config) if config else {}
 
-    # -------- Standardized eval hooks (all OPTIONAL overrides) --------
+    # -------- Standardized eval hooks --------
 
+    @abstractmethod
     async def build_memory_from_data(self, recorder: Basic_Recorder) -> None:
-        """BUILD (Phase 1). `recorder.init` holds the data newly visible for
-        THIS call; accumulate state across calls and choose your own ingestion
-        granularity. Default: no-op (build no memory)."""
-        return None
+        """BUILD (Phase 1, REQUIRED). `recorder.init` holds the data newly
+        visible for THIS call; accumulate state across calls and choose your
+        own ingestion granularity. A system that stores nothing implements
+        this as `return None`."""
 
+    @abstractmethod
     async def retrieve_memory_for_query(self, recorder: Basic_Recorder) -> Dict:
-        """RETRIEVE (Phase 2). `recorder.init` holds the query (+ context).
-        Return retrieved context; `{"inline_memory_blocks": [str,...]}` controls
-        inline rendering. MUST be read-only w.r.t. memory. Default: `{}`."""
-        return {}
+        """RETRIEVE (Phase 2, REQUIRED). `recorder.init` holds the query (+
+        context). Return retrieved context; `{"inline_memory_blocks": [str,...]}`
+        controls inline rendering. MUST be read-only w.r.t. memory."""
 
     async def use_memory_to_answer(self, recorder: Basic_Recorder, retrieved: Dict,
                                     prompt: str) -> Optional[str]:
-        """ANSWER (optional). Return the answer string, or None to defer to the
+        """ANSWER (OPTIONAL). Return the answer string, or None to defer to the
         benchmark's standard QA agent (the default). `prompt` is the workflow's
         fully-formatted answer prompt. Default: None."""
         return None

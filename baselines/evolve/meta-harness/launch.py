@@ -31,12 +31,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from common.memo_class import MemoClass
 from benchmarks.registry import DATASETS
 
 
 def load_harness_class(file_path: str) -> type:
-    """Import a candidate file and return its first MemoClass subclass."""
+    """Import a candidate file and return its first concrete MemoClass subclass
+    (an unimplemented BUILD/RETRIEVE hook is reported by name)."""
     spec = importlib.util.spec_from_file_location("mh_candidate", file_path)
     if spec is None or spec.loader is None:
         raise ImportError(f"cannot load {file_path}")
@@ -44,13 +44,9 @@ def load_harness_class(file_path: str) -> type:
     sys.modules["mh_candidate"] = module
     spec.loader.exec_module(module)
 
-    subclasses = [
-        obj for _, obj in inspect.getmembers(module, inspect.isclass)
-        if issubclass(obj, MemoClass) and obj is not MemoClass
-    ]
-    if not subclasses:
-        raise ValueError(f"no MemoClass subclass in {file_path}")
-    return subclasses[0]
+    from common.memo_select import select_memo_class
+    return select_memo_class((obj for _, obj in inspect.getmembers(module, inspect.isclass)),
+                             str(file_path))
 
 
 def _write_load_error(out_dir: Path, error: str) -> None:
