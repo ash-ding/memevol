@@ -25,6 +25,12 @@ be made safe here — without editing anything under `src/`:
     device anyway. `serialize_calls` puts a per-model lock around the method
     vendored code calls, so local inference runs one call at a time while the
     network-bound work around it overlaps freely.
+
+  * model loading. Loading a Hugging Face model temporarily patches
+    process-global torch state (weights are first created on the "meta"
+    device), so two threads loading models at once corrupt each other's load
+    ("Cannot copy out of meta tensor"). `model_load_lock` makes every load — the
+    embedder factory and each memo's one-time system construction — take turns.
 """
 from __future__ import annotations
 
@@ -34,6 +40,10 @@ import os
 import sys
 import threading
 from typing import Any, Iterator
+
+# Held while a memo constructs its memory system and while the embedder factory
+# loads a model. Re-entrant: construction calls the factory.
+model_load_lock = threading.RLock()
 
 _quiet_lock = threading.Lock()
 _quiet_depth = 0

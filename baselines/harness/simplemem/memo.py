@@ -35,7 +35,7 @@ from typing import Dict, List, Optional, Tuple
 from common.memo_class import MemoClass
 
 from common.openai_usage import install as _install_openai_usage
-from baselines.harness.concurrency import quiet_stdout
+from baselines.harness.concurrency import model_load_lock, quiet_stdout
 from baselines.harness.hipporag2.memo import app_log_to_passage
 from baselines.harness.model_config import (
     install_embedder_factory, install_openai_param_normalisation,
@@ -240,41 +240,43 @@ class SimpleMemMemo(MemoClass):
     def _ensure_system(self):
         if self._system is not None:
             return
-        cfg = self.config
-        _pin_settings(cfg)
+        # One user at a time: construction loads local models (concurrency.model_load_lock).
+        with model_load_lock:
+            cfg = self.config
+            _pin_settings(cfg)
 
-        save_dir = str(OUTPUTS_DIR / self._instance_id)
-        OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
-        with quiet_stdout():
-            # EmbeddingModel is constructed here → patched SentenceTransformer
-            self._system = SimpleMemSystem(
-                api_key=None,                  # credential: resolved from the environment by SimpleMem
-                model=cfg["simplemem_llm_model"],
-                base_url=cfg["base_url"] or None,
-                db_path=save_dir,
-                clear_db=True,
-                enable_thinking=False,
-                use_streaming=False,
-                enable_planning=cfg["enable_planning"],
-                enable_reflection=cfg["enable_reflection"],
-                max_reflection_rounds=cfg["max_reflection_rounds"],
-                # SimpleMem's internal thread pools are KEPT ON (its shipped
-                # default, and the path the paper's numbers use): the serial and
-                # parallel build paths are NOT equivalent — the serial path feeds
-                # each window the previous window's entries as dedup context,
-                # while the parallel path processes windows independently, so the
-                # faithful output is the parallel one. Workers only run the LLM
-                # extraction concurrently; embedding into LanceDB is batched once
-                # at the end. NOTE the multiplication: users now overlap (the
-                # hooks run on worker threads), so up to max_sample_concurrent ×
-                # max_parallel_workers compression calls can be in flight at once
-                # — keep both within your OpenAI rate limits. The shared embedder
-                # is serialized per model (concurrency.serialize_calls).
-                enable_parallel_processing=cfg["enable_parallel_processing"],
-                max_parallel_workers=cfg["max_parallel_workers"],
-                enable_parallel_retrieval=cfg["enable_parallel_retrieval"],
-                max_retrieval_workers=cfg["max_retrieval_workers"],
-            )
+            save_dir = str(OUTPUTS_DIR / self._instance_id)
+            OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+            with quiet_stdout():
+                # EmbeddingModel is constructed here → patched SentenceTransformer
+                self._system = SimpleMemSystem(
+                    api_key=None,                  # credential: resolved from the environment by SimpleMem
+                    model=cfg["simplemem_llm_model"],
+                    base_url=cfg["base_url"] or None,
+                    db_path=save_dir,
+                    clear_db=True,
+                    enable_thinking=False,
+                    use_streaming=False,
+                    enable_planning=cfg["enable_planning"],
+                    enable_reflection=cfg["enable_reflection"],
+                    max_reflection_rounds=cfg["max_reflection_rounds"],
+                    # SimpleMem's internal thread pools are KEPT ON (its shipped
+                    # default, and the path the paper's numbers use): the serial and
+                    # parallel build paths are NOT equivalent — the serial path feeds
+                    # each window the previous window's entries as dedup context,
+                    # while the parallel path processes windows independently, so the
+                    # faithful output is the parallel one. Workers only run the LLM
+                    # extraction concurrently; embedding into LanceDB is batched once
+                    # at the end. NOTE the multiplication: users now overlap (the
+                    # hooks run on worker threads), so up to max_sample_concurrent ×
+                    # max_parallel_workers compression calls can be in flight at once
+                    # — keep both within your OpenAI rate limits. The shared embedder
+                    # is serialized per model (concurrency.serialize_calls).
+                    enable_parallel_processing=cfg["enable_parallel_processing"],
+                    max_parallel_workers=cfg["max_parallel_workers"],
+                    enable_parallel_retrieval=cfg["enable_parallel_retrieval"],
+                    max_retrieval_workers=cfg["max_retrieval_workers"],
+                )
 
     # SimpleMem is synchronous (window compression, planning/reflection LLM calls,
     # LanceDB): each hook runs its body on a worker thread so other users keep

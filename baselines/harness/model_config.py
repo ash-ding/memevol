@@ -208,7 +208,6 @@ class APIEmbedder:
 
 _model_cache: Dict[Any, Any] = {}
 _cache_lock = threading.Lock()
-_load_lock = threading.RLock()   # re-entrant: a model load may consult the factory again
 _factory_installed = False
 
 
@@ -233,9 +232,11 @@ def get_embedder(model_name: str, device: Optional[str] = None, *args: Any, **kw
         return cached
 
     # Users' hooks run on worker threads, so the first calls can arrive
-    # together; building under one lock loads each model once instead of once
-    # per thread (several copies of a large local embedder can exhaust the GPU).
-    with _load_lock:
+    # together; loading under the shared lock loads each model once instead of
+    # once per thread (several copies of a large local embedder can exhaust the
+    # GPU) and never alongside another model load (see concurrency.py).
+    from baselines.harness.concurrency import model_load_lock
+    with model_load_lock:
         with _cache_lock:
             cached = _model_cache.get(key)
         if cached is not None:

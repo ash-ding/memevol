@@ -36,6 +36,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from common.memo_class import MemoClass
+from baselines.harness.concurrency import model_load_lock
 
 from common.openai_usage import install as _install_openai_usage
 from baselines.harness.hipporag2.memo import app_log_to_passage
@@ -178,26 +179,28 @@ class Mem0Memo(MemoClass):
     def _ensure_system(self) -> None:
         if self._memory is not None:
             return
-        cfg = self.config
-        store = OUTPUTS_DIR / self._instance_id
-        if store.exists():
-            shutil.rmtree(store, ignore_errors=True)
-        store.mkdir(parents=True, exist_ok=True)
-        llm_conf: Dict[str, Any] = {"model": cfg["mem0_llm_model"]}
-        if cfg["base_url"]:
-            llm_conf["openai_base_url"] = cfg["base_url"]
-        self._memory = Memory.from_config({
-            # Embedded Qdrant on disk — per-user collection, no server process.
-            "vector_store": {"provider": "qdrant", "config": {
-                "collection_name": f"c_{self._instance_id}",
-                "path": str(store / "qdrant"),
-                "on_disk": True,
-            }},
-            "llm": {"provider": "openai", "config": llm_conf},
-            "embedder": {"provider": "openai",
-                         "config": {"model": cfg["embedding_model"]}},
-            "history_db_path": str(store / "history.db"),
-        })
+        # One user at a time: construction loads local models (concurrency.model_load_lock).
+        with model_load_lock:
+            cfg = self.config
+            store = OUTPUTS_DIR / self._instance_id
+            if store.exists():
+                shutil.rmtree(store, ignore_errors=True)
+            store.mkdir(parents=True, exist_ok=True)
+            llm_conf: Dict[str, Any] = {"model": cfg["mem0_llm_model"]}
+            if cfg["base_url"]:
+                llm_conf["openai_base_url"] = cfg["base_url"]
+            self._memory = Memory.from_config({
+                # Embedded Qdrant on disk — per-user collection, no server process.
+                "vector_store": {"provider": "qdrant", "config": {
+                    "collection_name": f"c_{self._instance_id}",
+                    "path": str(store / "qdrant"),
+                    "on_disk": True,
+                }},
+                "llm": {"provider": "openai", "config": llm_conf},
+                "embedder": {"provider": "openai",
+                             "config": {"model": cfg["embedding_model"]}},
+                "history_db_path": str(store / "history.db"),
+            })
 
     # Mem0's Memory API is synchronous (fact extraction LLM calls, embedding,
     # Qdrant): each hook runs its body on a worker thread so other users keep

@@ -43,7 +43,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from common.memo_class import MemoClass
-from baselines.harness.concurrency import quiet_stdout, serialize_calls
+from baselines.harness.concurrency import model_load_lock, quiet_stdout, serialize_calls
 from baselines.harness.hipporag2.memo import app_log_to_passage
 from baselines.harness.model_config import (
     get_embedder, install_openai_param_normalisation,
@@ -255,27 +255,29 @@ class MemoryOSMemo(MemoClass):
     def _ensure_system(self) -> None:
         if self._memo is not None:
             return
-        cfg = self.config
-        _seed_embedder(cfg["memoryos_embedding_model"])
-        save_dir = OUTPUTS_DIR / self._instance_id
-        if save_dir.exists():
-            shutil.rmtree(save_dir, ignore_errors=True)
-        save_dir.mkdir(parents=True, exist_ok=True)
-        with quiet_stdout():
-            self._memo = Memoryos(
-                user_id=f"u_{self._instance_id}",
-                assistant_id=f"a_{self._instance_id}",
-                openai_api_key=None,   # credential: the OpenAI SDK reads it from the environment
-                openai_base_url=cfg["base_url"] or "",
-                data_storage_path=str(save_dir),
-                llm_model=cfg["memoryos_llm_model"],
-                short_term_capacity=cfg["short_term_capacity"],
-                mid_term_capacity=cfg["mid_term_capacity"],
-                mid_term_heat_threshold=cfg["mid_term_heat_threshold"],
-                mid_term_similarity_threshold=cfg["mid_term_similarity_threshold"],
-                retrieval_queue_capacity=cfg["retrieval_queue_capacity"],
-                long_term_knowledge_capacity=cfg["long_term_knowledge_capacity"],
-            )
+        # One user at a time: construction loads local models (concurrency.model_load_lock).
+        with model_load_lock:
+            cfg = self.config
+            _seed_embedder(cfg["memoryos_embedding_model"])
+            save_dir = OUTPUTS_DIR / self._instance_id
+            if save_dir.exists():
+                shutil.rmtree(save_dir, ignore_errors=True)
+            save_dir.mkdir(parents=True, exist_ok=True)
+            with quiet_stdout():
+                self._memo = Memoryos(
+                    user_id=f"u_{self._instance_id}",
+                    assistant_id=f"a_{self._instance_id}",
+                    openai_api_key=None,   # credential: the OpenAI SDK reads it from the environment
+                    openai_base_url=cfg["base_url"] or "",
+                    data_storage_path=str(save_dir),
+                    llm_model=cfg["memoryos_llm_model"],
+                    short_term_capacity=cfg["short_term_capacity"],
+                    mid_term_capacity=cfg["mid_term_capacity"],
+                    mid_term_heat_threshold=cfg["mid_term_heat_threshold"],
+                    mid_term_similarity_threshold=cfg["mid_term_similarity_threshold"],
+                    retrieval_queue_capacity=cfg["retrieval_queue_capacity"],
+                    long_term_knowledge_capacity=cfg["long_term_knowledge_capacity"],
+                )
         # No dimension knob is needed: MemoryOS sizes its FAISS indexes from the
         # embedding array itself (`dim = embeddings_np.shape[1]`, long_term.py
         # and mid_term.py), so a 1536-dim API embedder drops straight in.

@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from common.memo_class import MemoClass
+from baselines.harness.concurrency import model_load_lock
 
 # `import hipporag` must resolve to the byte-identical vendored copy under src/,
 # not to an editable install of an external checkout (which is how this baseline
@@ -139,24 +140,26 @@ class HippoRAGMemo(MemoClass):
     def _ensure_hippo(self):
         if self._hippo is not None:
             return
-        cfg = self.config
-        factory = cfg.get("_hippo_factory")
-        embedding = cfg["embedding"]
-        save_dir = str(OUTPUTS_DIR / f"{self._instance_id}_{embedding.replace('/', '_')}")
-        if factory is not None:
-            self._hippo = factory(save_dir=save_dir)
-            return
-        from hipporag import HippoRAG
-        from hipporag.utils.config_utils import BaseConfig
-        is_local = "text-embedding" not in embedding
-        conf = BaseConfig(
-            llm_name=cfg["hipporag2_llm_model"],
-            embedding_model_name=embedding,
-            save_dir=save_dir, response_format=None, temperature=1, seed=None,
-            embedding_batch_size=cfg["embedding_batch_size"] or (4 if is_local else 16),
-            embedding_model_dtype=cfg["embedding_dtype"] or ("float16" if is_local else "auto"),
-        )
-        self._hippo = HippoRAG(global_config=conf)
+        # One user at a time: construction loads local models (concurrency.model_load_lock).
+        with model_load_lock:
+            cfg = self.config
+            factory = cfg.get("_hippo_factory")
+            embedding = cfg["embedding"]
+            save_dir = str(OUTPUTS_DIR / f"{self._instance_id}_{embedding.replace('/', '_')}")
+            if factory is not None:
+                self._hippo = factory(save_dir=save_dir)
+                return
+            from hipporag import HippoRAG
+            from hipporag.utils.config_utils import BaseConfig
+            is_local = "text-embedding" not in embedding
+            conf = BaseConfig(
+                llm_name=cfg["hipporag2_llm_model"],
+                embedding_model_name=embedding,
+                save_dir=save_dir, response_format=None, temperature=1, seed=None,
+                embedding_batch_size=cfg["embedding_batch_size"] or (4 if is_local else 16),
+                embedding_model_dtype=cfg["embedding_dtype"] or ("float16" if is_local else "auto"),
+            )
+            self._hippo = HippoRAG(global_config=conf)
 
     # HippoRAG is synchronous (OpenIE LLM calls, embedding, graph build, PPR):
     # each hook runs its body on a worker thread so other users keep going

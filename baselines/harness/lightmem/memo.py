@@ -42,7 +42,7 @@ from typing import Dict, List
 from common.memo_class import MemoClass
 
 from common.openai_usage import install as _install_openai_usage
-from baselines.harness.concurrency import quiet_stdout
+from baselines.harness.concurrency import model_load_lock, quiet_stdout
 from baselines.harness.hipporag2.memo import app_log_to_passage
 from baselines.harness.model_config import (
     install_embedder_factory, install_openai_param_normalisation,
@@ -319,13 +319,15 @@ class LightMemMemo(MemoClass):
     def _ensure_system(self):
         if self._system is not None:
             return
-        OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
-        config = self._build_config()
-        # Construction builds the LLMlingua-2 compressor + the embedder (shared
-        # across users by model_config's factory) + the Qdrant client; stdout is
-        # silenced for the vendored debug prints.
-        with quiet_stdout():
-            self._system = LightMemory.from_config(config)
+        # One user at a time: construction loads local models (concurrency.model_load_lock).
+        with model_load_lock:
+            OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
+            config = self._build_config()
+            # Construction builds the LLMlingua-2 compressor + the embedder (shared
+            # across users by model_config's factory) + the Qdrant client; stdout is
+            # silenced for the vendored debug prints.
+            with quiet_stdout():
+                self._system = LightMemory.from_config(config)
 
     # LightMem is synchronous (LLMlingua-2, LLM extraction, embedding, Qdrant):
     # each hook runs its body on a worker thread so other users keep going
