@@ -159,6 +159,9 @@ class _FakeST:
         self.device = device
         self.kwargs = kwargs
 
+    def encode(self, sentences, **kwargs):
+        return sentences
+
 
 # The fake module below is installed into sys.modules. Under pytest the whole
 # suite shares one process, so leaving it there makes OTHER files import a
@@ -203,6 +206,48 @@ def test_factory_memoizes_local_models_across_users():
     b = module.SentenceTransformer("all-MiniLM-L6-v2")
     assert a is b
     assert _FakeST.instances == 1
+
+
+def test_factory_serializes_encode_on_shared_local_models():
+    # One local model is shared by every user, and users' hooks run on worker
+    # threads — so the factory puts a per-model lock around `encode`, in place
+    # (the object keeps its type for vendored isinstance checks).
+    _install_fake_sentence_transformers()
+    model = mc.get_embedder("all-MiniLM-L6-v2")
+    assert isinstance(model, _FakeST)
+    assert getattr(model.encode, "_serialized", False) is True
+    assert model.encode(["a"]) == ["a"]
+    assert not getattr(mc.get_embedder("text-embedding-3-small").encode, "_serialized", False), \
+        "API embedders are network-bound and must not be serialized"
+
+
+def test_concurrent_first_calls_load_a_local_model_once():
+    # Users' hooks run on worker threads, so the first requests for a model can
+    # arrive together; each must get the SAME object from a single load, not
+    # one copy per thread (large local embedders would exhaust the GPU).
+    import threading
+    import time
+
+    _install_fake_sentence_transformers()
+    real_init = _FakeST.__init__
+
+    def slow_init(self, *args, **kwargs):
+        time.sleep(0.2)
+        real_init(self, *args, **kwargs)
+
+    _FakeST.__init__ = slow_init
+    try:
+        got = []
+        threads = [threading.Thread(target=lambda: got.append(mc.get_embedder("all-MiniLM-L6-v2")))
+                   for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert _FakeST.instances == 1, _FakeST.instances
+        assert len(got) == 4 and all(g is got[0] for g in got)
+    finally:
+        _FakeST.__init__ = real_init
 
 
 def test_factory_keys_distinct_models_separately():

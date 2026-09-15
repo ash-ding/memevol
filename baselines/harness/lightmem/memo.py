@@ -30,7 +30,7 @@ Ingestion units (recorder.init dispatch, cf. hipporag2's _init_to_passages):
 """
 from __future__ import annotations
 
-import contextlib
+import asyncio
 import logging
 import os
 import sys
@@ -42,6 +42,7 @@ from typing import Dict, List
 from common.memo_class import MemoClass
 
 from common.openai_usage import install as _install_openai_usage
+from baselines.harness.concurrency import quiet_stdout
 from baselines.harness.hipporag2.memo import app_log_to_passage
 from baselines.harness.model_config import (
     install_embedder_factory, install_openai_param_normalisation,
@@ -89,24 +90,6 @@ _lm_logger.addHandler(logging.NullHandler())
 _lm_logger.propagate = False
 
 OUTPUTS_DIR = Path(__file__).resolve().parent / "outputs"
-
-
-@contextlib.contextmanager
-def _quiet_stdout():
-    """Silence LightMem's vendored debug ``print()``s during a hook body.
-
-    The sink is opened as UTF-8 (``errors="replace"``) on purpose: LightMem's
-    extractor ``print()``s the raw user prompt, and on Windows the default
-    ``cp1252`` stdout can't encode non-Latin-1 characters (e.g. ``č`` in
-    multilingual LongMemEval content) → ``UnicodeEncodeError``. That exception is
-    swallowed deep in LightMem's parallel extractor (→ a result with
-    ``usage=None`` → an ``AttributeError`` crash in its token accounting), so a
-    plain devnull redirect (cp1252) would still trip it. Routing to a UTF-8 sink
-    lets the print succeed and discards it. No await inside → the process-global
-    stdout swap can't leak across concurrently-scheduled samples."""
-    with open(os.devnull, "w", encoding="utf-8", errors="replace") as devnull:
-        with contextlib.redirect_stdout(devnull):
-            yield
 
 
 def parse_locomo_timestamp(timestamp_str: str) -> str:
@@ -341,21 +324,30 @@ class LightMemMemo(MemoClass):
         # Construction builds the LLMlingua-2 compressor + the embedder (shared
         # across users by model_config's factory) + the Qdrant client; stdout is
         # silenced for the vendored debug prints.
-        with _quiet_stdout():
+        with quiet_stdout():
             self._system = LightMemory.from_config(config)
 
+    # LightMem is synchronous (LLMlingua-2, LLM extraction, embedding, Qdrant):
+    # each hook runs its body on a worker thread so other users keep going
+    # meanwhile (see baselines/harness/concurrency.py).
+
     async def build_memory_from_data(self, recorder) -> None:
+        await asyncio.to_thread(self._build, recorder)
+
+    async def retrieve_memory_for_query(self, recorder) -> Dict:
+        return await asyncio.to_thread(self._retrieve, recorder)
+
+    def _build(self, recorder) -> None:
         self._ensure_system()
         turns = _init_to_turns(recorder.init)
         if not turns:
             return
         n = len(turns)
         # add_memory is ADDITIVE across checkpoints; its LLM extraction + Qdrant
-        # indexing run here (synchronous, no await → the redirect can't leak
-        # across concurrently-scheduled samples). force_segment/force_extract on
+        # indexing run here. force_segment/force_extract on
         # the last turn flush the buffers so this call's data is fully committed
         # before any retrieval (matches the drivers' is_last_turn flush).
-        with _quiet_stdout():
+        with quiet_stdout():
             for i, turn_msgs in enumerate(turns):
                 is_last = i == n - 1
                 self._system.add_memory(
@@ -372,11 +364,11 @@ class LightMemMemo(MemoClass):
                     score_threshold=self.config["update_sim_threshold"],
                 )
 
-    async def retrieve_memory_for_query(self, recorder) -> Dict:
+    def _retrieve(self, recorder) -> Dict:
         self._ensure_system()
         query = recorder.init.get("query", "")
         k = int(self.config["retrieve_limit"])
-        with _quiet_stdout():
+        with quiet_stdout():
             passages = self._system.retrieve(query, limit=k)   # embed + Qdrant search (read-only)
         if not passages:
             return {}

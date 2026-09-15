@@ -24,6 +24,7 @@ provenance. Previously an editable install of an external checkout):
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 import uuid
@@ -157,7 +158,17 @@ class HippoRAGMemo(MemoClass):
         )
         self._hippo = HippoRAG(global_config=conf)
 
+    # HippoRAG is synchronous (OpenIE LLM calls, embedding, graph build, PPR):
+    # each hook runs its body on a worker thread so other users keep going
+    # meanwhile (see baselines/harness/concurrency.py).
+
     async def build_memory_from_data(self, recorder) -> None:
+        await asyncio.to_thread(self._build, recorder)
+
+    async def retrieve_memory_for_query(self, recorder) -> Dict:
+        return await asyncio.to_thread(self._retrieve, recorder)
+
+    def _build(self, recorder) -> None:
         # Called once (all_at_once) for locomo/longmemeval; per checkpoint for
         # DynamicMem TCE — accumulate + index each new segment.
         self._ensure_hippo()
@@ -166,7 +177,7 @@ class HippoRAGMemo(MemoClass):
         if new:
             self._hippo.index(docs=new)   # HippoRAG.index is additive (verified: dedup-by-hash upsert)
 
-    async def retrieve_memory_for_query(self, recorder) -> Dict:
+    def _retrieve(self, recorder) -> Dict:
         self._ensure_hippo()   # defensive no-op if build_memory_from_data already ran
         query = recorder.init.get("query", "")
         k = int(self.config["top_k"])

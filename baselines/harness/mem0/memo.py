@@ -28,6 +28,7 @@ Ingestion units (recorder.init dispatch, cf. hipporag2's _init_to_passages):
 """
 from __future__ import annotations
 
+import asyncio
 import shutil
 import sys
 import uuid
@@ -198,7 +199,17 @@ class Mem0Memo(MemoClass):
             "history_db_path": str(store / "history.db"),
         })
 
+    # Mem0's Memory API is synchronous (fact extraction LLM calls, embedding,
+    # Qdrant): each hook runs its body on a worker thread so other users keep
+    # going meanwhile (see baselines/harness/concurrency.py).
+
     async def build_memory_from_data(self, recorder) -> None:
+        await asyncio.to_thread(self._build, recorder)
+
+    async def retrieve_memory_for_query(self, recorder) -> Dict:
+        return await asyncio.to_thread(self._retrieve, recorder)
+
+    def _build(self, recorder) -> None:
         self._ensure_system()
         messages = _init_to_messages(recorder.init)
         if not messages:
@@ -212,7 +223,7 @@ class Mem0Memo(MemoClass):
             self._memory.add(messages[i:i + size], user_id=self._user_id,
                              infer=bool(self.config["infer"]))
 
-    async def retrieve_memory_for_query(self, recorder) -> Dict:
+    def _retrieve(self, recorder) -> Dict:
         self._ensure_system()
         query = str(recorder.init.get("query", ""))
         res = self._memory.search(
