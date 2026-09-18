@@ -459,7 +459,10 @@ def test_evaluate_harness_gauntlet_plan():
         assert len(calls) == 1, calls
         plan = calls[0]["plan"]
         assert plan["progressive"] is True and plan["smoke"] is False
-        assert plan["stages"]["stage1"]["n_conversations"] == 2  # resolved defaults ride along
+        from common.evaluate import DEFAULT_STAGES
+        assert (plan["stages"]["stage1"]["n_conversations"]
+                == DEFAULT_STAGES["locomo"]["stage1"]["n_conversations"]), \
+            "resolved defaults ride along"
         assert per_ds["locomo"]["stage"] == 3.0
 
 

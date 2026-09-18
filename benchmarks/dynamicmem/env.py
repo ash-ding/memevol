@@ -57,8 +57,11 @@ log = logging.getLogger("main")
 _data_env = os.environ.get("DYNAMICMEM_DATA", "")
 DATA_DIR: Path = Path(_data_env) if _data_env else Path(__file__).resolve().parent
 
-TRAIN_USERS = 6
-EVAL_USERS = 4
+# 2:8 split of the 10 users — 20% to search on, 80% held out. CHANGED
+# 2026-09-18 from 6:4: scores from earlier runs are NOT comparable on either
+# split (different membership; a search score now averages 2 users, not 6).
+TRAIN_USERS = 2
+EVAL_USERS = 8
 
 TASK_FAMILY_STATE_COMPLETION = "state_completion"
 TASK_FAMILY_APPLY_SERVICE = "apply_service"

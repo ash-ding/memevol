@@ -62,8 +62,10 @@ harnesses:
 #   progressive: false — ONE single-stage pass per benchmark: no stage1/2, no
 #          threshold elimination; artifacts under <ds>/single/. Sized by the
 #          per-dataset `single_stage` block below (all-null = the whole split).
-#          Whole test-split sizes for cost planning: DynamicMem 4 users ×
-#          ~400 items, LoCoMo 655 QA (cat 1-4), LongMemEval 200 questions.
+#          Whole test-split sizes for cost planning (the test split is 80% of
+#          each benchmark since 2026-09-18): DynamicMem 8 users × ~400 items,
+#          LoCoMo 8 conversations (~1.2 k QA, cat 1-4), LongMemEval 400
+#          questions — roughly double what the same wording promised before.
 # -----------------------------------------------------------------------------
 progressive: false
 

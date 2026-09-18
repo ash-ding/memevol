@@ -93,9 +93,10 @@ llm:
 #           `single_stage` config block (see `datasets:` below; null field =
 #           whole split for that dimension): no stage1/2, no elimination;
 #           artifacts under <ds>/single/; stage_<ds> records 4.
-#           Sanity gate and smoke_test are unaffected. Cost anchor (test
-#           split whole-split sizes): DynamicMem 4 users × ~400 items, LoCoMo
-#           655 QA (cat 1-4), LongMemEval 200 questions. One evaluation shape
+#           Sanity gate and smoke_test are unaffected. Cost anchor (SEARCH
+#           split, 20% of each benchmark): DynamicMem 2 users × ~400 items,
+#           LoCoMo 2 conversations (~300 QA, cat 1-4), LongMemEval 100
+#           questions. One evaluation shape
 #           per step also keeps per-step cost metrics comparable across steps.
 #   true  — staged gauntlet (stage1→2→3 nested sampling + threshold gates;
 #           artifacts under <ds>/<stageN>/, stage_<ds> records 1/2/3). Each
@@ -379,7 +380,7 @@ prompts:
 datasets:
 
   locomo:
-    # Fields: n_conversations (of 6 search / 4 test), n_qa PER CONVERSATION
+    # Fields: n_conversations (of 2 search / 8 test), n_qa PER CONVERSATION
     # (each has ~105-260 QAs; sampled as a shuffled prefix — nested).
     # `single_stage` sizes the one pass this run makes (progressive: false).
     single_stage: {n_conversations: 2, n_qa: 20}
@@ -389,25 +390,25 @@ datasets:
     # "not mentioned" questions are free points).
     stages:
       sanity_check: {n_conversations: 1, n_qa: 3}
-      stage1: {n_conversations: 2, n_qa: 20, threshold: 0.30}
-      stage2: {n_conversations: 4, n_qa: 40, threshold: 0.35}
-      stage3: {n_conversations: 6, n_qa: 60}
+      stage1: {n_conversations: 1, n_qa: 20, threshold: 0.30}
+      stage2: {n_conversations: 2, n_qa: 40, threshold: 0.35}
+      stage3: {n_conversations: 2, n_qa: 100}
 
   # dynamicmem:
   #   # Per-dataset judge override (falls back to the global judge_model).
   #   # gpt-5.4-2026-03-05 is the official TCE judge (0.0-1.0 holistic
-  #   # Core+Detail). Fields: n_users (of 6 search / 4 test), n_checkpoints
+  #   # Core+Detail). Fields: n_users (of 2 search / 8 test), n_checkpoints
   #   # (first k of 5), n_task_a / n_task_c (items PER CHECKPOINT; ~17-53 each).
   #   judge_model: gpt-5.4-2026-03-05
   #   single_stage: {n_users: 2, n_checkpoints: 1, n_task_a: 5, n_task_c: 5}
   #   stages:
   #     sanity_check: {n_users: 1, n_checkpoints: 1, n_task_a: 1, n_task_c: 1}
-  #     stage1: {n_users: 2, n_checkpoints: 1, n_task_a: 5, n_task_c: 5, threshold: 0.05}
-  #     stage2: {n_users: 4, n_checkpoints: 3, n_task_a: 5, n_task_c: 5, threshold: 0.10}
-  #     stage3: {n_users: 6, n_checkpoints: 5, n_task_a: 5, n_task_c: 5}
+  #     stage1: {n_users: 1, n_checkpoints: 1, n_task_a: 5, n_task_c: 5, threshold: 0.05}
+  #     stage2: {n_users: 2, n_checkpoints: 3, n_task_a: 5, n_task_c: 5, threshold: 0.10}
+  #     stage3: {n_users: 2, n_checkpoints: 5, n_task_a: 10, n_task_c: 10}
 
   # longmemeval_s:
-  #   # Single-level: n_questions (of 300 search / 200 test; 1 QA + ~48-session
+  #   # Single-level: n_questions (of 100 search / 400 test; 1 QA + ~48-session
   #   # haystack each).
   #   single_stage: {n_questions: 20}
   #   stages:

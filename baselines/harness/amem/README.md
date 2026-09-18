@@ -168,11 +168,14 @@ $2.00 per 1M in/out (plug in real rates — the total is gpt-4o-mini-build-domin
 
 | Dataset (test split) | build notes | queries | est. API $ | est. wall-clock |
 |---|---|---|---|---|
-| dynamicmem (4 users) | ~7 k | ~1.6 k | ~$14 | ~4–5 h |
-| locomo (4 convs) | ~2.4 k | 655 | ~$2 | ~1 h |
-| longmemeval_s (200 q) | ~101 k | 200 | ~$40 | ~2.5 days |
+| dynamicmem (8 users) | ~14 k | ~3.2 k | ~$28 | ~9–10 h |
+| locomo (8 convs) | ~4.8 k | ~1.3 k | ~$4 | ~2 h |
+| longmemeval_s (400 q) | ~202 k | 400 | ~$80 | ~5 days |
 
-- **≈ $55 total, ≈ 3 days wall-clock** across the three benchmarks (dominated
+(The test split doubled on 2026-09-18 — 6:4 search:test became 2:8 — so these
+are the old per-dataset figures scaled, not re-measured.)
+
+- **≈ $110 total, ≈ 6 days wall-clock** across the three benchmarks (dominated
   by longmemeval_s's serial per-note build). The per-message note model + O(n²)
   consolidate is what makes amem expensive; scaling it further would need
   engineering changes (coarser ingestion / lower consolidate frequency) that

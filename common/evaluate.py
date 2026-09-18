@@ -42,18 +42,26 @@ _FAMILY_FIELDS = {
 # non-zero no-memory floor (some questions are answerable from the question
 # text alone), hence higher thresholds than DynamicMem. (LoCoMo runs on
 # categories 1-4 only since 2026-07-08 — cat-5 adversarial QAs are excluded.)
+# Sized for the SEARCH split, which is 20% of each benchmark (2026-09-18):
+# 2 locomo conversations, 2 dynamicmem users, 100 longmemeval questions. The
+# user/conversation dimension therefore has almost no room, so a stage grows
+# mostly by asking MORE of each unit — questions per conversation, checkpoints
+# and items per user. Sizes must stay non-decreasing (the nesting invariant)
+# and within the pool: a stage asking for more units than the split holds is
+# silently clamped to it, which would make two stages identical and the
+# promotion gate between them meaningless.
 DEFAULT_STAGES: Dict[str, Dict[str, Dict[str, Any]]] = {
     "dynamicmem": {
         "sanity_check": {"n_users": 1, "n_checkpoints": 1, "n_task_a": 1, "n_task_c": 1},
-        "stage1": {"n_users": 2, "n_checkpoints": 1, "n_task_a": 5, "n_task_c": 5, "threshold": 0.05},
-        "stage2": {"n_users": 4, "n_checkpoints": 3, "n_task_a": 5, "n_task_c": 5, "threshold": 0.10},
-        "stage3": {"n_users": 6, "n_checkpoints": 5, "n_task_a": 5, "n_task_c": 5},
+        "stage1": {"n_users": 1, "n_checkpoints": 1, "n_task_a": 5, "n_task_c": 5, "threshold": 0.05},
+        "stage2": {"n_users": 2, "n_checkpoints": 3, "n_task_a": 5, "n_task_c": 5, "threshold": 0.10},
+        "stage3": {"n_users": 2, "n_checkpoints": 5, "n_task_a": 10, "n_task_c": 10},
     },
     "locomo": {
         "sanity_check": {"n_conversations": 1, "n_qa": 3},
-        "stage1": {"n_conversations": 2, "n_qa": 20, "threshold": 0.30},
-        "stage2": {"n_conversations": 4, "n_qa": 40, "threshold": 0.35},
-        "stage3": {"n_conversations": 6, "n_qa": 60},
+        "stage1": {"n_conversations": 1, "n_qa": 20, "threshold": 0.30},
+        "stage2": {"n_conversations": 2, "n_qa": 40, "threshold": 0.35},
+        "stage3": {"n_conversations": 2, "n_qa": 100},
     },
     "longmemeval": {
         "sanity_check": {"n_questions": 2},

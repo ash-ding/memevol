@@ -84,7 +84,7 @@ def test_forge_loads_the_harness_class_not_the_base():
     from pathlib import Path
     from forge.launch import _load_harness_class
     from forge.contract import load_harness_class
-    seed = Path(__file__).resolve().parents[1] / "seeds" / "no_memory"
+    seed = Path(__file__).resolve().parents[1] / "baselines" / "harness" / "no_memory"
     assert _load_harness_class(seed).__name__ == "NoMemoryHarness"
     assert load_harness_class(seed).__name__ == "NoMemoryHarness"
 

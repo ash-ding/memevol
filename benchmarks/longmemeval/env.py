@@ -7,7 +7,7 @@ Each sample is a single (question, answer) pair with a "haystack" of chat
 sessions to retrieve from. Forge's BaseWorkflow treats one sample as one
 "user" and the single QA as one Phase-2 step.
 
-Train/test split (deterministic; changed from 50/450 on 2026-07-07):
+Train/test split (deterministic; 50/450 → 300/200 on 2026-07-07, → 100/400 on 2026-09-18):
   * search  — 300 question_ids, stratified by question_type
                 (multi-session 80, temporal-reasoning 80,
                  knowledge-update 47, single-session-user 42,
@@ -40,11 +40,14 @@ _DATA_DIR: Path = Path(_data_env) if _data_env else Path(__file__).resolve().par
 
 DATA_PATH: Path = _DATA_DIR / "longmemeval_s_cleaned.json"
 
-# 6:4 split (300 search / 200 test), aligned with the other benchmarks and
-# sized so staged evaluation's stage3 (100 questions) fits inside the search
-# pool. NOTE: changed from 50/450 on 2026-07-06 — scores from runs before
-# that date are not comparable (different search/test membership).
-SEARCH_SIZE = 300
+# 2:8 split (100 search / 400 test), aligned with the other benchmarks: 20%
+# to search on, 80% held out. Still stratified by question_type, and still
+# exactly the size of staged evaluation's stage3 (100 questions), so a full
+# gauntlet uses the whole search pool.
+# NOTE: changed from 300/200 on 2026-09-18 (and from 50/450 on 2026-07-06) —
+# scores from runs before a change are not comparable across it, since the
+# search/test membership differs.
+SEARCH_SIZE = 100
 SEARCH_SPLIT_SEED = "longmemeval.search.v1"
 
 

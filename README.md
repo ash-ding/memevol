@@ -175,9 +175,9 @@ against the same harness):
 
 | Dataset | Source | Protocol | Split |
 |---|---|---|---|
-| **[DynamicMem](benchmarks/dynamicmem/)** | App-activity logs (~1500/user over 15 months) | Official **TCE v2 checkpoint protocol**: ingestion interleaved with tasks at 5 quarterly checkpoints; two task families (state completion + personalized service); official holistic Core+Detail judge, scores 0–1 | 6 users search / 4 test |
-| **[LoCoMo](benchmarks/locomo/)** | Multi-session two-person conversations (~154 QA each after filtering) | Two-phase; binary CORRECT/WRONG judge (community-standard); QA **categories 1–4 only** (cat-5 adversarial excluded — the data carries no gold answers for them) | 6 conv search / 4 test |
-| **[LongMemEval](benchmarks/longmemeval/)** | 500 questions, each with its own haystack of ~48 chat sessions (the `s` variant) | Two-phase, 1 QA per question; binary yes/no judge (paper) | 300 search / 200 test (stratified by question type) |
+| **[DynamicMem](benchmarks/dynamicmem/)** | App-activity logs (~1500/user over 15 months) | Official **TCE v2 checkpoint protocol**: ingestion interleaved with tasks at 5 quarterly checkpoints; two task families (state completion + personalized service); official holistic Core+Detail judge, scores 0–1 | 2 users search / 8 test |
+| **[LoCoMo](benchmarks/locomo/)** | Multi-session two-person conversations (~154 QA each after filtering) | Two-phase; binary CORRECT/WRONG judge (community-standard); QA **categories 1–4 only** (cat-5 adversarial excluded — the data carries no gold answers for them) | 2 conv search / 8 test |
+| **[LongMemEval](benchmarks/longmemeval/)** | 500 questions, each with its own haystack of ~48 chat sessions (the `s` variant) | Two-phase, 1 QA per question; binary yes/no judge (paper) | 100 search / 400 test (stratified by question type) |
 
 **Reported-alongside metrics.** A benchmark may emit extra reporting metrics
 into `score.json` under `extra_metrics`, via the
