@@ -56,6 +56,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from forge.paths import (
+    ENTRY_FILE,
+    entry_file,
     PROJECT_ROOT,
     PROPOSER_BASE_SIF,
     paths,
@@ -837,9 +839,9 @@ async def propose_with_fix(
     _check_environment(agent=agent, claude_auth=claude_auth, vertex_cfg=vertex_cfg)
 
     new_dir = paths.harnesses_dir / new_id
-    if not (new_dir / "harness.py").exists():
+    if entry_file(new_dir) is None:
         raise RuntimeError(
-            f"propose_with_fix called but {new_dir}/harness.py does not exist"
+            f"propose_with_fix called but {new_dir}/{ENTRY_FILE} does not exist"
         )
 
     staged = _render_and_stage_prompts(

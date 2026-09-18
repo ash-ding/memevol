@@ -1,10 +1,11 @@
 """Harness validator (host-side, optional / external use).
 
 A candidate is a directory under `workspace/harnesses/<id>/` containing:
-  - `harness.py` (REQUIRED) — defines a `MemoClass` subclass
+  - `memo.py` (REQUIRED) — defines a `MemoClass` subclass
   - `requirements.txt` (OPTIONAL) — pip deps layered on eval-base
   - `meta.json` (OPTIONAL) — {"parent_ids": [...], "description": ...}
-  - helper `.py` files (OPTIONAL) — importable from harness.py via sys.path
+  - `src/` (OPTIONAL) — the implementation, organised however the harness
+    likes; importable from memo.py, which has its own dir on sys.path
 
 Validation = dynamic import + subclass check. No execution beyond import.
 
@@ -33,7 +34,9 @@ from typing import Type
 
 from common.memo_class import MemoClass
 
-REQUIRED_FILE = "harness.py"
+from forge.paths import ENTRY_FILE, LEGACY_ENTRY_FILE, entry_file
+
+REQUIRED_FILE = ENTRY_FILE
 
 
 class HarnessError(Exception):
@@ -41,10 +44,12 @@ class HarnessError(Exception):
 
 
 def load_harness_class(harness_dir: Path) -> Type[MemoClass]:
-    """Import harness.py and return its MemoClass subclass."""
-    harness_py = harness_dir / REQUIRED_FILE
-    if not harness_py.exists():
-        raise HarnessError(f"Missing {REQUIRED_FILE} in {harness_dir}")
+    """Import the harness's interface file and return its MemoClass subclass."""
+    harness_py = entry_file(harness_dir)
+    if harness_py is None:
+        raise HarnessError(
+            f"Missing {REQUIRED_FILE} in {harness_dir} "
+            f"(also accepted for older harnesses: {LEGACY_ENTRY_FILE})")
 
     dir_str = str(harness_dir)
     if dir_str not in sys.path:

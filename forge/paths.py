@@ -22,6 +22,31 @@ from typing import Optional
 
 
 PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent
+
+#: The file that defines a harness's `MemoClass` subclass — the ONE interface,
+#: the same for a packaged baseline and for an evolved candidate. Whatever else
+#: the harness needs goes under `IMPL_DIR` beside it, organised however it
+#: likes: forge only ever imports this file.
+ENTRY_FILE = "memo.py"
+
+#: Where a harness keeps its implementation. Fixed name, free contents — a
+#: single module, a package tree, a vendored library.
+IMPL_DIR = "src"
+
+#: What the entry file was called before 2026-09-18, when a candidate's whole
+#: implementation had to fit in it. Still LOADED, so workspaces and cached
+#: seeds written back then keep working; nothing writes it any more.
+LEGACY_ENTRY_FILE = "harness.py"
+
+
+def entry_file(harness_dir: Path) -> Optional[Path]:
+    """The harness's interface file, or None if it has neither name."""
+    for name in (ENTRY_FILE, LEGACY_ENTRY_FILE):
+        candidate = harness_dir / name
+        if candidate.is_file():
+            return candidate
+    return None
+
 FORGE_ROOT: Path = PROJECT_ROOT / "forge"
 
 # Per-run workspaces live under WORKSPACE_BASE/<run_id>/. The base dir itself

@@ -56,6 +56,22 @@ import sys
 from pathlib import Path
 from typing import Callable, List
 
+#: Kept in step with forge.paths — this script runs inside the proposer
+#: sandbox, which mounts only propose_in_container.py and memo_class.py from
+#: forge, so it cannot import that module.
+ENTRY_FILE = "memo.py"
+LEGACY_ENTRY_FILE = "harness.py"
+
+
+def entry_file(harness_dir: Path):
+    """The harness's interface file, or None if it has neither name."""
+    for name in (ENTRY_FILE, LEGACY_ENTRY_FILE):
+        candidate = harness_dir / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 
 # Tool restrictions intentionally NOT set: filesystem isolation is enforced
 # by the Singularity sandbox in forge/proposer.py — the agent's reachable
@@ -284,8 +300,8 @@ async def _run(args: argparse.Namespace) -> int:
     # Sanity: in fix mode the harness must already exist. (In propose mode
     # the host launcher created the dir; both .prompt_*.txt files live inside
     # so by definition the dir is there.)
-    if args.mode == "fix" and not (new_dir / "harness.py").exists():
-        _emit("proposer·error", f"fix mode but {new_dir}/harness.py missing")
+    if args.mode == "fix" and entry_file(new_dir) is None:
+        _emit("proposer·error", f"fix mode but {new_dir}/{ENTRY_FILE} missing")
         return 2
 
     # Prompts are pre-rendered HOST-SIDE — just read the two staged files.

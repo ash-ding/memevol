@@ -31,7 +31,7 @@ CLI flags always override the config file when both are given. See
 Outputs (per-run, under workspace/<run_id>/):
     harnesses/<hash>/<dataset>/         full-eval score + traces
     harnesses/<hash>/<dataset>/sanity/  small sanity-check score + traces
-    harnesses/<hash>/harness.py         the harness code itself
+    harnesses/<hash>/memo.py            the harness's interface
     harnesses/<hash>/meta.json          parent_ids, description, content_hash, created_at
     frontier.json                       population snapshot (with sanity_status)
     history.json                        which harnesses each step produced, in order
@@ -75,6 +75,8 @@ from forge.env_builder import EnvBuildError, ensure_image
 from forge.evaluator import run_evaluation
 from benchmarks.registry import DATASETS
 from forge.paths import (
+    ENTRY_FILE,
+    entry_file,
     LOGS_DIR,
     PROJECT_ROOT,
     SEEDS_DIR,
@@ -1008,9 +1010,8 @@ def _compute_content_hash(harness_dir: Path) -> str:
     top-level files alone would give every packaged baseline with the same
     requirements the same identity.
     """
-    harness_py = harness_dir / "harness.py"
-    if not harness_py.exists():
-        raise FileNotFoundError(f"harness.py missing in {harness_dir}")
+    if entry_file(harness_dir) is None:
+        raise FileNotFoundError(f"{ENTRY_FILE} missing in {harness_dir}")
     h = hashlib.sha256()
     for path in _code_files(harness_dir):
         h.update(str(path.relative_to(harness_dir)).encode("utf-8"))
@@ -1095,12 +1096,12 @@ def _resolve_seed_source(seed_source: str) -> Optional[Path]:
     `baselines/harness/no_memory`, which is code only.
     """
     cached = SEEDS_DIR / seed_source
-    if (cached / "harness.py").exists():
+    if entry_file(cached) is not None:
         return cached
     as_path = Path(seed_source)
     if not as_path.is_absolute():
         as_path = PROJECT_ROOT / as_path
-    if (as_path / "harness.py").exists():
+    if entry_file(as_path) is not None:
         return as_path
     return None
 
@@ -1338,7 +1339,8 @@ def _build_objectives(
                                  entries stay absent rather than look free.
 
     Harness-level fields (single value):
-      - `code_length`            bytes of harness.py (rough simplicity proxy; lower = simpler)
+      - `code_length`            bytes of the harness's whole code tree
+                                 (rough simplicity proxy; lower = simpler)
       - `tokens_total`           sum of total_tokens across all datasets and models
                                  (rough $-cost proxy; lower = cheaper)
 
@@ -1393,10 +1395,14 @@ def _build_objectives(
         if any_phase_data:
             out.update(phase_totals)
 
-    # Harness-level: code_length (best-effort; missing harness.py from a crashed
-    # propose just means we record 0 rather than crashing).
+    # Harness-level: code_length over the WHOLE code tree, not the entry file
+    # alone. A harness is its tree (see _code_files), so measuring memo.py
+    # would both understate a packaged baseline — mem0's entry is a 2.5 KB
+    # wrapper over 58 vendored files — and hand the proposer a way to shrink
+    # the number without simplifying anything, by moving code into src/.
+    # Best-effort: a crashed propose that wrote nothing records 0.
     try:
-        out["code_length"] = (harness_dir / "harness.py").stat().st_size
+        out["code_length"] = sum(f.stat().st_size for f in _code_files(harness_dir))
     except OSError:
         out["code_length"] = 0
 

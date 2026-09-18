@@ -59,7 +59,7 @@ from forge.orchestrator import (
     build_arg_parser,
     evaluate_harness,
 )
-from forge.paths import paths
+from forge.paths import paths, ENTRY_FILE, entry_file
 
 log = logging.getLogger("forge.heldout")
 
@@ -70,7 +70,7 @@ def _heldout_arg_parser() -> argparse.ArgumentParser:
     parser = build_arg_parser()
     parser.add_argument(
         "--harness", action="append", dest="harnesses", metavar="DIR",
-        help="Path to a harness directory (must contain harness.py). Repeat "
+        help="Path to a harness directory (must contain memo.py). Repeat "
              "for several. Overrides (replaces) the config's `harnesses:` list.",
     )
     return parser
@@ -79,9 +79,9 @@ def _heldout_arg_parser() -> argparse.ArgumentParser:
 def _stage_harness(src: Path) -> str:
     """Copy a source harness dir into this run's workspace; return its id."""
     src = src.resolve()
-    if not (src / "harness.py").exists():
+    if entry_file(src) is None:
         raise SystemExit(
-            f"--harness {src}: no harness.py found — pass a harness directory "
+            f"--harness {src}: no {ENTRY_FILE} found — pass a harness directory "
             f"(e.g. workspace/<run>/harnesses/<hash>)"
         )
     dst = paths.harnesses_dir / src.name

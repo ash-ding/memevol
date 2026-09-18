@@ -7,7 +7,7 @@ Invoked by forge/evaluator.py inside Singularity — ONE container per
         --dataset locomo --split search --plan-json '{"progressive": true, ...}'
 
 Steps:
-  1. Dynamically load the MemoClass subclass from /harness/harness.py.
+  1. Dynamically load the MemoClass subclass from /harness/memo.py.
   2. One call into the shared, execution-independent
      common.evaluate.evaluate_memo — the staged stage1→2→3 gauntlet
      (progressive), the single_stage single pass, or the sanity-size smoke
@@ -46,19 +46,28 @@ from common.memo_class import MemoClass
 from benchmarks.registry import DATASETS
 
 
+#: Kept in step with forge.paths — the container gets only launch.py,
+#: memo_class.py and __init__.py from forge, so it cannot import that module.
+ENTRY_FILE = "memo.py"
+LEGACY_ENTRY_FILE = "harness.py"
+
+
 def _load_harness_class(harness_dir: Path) -> Type[MemoClass]:
-    """Import harness.py and return the MemoClass subclass.
+    """Import the harness's interface file and return its MemoClass subclass.
 
     On import failure, raise ImportError with an actionable message. The
     error string is propagated up to score.json::invalid_users[0].error and
     becomes the trace shown to CC during sanity-retry — so write it for an
     LLM reader.
     """
-    harness_py = harness_dir / "harness.py"
-    if not harness_py.exists():
+    harness_py = next(
+        (p for p in (harness_dir / ENTRY_FILE, harness_dir / LEGACY_ENTRY_FILE)
+         if p.exists()), None)
+    if harness_py is None:
         raise ImportError(
-            f"harness.py missing at {harness_py}. The proposer must write a "
-            f"harness.py file inside its target dir."
+            f"{ENTRY_FILE} missing at {harness_dir / ENTRY_FILE}. The proposer "
+            f"must write a {ENTRY_FILE} defining its MemoClass subclass; any "
+            f"further source goes under {harness_dir.name}/src/."
         )
     if str(harness_dir) not in sys.path:
         sys.path.insert(0, str(harness_dir))
@@ -71,7 +80,7 @@ def _load_harness_class(harness_dir: Path) -> Type[MemoClass]:
         spec.loader.exec_module(module)
     except ModuleNotFoundError as exc:
         raise ImportError(
-            f"harness.py imports a package not in the container: {exc.name!r}. "
+            f"{harness_py.name} imports a package not in the container: {exc.name!r}. "
             f"Either (a) declare it in `requirements.txt` (will trigger a delta "
             f"image build), or (b) switch to a package already in the base image "
             f"(see PROPOSER_SYSTEM for the list). Original: {exc}"
