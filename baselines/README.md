@@ -346,6 +346,7 @@ each memo.py's `CONFIG_DEFAULTS`:
 | lightmem | gpt-4o-mini | all-MiniLM-L6-v2 | ICLR 2026 Table 5 (+ LLMlingua-2 compressor) |
 | mem0 | gpt-4o-mini | text-embedding-3-small | arXiv 2504.19413 §2, §3.3 |
 | memoryos | gpt-4o-mini | all-MiniLM-L6-v2 ⚠️ | arXiv 2506.06326 Tables 1-2; **paper states no embedder** |
+| no_memory | — (calls no model) | — | n/a — the calibration floor |
 | simplemem | gpt-4.1-mini | Qwen/Qwen3-Embedding-0.6B | arXiv (SimpleMem) §3.1 |
 | zep | gpt-4o-mini-2024-07-18 | BAAI/bge-m3 | arXiv 2501.13956 §4.1 (+ bge-reranker-v2-m3) |
 
@@ -418,6 +419,7 @@ built at the other width.
 | **[harness/amem](harness/amem/)** | ready-made harness | A-mem agentic-notes memory (per-note LLM analysis + memory evolution → keyword-rewrite retrieval; shared QA agent answers) | None (fixed pipeline) | Agentic note-graph memory comparison point, multi-dataset |
 | **[harness/lightmem](harness/lightmem/)** | ready-made harness | LightMem compression + offline-update memory (LLMlingua-2 pre-compression → topic segmentation → LLM metadata/summary extraction → Qdrant index → per-entry LLM offline update; `LightMemory.retrieve` → passages; shared QA agent answers) | None (fixed pipeline) | Compression + offline-refinement memory comparison point, multi-dataset |
 | **[harness/simplemem](harness/simplemem/)** | ready-made harness | SimpleMem semantic-compression memory (LLM window compression → self-contained memory units → intent-aware multi-view retrieval; shared QA agent answers) | None (fixed pipeline) | Compression-first memory comparison point, multi-dataset |
+| **[harness/no_memory](harness/no_memory/)** | ready-made harness | The calibration floor: stores nothing, retrieves nothing, so the shared QA agent answers from the question alone | None | What every memory system must beat; also forge's seed when a run wants one. No dependencies — runs in the repo-root venv |
 | **[harness/zep](harness/zep/)** | ready-made harness | Zep/Graphiti temporal knowledge-graph memory (episodes → LLM entity/fact/temporal-edge extraction; hybrid BM25+cosine+BFS search, BGE cross-encoder rerank; shared QA agent answers) | None (fixed pipeline) | Temporal-KG memory comparison point; embedded FalkorDB Lite backend, multi-dataset |
 
 ### evolve/alma — meta-learning loop

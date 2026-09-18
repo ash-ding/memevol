@@ -26,7 +26,7 @@ evaluation protocol.
 | [`common/`](common/) | The shared evaluation platform: the [`MemoClass`](common/memo_class.py) contract, the [`Basic_Recorder`](common/recorder.py) data envelope, the [`BaseWorkflow`](common/workflow.py) scheduler, LLM/judge/embedding kernel, token tracking, logging |
 | [`benchmarks/`](benchmarks/) | One adapter per benchmark: `env.py` (data loading + recorder + split), `workflow.py` (evaluation protocol), `prompts.py` (QA-agent prompt) |
 | [`baselines/`](baselines/) | Comparison methods, split into `evolve/` (search-method baselines, compared against forge itself) and `harness/` (ready-made memory systems, compared against forge-evolved harnesses) — [README](baselines/README.md) |
-| [`seeds/`](seeds/) | Opt-in seed harness library. A seed is copied into a run as candidate #0 (e.g. `no_memory` — the calibration floor any real memory design must beat) |
+| [`seeds/`](seeds/) | Cache of harnesses that have already been evaluated: code + every result, keyed by what was run (dataset, sizing, models, repo commit). Written automatically after each evaluation; a search seeded from an entry reuses its numbers instead of paying for them again |
 | [`configs/`](configs/) | [`search_example.yaml`](configs/search_example.yaml) (documented AND runnable search config) + [`test_example.yaml`](configs/test_example.yaml) (held-out test flow) |
 | [`containers/`](containers/) | Singularity image definitions (eval base + proposer base) |
 | [`tools/`](tools/) | Operator scripts (prompt-version bookkeeping, run watchdog) |

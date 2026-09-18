@@ -79,6 +79,9 @@ MEMOS: Dict[str, str] = {
     "lightmem":  "baselines.harness.lightmem.memo:LightMemMemo",
     "mem0":      "baselines.harness.mem0.memo:Mem0Memo",
     "memoryos":  "baselines.harness.memoryos.memo:MemoryOSMemo",
+    # The calibration floor: stores nothing, retrieves nothing. Needs no
+    # venv of its own — run it from the repo-root one.
+    "no_memory": "baselines.harness.no_memory.memo:NoMemoryMemo",
     "simplemem": "baselines.harness.simplemem.memo:SimpleMemMemo",
     "zep":       "baselines.harness.zep.memo:ZepMemo",
 }
