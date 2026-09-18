@@ -154,27 +154,6 @@ def test_evaluate_memo_forwards_sample_seed_to_get_task_list():
 
 # ---------------- runner ----------------
 
-def main():
-    tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
-    failed = []
-    for name, fn in tests:
-        try:
-            fn()
-            print(f"  PASS  {name}")
-        except Exception:
-            print(f"  FAIL  {name}")
-            traceback.print_exc()
-            failed.append(name)
-    print(f"\n{len(tests) - len(failed)}/{len(tests)} passed")
-    if failed:
-        print("failed:", ", ".join(failed))
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()
-
-
 # ---------------- metrics ----------------
 
 def test_metrics_default_to_accuracy_only():
@@ -230,3 +209,24 @@ def test_the_proposer_prompt_describes_only_the_axes_it_will_see():
     assert "<<OBJECTIVE_AXES_BLOCK>>" not in acc and "<<OBJECTIVE_AXES_BLOCK>>" not in both
     assert "cost_tokens_per_query" not in acc and "optimizes ACCURACY only" in acc
     assert "cost_tokens_per_query" in both and "EFFICIENCY" in both
+
+
+def main():
+    tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
+    failed = []
+    for name, fn in tests:
+        try:
+            fn()
+            print(f"  PASS  {name}")
+        except Exception:
+            print(f"  FAIL  {name}")
+            traceback.print_exc()
+            failed.append(name)
+    print(f"\n{len(tests) - len(failed)}/{len(tests)} passed")
+    if failed:
+        print("failed:", ", ".join(failed))
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

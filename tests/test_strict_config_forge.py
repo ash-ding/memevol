@@ -47,7 +47,8 @@ def _forge_min_cfg(agent="claude_code"):
     cfg = {
         "steps": 5, "smoke_test": False,
         "model": "gpt-5-mini", "judge_model": "gpt-5-mini",
-        "progressive": True, "random_sample": False, "sampling_seed": 42,
+        "progressive": True, "metrics": ["accuracy"],
+        "random_sample": False, "sampling_seed": 42,
         "max_sample_concurrent": 3,
         "data_isolation": True, "adopt_orphans": True,
         "agent": agent,
