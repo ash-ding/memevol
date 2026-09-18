@@ -75,12 +75,14 @@ from forge.env_builder import EnvBuildError, ensure_image
 from forge.evaluator import run_evaluation
 from forge.paths import (
     LOGS_DIR,
+    PROJECT_ROOT,
     SEEDS_DIR,
     ensure_dirs,
     paths,
 )
 from forge.prompts import PromptVersionError, load_template_module, resolve_version
 from forge.proposer import propose, propose_with_fix
+from forge import seed_cache
 from forge.selection import Entry, Frontier
 
 from common.config import (
@@ -912,6 +914,22 @@ def _record_history(step: int, kind: str, record: Dict[str, Any]) -> None:
         json.dump(history, f, indent=2, ensure_ascii=False)
 
 
+def _cache_evaluated(harness_dir: Path, harness_id: str, cfg: Dict[str, Any],
+                     per_ds: Dict[str, Dict[str, Any]], sanity_status: str) -> None:
+    """Copy a finished harness and its results into the `seeds/` cache.
+
+    Only harnesses that actually produced results are worth keeping: a
+    sanity-failed or duplicate candidate has nothing new to cache (the
+    duplicate's results are already there under the same hash). Everything
+    else is stored so a later run can start from it instead of paying for the
+    same evaluation again.
+    """
+    if sanity_status in ("failed", "env_build_failed", "proposer_failed", "duplicate"):
+        return
+    seed_cache.store(harness_dir, harness_id, cfg, per_ds,
+                     sanity_status=sanity_status, run_id=paths.run_id)
+
+
 def _history_record(harness_id: str, sanity_status: str,
                     per_ds: Dict[str, Dict[str, Any]],
                     parent_ids: List[str]) -> Dict[str, Any]:
@@ -1000,6 +1018,25 @@ def _finalize_harness_dir(harness_dir: Path) -> Tuple[str, Path, bool]:
 # When cfg.seed.enabled, copy seeds/<source>/ into this run at startup.
 # ---------------------------------------------------------------------------
 
+def _resolve_seed_source(seed_source: str) -> Optional[Path]:
+    """Where a seed's code lives: a cached harness, or a directory.
+
+    `seeds/` holds harnesses that have already been evaluated (keyed by the
+    hash of their code), so a seed named there comes with its results. A path
+    is the other way in — a method that has not been through forge yet, like
+    `baselines/harness/no_memory`, which is code only.
+    """
+    cached = SEEDS_DIR / seed_source
+    if (cached / "harness.py").exists():
+        return cached
+    as_path = Path(seed_source)
+    if not as_path.is_absolute():
+        as_path = PROJECT_ROOT / as_path
+    if (as_path / "harness.py").exists():
+        return as_path
+    return None
+
+
 def _bootstrap_seed(seed_source: str) -> Optional[str]:
     """Copy the seed library entry into a pending dir in this run's harnesses/.
 
@@ -1009,17 +1046,26 @@ def _bootstrap_seed(seed_source: str) -> Optional[str]:
     re-running a workspace that already holds this seed is detected as a
     duplicate and costs nothing.
     """
-    src = SEEDS_DIR / seed_source
-    if not src.exists():
+    src = _resolve_seed_source(seed_source)
+    if src is None:
+        cached = [e["harness_id"] for e in seed_cache.entries()]
         log.error(
-            f"seed source not found: {src}. Run with --no-seed or pick a "
-            f"valid --seed-source from {[p.name for p in SEEDS_DIR.iterdir()] if SEEDS_DIR.exists() else '[]'}"
+            f"seed source not found: {seed_source!r}. Give either a cached "
+            f"harness id under seeds/ (currently {cached or 'empty — nothing has been evaluated yet'}) "
+            f"or a path to a directory holding harness.py "
+            f"(e.g. baselines/harness/no_memory). Or run with --no-seed."
         )
         return None
     pending_id = _new_pending_id()
     dst = paths.harnesses_dir / pending_id
     paths.harnesses_dir.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(src, dst)
+    # Code only: a cached entry also holds `evals/` and `index.json`, which
+    # are that harness's results, not part of the harness.
+    dst.mkdir(parents=True)
+    for pattern in ("harness.py", "meta.json", "requirements.txt", "*.py"):
+        for f in sorted(src.glob(pattern)):
+            if f.is_file():
+                shutil.copy2(f, dst / f.name)
     log.info(f"seed bootstrapped: {src} → {dst}")
     return pending_id
 
@@ -1810,6 +1856,7 @@ async def search_loop(cfg: Dict[str, Any]) -> None:
         frontier.save(paths.frontier_path)
         _record_history(0, "seed", _history_record(
             seed_final_id, sanity_status, per_ds, parent_ids))
+        _cache_evaluated(seed_dir, seed_final_id, cfg, per_ds, sanity_status)
         log.info(
             f"seed {seed_final_id}: "
             + ", ".join(
@@ -1881,6 +1928,7 @@ async def search_loop(cfg: Dict[str, Any]) -> None:
         frontier.save(paths.frontier_path)
         _record_history(step, "propose", _history_record(
             final_id, sanity_status, per_ds, parent_ids))
+        _cache_evaluated(new_dir, final_id, cfg, per_ds, sanity_status)
         log.info(
             f"[step {step}/{j}] {final_id} "
             + ", ".join(
