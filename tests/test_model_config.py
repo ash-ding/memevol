@@ -140,7 +140,7 @@ def test_sdk_patch_rewrites_a_real_create_call():
     ) == "ok"
     assert "temperature" not in sent
     assert "max_tokens" not in sent
-    assert sent["max_completion_tokens"] == 1000
+    assert "max_completion_tokens" not in sent, "a 4-series cap is not carried over"
     assert sent["model"] == "gpt-5-mini"
 
 
