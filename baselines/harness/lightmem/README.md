@@ -3,7 +3,7 @@
 [LightMem](https://github.com/zjunlp/LightMem) — a lightweight, compression-first
 lifelong memory (LLMlingua-2 pre-compression → attention topic segmentation → LLM
 metadata/summary extraction → embedding index → offline update) — as a ready-made
-memory system on the 3-hook `MemoClass` contract. Paper:
+memory system on the 2-hook `MemoClass` contract. Paper:
 [arXiv 2510.18866](https://arxiv.org/abs/2510.18866).
 
 **Provenance**: the `src/lightmem/` subtree is vendored from
@@ -52,7 +52,7 @@ scripts (`experiments/{locomo,longmemeval}`):
    LongMemEval driver retrieves). Read-only.
 
 Retrieved memories are returned as `{"passages": [...]}` and the **shared QA agent
-answers** — `use_memory_to_answer` is not overridden (hipporag2/amem/simplemem
+answers** — as it does for every memo, answering being no hook (hipporag2/amem/simplemem
 pattern). This keeps the comparison about *memory* (LightMem's compression +
 offline-refined retrieval), not about LightMem's own answer generator.
 
@@ -199,7 +199,7 @@ built at the old width.
 
 ## Validation status
 
-Written against the vendored code and the 3-hook contract; **not yet run
+Written against the vendored code and the 2-hook contract; **not yet run
 end-to-end** here (this baseline's own uv env, incl. `llmlingua`/`qdrant-client`,
 + a GPU + an OpenAI key are only available on the eval server). All adapter + vendored files
 pass `py_compile`. To smoke each ingestion branch cheaply on the search split:

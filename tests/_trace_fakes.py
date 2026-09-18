@@ -45,10 +45,6 @@ class NoteListMemo:
     async def retrieve_memory_for_query(self, recorder: Any) -> Dict:
         return {"hits": [n.content for n in self._system.memories.values()]}
 
-    async def use_memory_to_answer(self, recorder: Any, retrieved: Dict,
-                                   prompt: str) -> Optional[str]:
-        return f"answer:{len(retrieved.get('hits', []))}"
-
 
 # --- plain_text_list (hipporag2) -------------------------------------------
 

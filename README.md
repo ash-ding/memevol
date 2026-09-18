@@ -132,9 +132,9 @@ overlay during search.
 
 Everything this repo evaluates — forge-evolved harnesses AND ready-made
 baseline memory systems — is a subclass of
-[`common.memo_class.MemoClass`](common/memo_class.py). BUILD and RETRIEVE
-are required (abstract — a missing or misspelled hook fails when the harness
-is loaded, naming the hook); ANSWER is optional:
+[`common.memo_class.MemoClass`](common/memo_class.py). Both hooks, BUILD and
+RETRIEVE, are required (abstract — a missing or misspelled hook fails when the
+harness is loaded, naming the hook):
 
 ```python
 class MyMemory(MemoClass):
@@ -148,13 +148,11 @@ class MyMemory(MemoClass):
         """RETRIEVE (required). recorder.init holds the query (+ per-benchmark metadata).
         Return the dict fed to the QA agent. Must be READ-ONLY w.r.t. memory
         state (DynamicMem interleaves queries with ingestion at checkpoints)."""
-
-    async def use_memory_to_answer(self, recorder, retrieved, prompt) -> Optional[str]:
-        """ANSWER (optional). Return the answer string to bypass the standard
-        QA agent, or None (the default) to let it answer from `retrieved`.
-        forge NEVER overrides this — the search optimizes memory, not the
-        answerer. Agentic baselines may (e.g. Claude Code answers natively)."""
 ```
+
+Answering is NOT a hook: each benchmark's shared QA agent answers from what
+RETRIEVE returned, for every memo. A score therefore compares memories, not
+answerers, and the answer-side cost is identical across systems.
 
 A fresh instance is created per user/sample — no cross-user state. The
 `recorder` is the evaluation **data envelope**

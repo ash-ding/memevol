@@ -233,14 +233,14 @@ def test_ensure_passes_embedding_width_concurrency_and_models_explicitly():
         import shutil; shutil.rmtree(tmp, ignore_errors=True)
 
 
-def test_memo_implements_the_three_hook_contract():
+def test_memo_implements_the_two_hook_contract():
     from common.memo_class import MemoClass
     from baselines.harness.zep.memo import ZepMemo
     assert issubclass(ZepMemo, MemoClass)
     for hook in ("build_memory_from_data", "retrieve_memory_for_query"):
         assert callable(getattr(ZepMemo, hook, None)), hook
-    # use_memory_to_answer must NOT be overridden: the shared QA agent answers.
-    assert "use_memory_to_answer" not in vars(ZepMemo)
+    # Answering is not a hook: the shared QA agent answers for every memo.
+    assert not hasattr(ZepMemo, "use_memory_to_answer")
 
 
 if __name__ == "__main__":

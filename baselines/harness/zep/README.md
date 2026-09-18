@@ -1,7 +1,7 @@
 # Zep baseline
 
 [Zep: A Temporal Knowledge Graph Architecture for Agent Memory](https://arxiv.org/abs/2501.13956)
-(arXiv:2501.13956) as a ready-made memory system on the 3-hook `MemoClass`
+(arXiv:2501.13956) as a ready-made memory system on the 2-hook `MemoClass`
 contract. Zep's memory engine is **Graphiti**; the baseline vendors and drives
 `graphiti_core` directly.
 
@@ -24,7 +24,7 @@ search over edges and nodes, reranked by the **BGE cross-encoder** (the paper's
 `COMBINED_HYBRID_SEARCH_CROSS_ENCODER` recipe), returning the top-k facts and entity
 summaries. These are reformatted into the paper's FACTS/ENTITIES context string and
 returned as `{"inline_memory_blocks": [...]}`. The shared QA agent answers —
-`use_memory_to_answer` is not overridden (the paper uses a separate chat agent over
+the shared QA agent answers, as for every memo (the paper likewise uses a separate chat agent over
 the retrieved context; hipporag2/amem pattern).
 
 **Backend: embedded FalkorDB Lite** (`falkordblite`, in-process, on-disk, no

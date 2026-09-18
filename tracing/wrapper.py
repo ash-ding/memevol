@@ -8,7 +8,6 @@ triggers around the (unchanged) inner call:
 
   * ``build_memory_from_data``   -> phase BUILD
   * ``retrieve_memory_for_query`` -> phase RETRIEVE (stays strictly read-only)
-  * ``use_memory_to_answer``      -> phase ANSWER
 
 Each override returns the inner result byte-for-byte and re-raises any inner
 exception unchanged (no control-flow change). Snapshots are read-only (they
@@ -20,7 +19,7 @@ never constructs a ``TracedMemo`` at all — see ``tracing.wrap_memo``.
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 from common.recorder import Basic_Recorder
 from tracing.triggers import (
@@ -62,11 +61,6 @@ class TracedMemo:
     async def retrieve_memory_for_query(self, recorder: Basic_Recorder) -> Dict:
         return await self._traced("RETRIEVE",
                                   self._inner.retrieve_memory_for_query, recorder)
-
-    async def use_memory_to_answer(self, recorder: Basic_Recorder,
-                                   retrieved: Dict, prompt: str) -> Optional[str]:
-        return await self._traced("ANSWER", self._inner.use_memory_to_answer,
-                                  recorder, retrieved, prompt)
 
     # -- shared machinery --------------------------------------------------
 

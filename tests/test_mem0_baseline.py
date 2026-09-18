@@ -100,14 +100,14 @@ def test_telemetry_is_switched_off_without_touching_the_environment():
     assert ("MEM0_TELEMETRY" in os.environ) == had
 
 
-def test_memo_implements_the_three_hook_contract():
+def test_memo_implements_the_two_hook_contract():
     from common.memo_class import MemoClass
     from baselines.harness.mem0.memo import Mem0Memo
     assert issubclass(Mem0Memo, MemoClass)
     for hook in ("build_memory_from_data", "retrieve_memory_for_query"):
         assert callable(getattr(Mem0Memo, hook, None)), hook
-    # use_memory_to_answer must NOT be overridden: the shared QA agent answers.
-    assert "use_memory_to_answer" not in vars(Mem0Memo)
+    # Answering is not a hook: the shared QA agent answers for every memo.
+    assert not hasattr(Mem0Memo, "use_memory_to_answer")
 
 
 def test_hooks_run_off_the_event_loop():

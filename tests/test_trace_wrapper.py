@@ -25,14 +25,13 @@ _FACTS = ["Alice lives in Paris.", "Bob plays chess.", "Carol codes in Rust."]
 
 
 def _drive(memo):
-    """Run a scripted BUILD -> RETRIEVE -> ANSWER and return the results."""
+    """Run a scripted BUILD -> RETRIEVE and return the results."""
     async def go():
         build = Recorder({"facts": _FACTS})
         b = await memo.build_memory_from_data(build)
         q = Recorder({"query": "who?"})
         r = await memo.retrieve_memory_for_query(q)
-        a = await memo.use_memory_to_answer(q, r, "who?")
-        return b, r, a
+        return b, r
     return asyncio.run(go())
 
 
@@ -51,13 +50,12 @@ def test_wrapper_transparency(tmp_path, monkeypatch):
                                 harness_name="NoteListMemo")
     assert isinstance(wrapped, TracedMemo)
 
-    raw_b, raw_r, raw_a = _drive(raw)
-    w_b, w_r, w_a = _drive(wrapped)
+    raw_b, raw_r = _drive(raw)
+    w_b, w_r = _drive(wrapped)
 
     # Identical hook return values...
     assert raw_b == w_b
     assert raw_r == w_r
-    assert raw_a == w_a
     # ...and an identical inner memo end-state.
     assert _state(raw) == _state(wrapped)
 

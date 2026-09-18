@@ -54,9 +54,9 @@ baselines/
   does. Their unit of comparison is the search loop itself (proposer quality,
   sample efficiency, final evolved-harness score vs forge's).
 - **`harness/`** — fixed, hand-written memory systems implementing the same
-  standardized 3-hook `MemoClass` contract
-  (`build_memory_from_data` / `retrieve_memory_for_query` /
-  `use_memory_to_answer`) that forge-evolved harnesses implement. Their unit
+  standardized 2-hook `MemoClass` contract
+  (`build_memory_from_data` / `retrieve_memory_for_query`) that forge-evolved
+  harnesses implement. Their unit
   of comparison is the harness artifact: they run through the SAME
   per-dataset workflows via `baselines.harness.eval_harness.run_baseline`, so
   their scores sit on the same axis as any evolved harness's.
@@ -67,7 +67,7 @@ These rules keep scores comparable while keeping methods independent. They
 bind every method here:
 
 - **The eval surface is mandatorily shared.** A method's FINAL ARTIFACT is a
-  `common.memo_class.MemoClass` subclass implementing the 3-hook
+  `common.memo_class.MemoClass` subclass implementing the 2-hook
   contract, and it is scored ONLY through the shared registry/workflow path
   (`baselines/registry.py` → `benchmarks/<bench>/workflow.py` + the shared
   judge). No method ships its own scoring loop — otherwise its numbers stop
@@ -663,7 +663,7 @@ harnesses get.
 
 ### Step 0 — understand what you're adapting to
 
-Your system is driven through three async hooks on a
+Your system is driven through two async hooks on a
 `common.memo_class.MemoClass` subclass. The evaluation lifecycle per
 user/sample:
 
@@ -672,7 +672,7 @@ fresh instance created                       # NO cross-user state — ever
   → build_memory_from_data(recorder)          # 1..N times (N>1 only for DynamicMem:
                                               #   one call per checkpoint, DELTA data)
   → per query:  retrieve_memory_for_query(recorder)   # MUST be read-only
-                use_memory_to_answer(recorder, retrieved, prompt)  # optional
+                (the benchmark's shared QA agent answers — not a hook)
 ```
 
 Three lifecycle rules that trip up adapters:
@@ -741,10 +741,8 @@ class MyMemo(MemoClass):             # no config machinery on the class
         hits = self._system.search(recorder.init["query"], top_k=...)
         return {"passages": hits}       # read-only w.r.t. memory state
 
-    # OPTIONAL — only if your system answers natively (agentic systems).
-    # Return None / omit entirely to let the shared QA agent answer.
-    # async def use_memory_to_answer(self, recorder, retrieved, prompt) -> Optional[str]:
-    #     return await self._system.answer(prompt)
+    # No answer hook: the benchmark's shared QA agent answers from what this
+    # returned, the same for every memo.
 ```
 
 Notes on the RETRIEVE return dict:
@@ -755,10 +753,11 @@ Notes on the RETRIEVE return dict:
   block verbatim into the official TCE answer prompt's `[Memory]` section;
   any other dict shape is serialized as one JSON block. Surface the source
   logs *with their `app_log_id`* — evidence citation is scored.
-- Override `use_memory_to_answer` ONLY for systems whose value proposition
-  includes answering (an agentic system that answers natively). Retrieval-style
-  systems should let the shared QA agent answer — that keeps the comparison
-  about *memory*, not about who has the better answerer.
+- A system that answers natively (an agentic system with its own generator)
+  cannot substitute its own answerer: every memo is answered by the shared QA
+  agent, which keeps the comparison about *memory* rather than about who has
+  the better answerer, and keeps the answer-side token cost identical. Surface
+  what that system would have answered from as retrieved context instead.
 
 ### Step 2 — register it
 
@@ -871,7 +870,7 @@ convention set above, concretely:
    search loop, prompts, checkpointing, its own base classes — lives in
    `baselines/evolve/<name>/`. Copy machinery from alma if useful; do not
    import it.
-2. **The final artifact is a 3-hook `MemoClass`.** Whatever the search
+2. **The final artifact is a 2-hook `MemoClass`.** Whatever the search
    produces must be loadable as a `common.memo_class.MemoClass`
    subclass (directly, or via a thin adapter) so it can be scored through
    the shared workflow path. If the method's native artifact is not a

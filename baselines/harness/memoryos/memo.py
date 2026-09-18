@@ -15,8 +15,9 @@ RETRIEVE: ``Retriever.retrieve_context(query)`` — the paper's three-tier read:
 all of STM, a two-stage MTM search (top-m segments by the same F_score, then
 top-k pages by semantic similarity, updating N_visit/R_recency as a side effect),
 and the LPM's top-10 user-knowledge and assistant-knowledge entries. Returned as
-``{"passages": [...]}`` for the SHARED QA agent — ``use_memory_to_answer`` is NOT
-overridden, so MemoryOS's own ``get_response`` generator is deliberately unused
+``{"passages": [...]}`` for the SHARED QA agent, which answers for every memo
+(answering is not part of the contract), so MemoryOS's own ``get_response``
+generator is deliberately unused
 (hipporag2/amem/simplemem pattern; keeps the comparison about memory rather than
 about each method's answerer).
 

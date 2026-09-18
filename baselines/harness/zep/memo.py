@@ -16,8 +16,9 @@ nodes, reranked by the BGE cross-encoder. The paper retrieves the top-20 edges
 (facts) and entity nodes (summaries) and reformats them into a FACTS/ENTITIES
 context string (§3, template replicated in `_format_context` since the
 compose-context step lives in Zep's hosted service, not OSS Graphiti). Read-only.
-The shared QA agent answers — `use_memory_to_answer` is NOT overridden (the paper
-uses a separate chat agent over the retrieved context; hipporag2/amem pattern).
+The shared QA agent answers, as it does for every memo (answering is not part of
+the contract; the paper likewise uses a separate chat agent over the retrieved
+context).
 
 Backend: **FalkorDB Lite** (embedded, in-process, on-disk, no server), scoped per
 instance (`uuid` dbfilename + group_id) — see the README faithfulness boundary
