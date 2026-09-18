@@ -332,6 +332,24 @@ _DROPPED_PARAMS = ("temperature", "top_p", "presence_penalty", "frequency_penalt
 #: same headroom.
 REASONING_MIN_COMPLETION_TOKENS = 16384
 
+#: Per-request read timeout for a vendored call that sets none.
+#:
+#: The vendored clients construct `OpenAI(api_key=..., base_url=...)` and pass
+#: no timeout, so they inherit the SDK's defaults: a 600 s read timeout and 2
+#: retries. A request the server never answers therefore costs 1800 s and then
+#: kills the user — measured exactly, twice: 1802 s of build phase with ONE
+#: embedding call recorded and no chat completion at all. Meanwhile a probe
+#: issued against the same endpoint mid-stall returned in 2 s, so the endpoint
+#: was healthy and that one request was stuck.
+#:
+#: Real calls at the effort we package with land in 2-5 s, and the slowest
+#: whole session of mem0 updates measured 26 s, so 180 s is ~7x the slowest
+#: real call yet recovers a stall in three minutes instead of ten. It is
+#: deliberately NOT as short as the call times: `common.llm` documents that
+#: server-side queueing legitimately pushes latency up under concurrency, and
+#: a client timeout tight enough to fire on queueing causes a retry storm.
+VENDORED_REQUEST_TIMEOUT_SECONDS = 180.0
+
 _params_patched = False
 
 
@@ -342,7 +360,12 @@ def _is_restricted_model(model: Optional[str]) -> bool:
 def normalise_chat_params(kwargs: Dict[str, Any]) -> Dict[str, Any]:
     """Rewrite one `chat.completions.create` kwarg dict for the target model.
 
-    Two rewrites, both no-ops on the 4-series models the faithful arm uses:
+    One rewrite applies to every model: a call that set no ``timeout`` gets
+    ``VENDORED_REQUEST_TIMEOUT_SECONDS`` instead of the SDK's 600 s default,
+    so a stalled request is retried in minutes rather than costing 1800 s and
+    the user with it. See that constant for the measurement.
+
+    Two more are no-ops on the 4-series models the faithful arm uses:
 
       * a repo-convention ``"model/effort"`` suffix (e.g. ``gpt-5-mini/low``)
         is split into ``model`` + ``reasoning_effort``. Vendored clients pass
@@ -367,6 +390,12 @@ def normalise_chat_params(kwargs: Dict[str, Any]) -> Dict[str, Any]:
     """
     out = dict(kwargs)
     model = out.get("model")
+
+    # Bound the wait before anything model-specific: the vendored clients pass
+    # no timeout at all, and the SDK's default is long enough that one stuck
+    # request ends the run.
+    if "timeout" not in out or out["timeout"] is None:
+        out["timeout"] = VENDORED_REQUEST_TIMEOUT_SECONDS
 
     if isinstance(model, str) and "/" in model:
         base, effort = model.split("/", 1)

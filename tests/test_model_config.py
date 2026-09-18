@@ -55,8 +55,12 @@ def test_is_api_embedding_model():
 # this rewrite the unified arm cannot run at all on 5 of the 7 baselines.
 
 def test_normalise_leaves_4_series_untouched():
+    """Nothing model-specific is rewritten for a 4-series call. The stall
+    bound is added for every model, so it is the one permitted addition."""
     given = {"model": "gpt-4o-mini", "temperature": 0.7, "max_tokens": 1000}
-    assert mc.normalise_chat_params(given) == given
+    out = mc.normalise_chat_params(given)
+    assert {k: out[k] for k in given} == given
+    assert set(out) - set(given) == {"timeout"}
 
 
 def test_normalise_drops_sampling_params_for_reasoning_models():
@@ -67,6 +71,23 @@ def test_normalise_drops_sampling_params_for_reasoning_models():
     for dropped in ("temperature", "top_p", "presence_penalty", "frequency_penalty"):
         assert dropped not in out, dropped
     assert out["model"] == "gpt-5-mini"
+
+
+def test_normalise_bounds_a_call_that_set_no_timeout():
+    """The vendored clients build their own OpenAI() with no timeout, so they
+    inherit the SDK's 600 s read timeout and 2 retries: one request the server
+    never answers costs 1800 s and fails the user. Measured twice, exactly."""
+    out = mc.normalise_chat_params({"model": "gpt-5-mini", "messages": []})
+    assert out["timeout"] == mc.VENDORED_REQUEST_TIMEOUT_SECONDS
+    # Not a reasoning-model-only rewrite — a stall is model-agnostic.
+    out = mc.normalise_chat_params({"model": "gpt-4.1", "messages": []})
+    assert out["timeout"] == mc.VENDORED_REQUEST_TIMEOUT_SECONDS
+
+
+def test_normalise_leaves_a_caller_supplied_timeout_alone():
+    """A caller that thought about its own deadline keeps it."""
+    out = mc.normalise_chat_params({"model": "gpt-5-mini", "messages": [], "timeout": 30})
+    assert out["timeout"] == 30
 
 
 def test_normalise_drops_max_tokens_for_reasoning_models():
