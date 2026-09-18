@@ -103,6 +103,53 @@ def test_finalizing_an_already_named_dir_is_a_no_op():
         assert (again_id, again_dir, is_dup) == (final_id, final_dir, False)
 
 
+def test_a_harness_is_its_whole_code_tree_not_just_the_top_level():
+    """A packaged baseline keeps its method under baselines/harness/<name>/;
+    hashing only top-level files would give every such package the same
+    identity, and copying only top-level files leaves the method behind (the
+    container then fails with "No module named 'baselines'")."""
+    with _workspace():
+        a = _pending()
+        (a / "baselines" / "harness" / "mem0").mkdir(parents=True)
+        (a / "baselines" / "harness" / "mem0" / "memo.py").write_text(
+            "MEMO = 1\n", encoding="utf-8")
+        b = _pending()
+        (b / "baselines" / "harness" / "mem0").mkdir(parents=True)
+        (b / "baselines" / "harness" / "mem0" / "memo.py").write_text(
+            "MEMO = 2\n", encoding="utf-8")       # same top level, different method
+
+        id_a, dir_a, _ = O._finalize_harness_dir(a)
+        id_b, dir_b, dup = O._finalize_harness_dir(b)
+        assert id_a != id_b and not dup, "the subtree is part of the identity"
+        assert (dir_a / "baselines" / "harness" / "mem0" / "memo.py").exists()
+
+        copied = paths.harnesses_dir / "copy"
+        O._copy_harness_code(dir_a, copied)
+        assert (copied / "baselines" / "harness" / "mem0" / "memo.py").read_text() == "MEMO = 1\n"
+        assert (copied / "meta.json").exists(), "meta travels with the code"
+
+
+def test_results_are_not_part_of_the_code():
+    """Eval artifacts must not enter the hash — otherwise a harness's identity
+    changes the moment it is evaluated — nor be copied as if they were code."""
+    with _workspace():
+        _, harness, _ = O._finalize_harness_dir(_pending())
+        before = O._compute_content_hash(harness)
+
+        (harness / "locomo" / "traces").mkdir(parents=True)
+        (harness / "locomo" / "score.json").write_text("{}", encoding="utf-8")
+        (harness / "runs").mkdir()
+        (harness / "runs" / "leftover.json").write_text("{}", encoding="utf-8")
+        (harness / "sanity_status.txt").write_text("passed", encoding="utf-8")
+        assert O._compute_content_hash(harness) == before
+
+        copied = paths.harnesses_dir / "copy"
+        O._copy_harness_code(harness, copied)
+        assert not (copied / "locomo").exists() and not (copied / "runs").exists()
+        assert not (copied / "sanity_status.txt").exists()
+        assert (copied / "harness.py").exists()
+
+
 # ---------------- history.json ----------------
 
 def test_history_records_each_step_in_order():

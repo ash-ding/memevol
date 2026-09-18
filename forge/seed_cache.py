@@ -53,8 +53,7 @@ from forge.paths import PROJECT_ROOT, SEEDS_DIR
 
 log = get_logger("main")
 
-#: Files that make up a harness (everything else in the dir is eval output).
-_CODE_GLOBS = ("harness.py", "meta.json", "requirements.txt", "*.py")
+
 
 #: Per-dataset artifacts worth keeping. Traces are big and kept anyway — they
 #: are the only record of what the harness actually answered, which is the
@@ -120,11 +119,10 @@ def lookup(harness_id: str, key: str) -> Optional[Path]:
 
 
 def _copy_code(harness_dir: Path, dst: Path) -> None:
-    dst.mkdir(parents=True, exist_ok=True)
-    for pattern in _CODE_GLOBS:
-        for src in sorted(harness_dir.glob(pattern)):
-            if src.is_file():
-                shutil.copy2(src, dst / src.name)
+    """Code in, results out — see `forge.orchestrator._copy_harness_code`,
+    which owns the rule (a harness can be one file or a whole package tree)."""
+    from forge.orchestrator import _copy_harness_code
+    _copy_harness_code(harness_dir, dst)
 
 
 def store(harness_dir: Path, harness_id: str, cfg: Dict[str, Any],
