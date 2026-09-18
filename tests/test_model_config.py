@@ -80,13 +80,25 @@ def test_normalise_drops_max_tokens_for_reasoning_models():
     assert "max_completion_tokens" not in out, "a 4-series cap is not a reasoning cap"
 
 
-def test_normalise_keeps_a_cap_the_caller_wrote_for_this_model():
-    """`max_completion_tokens` is the reasoning models' own parameter — the
-    caller meant it, so it stands."""
+def test_normalise_raises_a_starving_completion_cap():
+    """mem0 maps its own max_tokens=2000 to max_completion_tokens for the GPT-5
+    family. That budget covers REASONING too: measured on gpt-5-mini, an
+    extraction call spends all 2000 thinking and returns empty content, so the
+    memory system stores nothing and every answer is a guess."""
     out = mc.normalise_chat_params(
         {"model": "o3", "max_tokens": 10, "max_completion_tokens": 99})
-    assert out["max_completion_tokens"] == 99
+    assert out["max_completion_tokens"] == mc.REASONING_MIN_COMPLETION_TOKENS
     assert "max_tokens" not in out
+
+
+def test_normalise_keeps_a_cap_that_already_has_room():
+    out = mc.normalise_chat_params({"model": "gpt-5-mini", "max_completion_tokens": 40000})
+    assert out["max_completion_tokens"] == 40000, "a caller asking for more keeps it"
+
+
+def test_normalise_adds_no_cap_where_there_was_none():
+    out = mc.normalise_chat_params({"model": "gpt-5-mini", "messages": []})
+    assert "max_completion_tokens" not in out
 
 
 def test_normalise_leaves_the_four_series_alone():

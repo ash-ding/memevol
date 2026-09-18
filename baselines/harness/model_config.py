@@ -321,6 +321,17 @@ _RESTRICTED_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 _DROPPED_PARAMS = ("temperature", "top_p", "presence_penalty", "frequency_penalty",
                    "max_tokens")
 
+#: Smallest completion budget we will let a vendored caller impose on a
+#: reasoning model. The budget covers REASONING as well as the answer, and the
+#: vendored numbers were all chosen for 4-series models: the caps found under
+#: `baselines/harness/*/src/` run from 10 to 2048, and mem0's own GPT-5 mapping
+#: sends 2000. Measured on gpt-5-mini: at 2000 an extraction call spends the
+#: whole budget thinking and returns EMPTY content (or, on a 30 k-char prompt,
+#: never returns at all); with room to finish it answers in seconds. Matches
+#: `common.llm.Agent`'s own default, so vendored and first-party calls get the
+#: same headroom.
+REASONING_MIN_COMPLETION_TOKENS = 16384
+
 _params_patched = False
 
 
@@ -337,7 +348,8 @@ def normalise_chat_params(kwargs: Dict[str, Any]) -> Dict[str, Any]:
         is split into ``model`` + ``reasoning_effort``. Vendored clients pass
         the configured string straight through and would 400 on the suffix;
       * for a reasoning model, ``temperature``/``top_p``/the penalties AND
-        ``max_tokens`` are dropped.
+        ``max_tokens`` are dropped, and a completion cap below
+        ``REASONING_MIN_COMPLETION_TOKENS`` is raised to it.
 
     `max_tokens` used to be RENAMED to `max_completion_tokens`, on the
     reasoning that the caller means to cap the generation. That was wrong, and
@@ -367,6 +379,13 @@ def normalise_chat_params(kwargs: Dict[str, Any]) -> Dict[str, Any]:
 
     for name in _DROPPED_PARAMS:
         out.pop(name, None)
+
+    # A cap the vendored code set ITSELF (mem0 maps its max_tokens to this for
+    # the GPT-5 family) is kept, but never below the floor: a 4-series budget
+    # leaves a reasoning model nothing to answer with.
+    cap = out.get("max_completion_tokens")
+    if isinstance(cap, int) and cap < REASONING_MIN_COMPLETION_TOKENS:
+        out["max_completion_tokens"] = REASONING_MIN_COMPLETION_TOKENS
     return out
 
 
