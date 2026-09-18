@@ -84,7 +84,7 @@ def _load_harness_class(harness_dir: Path) -> Type[MemoClass]:
         ) from exc
     except Exception as exc:
         raise ImportError(
-            f"harness.py raised at import time: [{type(exc).__name__}] {exc}"
+            f"{harness_py.name} raised at import time: [{type(exc).__name__}] {exc}"
         ) from exc
     from common.memo_select import select_memo_class
     # Only classes DEFINED in this harness file (not imported bases), concrete first.

@@ -7,7 +7,7 @@ models, and the same bill. This module keeps those results instead.
 Layout — code once, results once per configuration::
 
     seeds/<harness hash>/
-        harness.py  meta.json  requirements.txt   the code (identical to the
+        memo.py  src/  meta.json  requirements.txt   the code (identical to the
                                                   workspace dir it came from)
         index.json                                {harness_id, first_seen, evals}
         evals/<eval key>/

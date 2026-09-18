@@ -346,14 +346,17 @@ def test_no_memory_is_a_registered_baseline_that_answers_from_nothing():
     assert not hasattr(memo, "use_memory_to_answer")
 
 
-def test_no_memory_also_ships_the_forge_harness_shape():
-    """The same method written against forge's contract, so a workspace can
-    seed from it before it has ever been cached."""
+def test_no_memory_is_seedable_straight_from_the_baselines_tree():
+    """One file serves both roles now: `memo.py` IS forge's interface, so a
+    workspace can seed from the baseline directly, with no second copy of the
+    same method written against a separate contract."""
     from forge.contract import load_harness_class
     from forge.paths import PROJECT_ROOT
 
     cls = load_harness_class(PROJECT_ROOT / "baselines" / "harness" / "no_memory")
-    assert cls.__name__ == "NoMemoryHarness"
+    assert cls.__name__ == "NoMemoryMemo"
+    assert not (PROJECT_ROOT / "baselines" / "harness" / "no_memory" / "harness.py").exists(), \
+        "the old duplicate is back"
 
 
 def main():
