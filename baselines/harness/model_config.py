@@ -334,20 +334,25 @@ REASONING_MIN_COMPLETION_TOKENS = 16384
 
 #: Per-request read timeout for a vendored call that sets none.
 #:
-#: The vendored clients construct `OpenAI(api_key=..., base_url=...)` and pass
-#: no timeout, so they inherit the SDK's defaults: a 600 s read timeout and 2
-#: retries. A request the server never answers therefore costs 1800 s and then
-#: kills the user — measured exactly, twice: 1802 s of build phase with ONE
-#: embedding call recorded and no chat completion at all. Meanwhile a probe
-#: issued against the same endpoint mid-stall returned in 2 s, so the endpoint
-#: was healthy and that one request was stuck.
+#: The vendored clients build their own `OpenAI(api_key=..., base_url=...)` and
+#: pass no timeout, so they inherit the SDK's defaults: a 600 s read timeout
+#: and 2 retries. One request that does not come back therefore costs 1800 s
+#: and takes the user down with it — measured to the second, twice: 1802 s of
+#: build phase with a single embedding call recorded and no chat completion at
+#: all.
 #:
-#: Real calls at the effort we package with land in 2-5 s, and the slowest
-#: whole session of mem0 updates measured 26 s, so 180 s is ~7x the slowest
-#: real call yet recovers a stall in three minutes instead of ten. It is
-#: deliberately NOT as short as the call times: `common.llm` documents that
-#: server-side queueing legitimately pushes latency up under concurrency, and
-#: a client timeout tight enough to fire on queueing causes a retry storm.
+#: The bound does not make a bad provider window succeed — one measured window
+#: stalled this same call at 150 s, 180 s and 900 s alike — it makes the run
+#: fail in minutes instead of half an hour, and lets a one-off stall be retried
+#: while the budget still allows it.
+#:
+#: 180 s is ~8x the slowest real call measured on mem0's extraction prompt
+#: (33.6 k-char system prompt + a conversation session): gpt-5-mini at low
+#: effort 15-23 s, at minimal 5-6 s, gpt-4.1-mini 2-3 s, and a whole 19-session
+#: build averaged 26 s per session. It is deliberately not tighter: `common.llm`
+#: documents that server-side queueing legitimately pushes latency up under
+#: concurrency, and a client timeout tight enough to fire on queueing causes a
+#: retry storm.
 VENDORED_REQUEST_TIMEOUT_SECONDS = 180.0
 
 _params_patched = False
