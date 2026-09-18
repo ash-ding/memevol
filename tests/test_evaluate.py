@@ -8,7 +8,7 @@ Covers:
   - benchmarks/dynamicmem/env.py::sample_items_staged (per-checkpoint A/C
     counts, nesting across stages, determinism)
   - benchmarks/locomo/env.py QA sampling (prefix nesting)
-  - benchmarks/longmemeval/env.py 300/200 stratified split
+  - benchmarks/longmemeval/env.py stratified split (sized by SEARCH_SIZE)
   - forge/orchestrator.py stages config schema (defaults, validation,
     old-field migration error, wire-spec normalization)
 """
@@ -104,7 +104,8 @@ def test_test_split_honours_sample_cap():
     assert len(locomo_tasks("test", 1)) == 1
     assert len(locomo_tasks("test", 2)) == 2
     assert locomo_tasks("test", 1) == locomo_tasks("test", 2)[:1], "prefix nesting"
-    assert len(locomo_tasks("test", 99)) == 4  # cap at available
+    from benchmarks.locomo.env import EVAL_SAMPLES
+    assert len(locomo_tasks("test", 99)) == EVAL_SAMPLES  # cap at available
 
     from benchmarks.longmemeval.env import get_task_list as lme_tasks
     assert len(lme_tasks("test", 5)) == 5
@@ -137,13 +138,14 @@ def test_locomo_cat5_excluded():
         assert all(qa["metadata"]["category"] != 5 for qa in qa20)
 
 
-# ---------------- LongMemEval: 300/200 split ----------------
+# ---------------- LongMemEval: stratified split ----------------
 
-def test_longmemeval_split_300_200():
+def test_longmemeval_split_sizes_follow_the_constant():
     from benchmarks.longmemeval.env import _compute_split, get_task_list
     search_qids, test_qids = _compute_split()
-    assert len(search_qids) == 300, f"search={len(search_qids)}"
-    assert len(test_qids) == 200, f"test={len(test_qids)}"
+    from benchmarks.longmemeval.env import SEARCH_SIZE
+    assert len(search_qids) == SEARCH_SIZE, f"search={len(search_qids)}"
+    assert len(search_qids) + len(test_qids) == 500, "every question is in exactly one split"
     assert not (set(search_qids) & set(test_qids))
     # prefix nesting of the task list
     t20 = get_task_list("search", 20)
@@ -165,7 +167,8 @@ def test_longmemeval_split_stratified():
     for qid in search_qids:
         by_type_search[type_of[qid]] = by_type_search.get(type_of[qid], 0) + 1
     for t, total in by_type_total.items():
-        expected = total * 300 / 500
+        from benchmarks.longmemeval.env import SEARCH_SIZE
+        expected = total * SEARCH_SIZE / 500
         got = by_type_search.get(t, 0)
         assert abs(got - expected) <= 2, f"{t}: got {got}, expected ~{expected:.0f}"
 
@@ -194,9 +197,11 @@ def test_config_defaults_fill():
     cfg = _resolve("datasets:\n  dynamicmem: {}\n  locomo: {}\n  longmemeval_s: {}\n")
     dm = cfg["datasets"]["dynamicmem"]["stages"]
     assert dm["sanity_check"] == {"n_users": 1, "n_checkpoints": 1, "n_task_a": 1, "n_task_c": 1}
-    assert dm["stage1"]["n_users"] == 2 and dm["stage1"]["n_checkpoints"] == 1
-    assert dm["stage2"]["n_users"] == 4 and dm["stage2"]["n_checkpoints"] == 3
-    assert dm["stage3"]["n_users"] == 6 and dm["stage3"]["n_checkpoints"] == 5
+    # The gauntlet grows within the search split (2 users since 2026-09-18),
+    # so most of the growth is checkpoints and items per user.
+    assert dm["stage1"]["n_users"] == 1 and dm["stage1"]["n_checkpoints"] == 1
+    assert dm["stage2"]["n_users"] == 2 and dm["stage2"]["n_checkpoints"] == 3
+    assert dm["stage3"]["n_users"] == 2 and dm["stage3"]["n_checkpoints"] == 5
     assert "threshold" in dm["stage1"] and "threshold" in dm["stage2"]
     assert "threshold" not in dm["stage3"]
     lc = cfg["datasets"]["locomo"]["stages"]
@@ -221,7 +226,7 @@ def test_config_partial_override():
     )
     s1 = cfg["datasets"]["dynamicmem"]["stages"]["stage1"]
     assert s1["threshold"] == 0.42
-    assert s1["n_users"] == 2 and s1["n_task_a"] == 5, "defaults not preserved under partial override"
+    assert s1["n_users"] == 1 and s1["n_task_a"] == 5, "defaults not preserved under partial override"
 
 
 def test_config_old_fields_error():
@@ -341,17 +346,20 @@ def test_single_stage_plan_missing_single_stage_raises():
 def test_get_task_list_none_means_whole_split():
     from benchmarks.locomo.env import get_task_list as locomo_list
     from benchmarks.longmemeval.env import get_task_list as lme_list
-    assert len(locomo_list("search", None)) == 6
-    assert len(locomo_list("test", None)) == 4
-    assert len(lme_list("search", None)) == 300
-    assert len(lme_list("test", None)) == 200
+    from benchmarks.locomo.env import EVAL_SAMPLES, TRAIN_SAMPLES
+    from benchmarks.longmemeval.env import SEARCH_SIZE
+    assert len(locomo_list("search", None)) == TRAIN_SAMPLES
+    assert len(locomo_list("test", None)) == EVAL_SAMPLES
+    assert len(lme_list("search", None)) == SEARCH_SIZE
+    assert len(lme_list("test", None)) == 500 - SEARCH_SIZE
     # capped behavior unchanged
     assert len(locomo_list("test", 2)) == 2
     assert len(lme_list("test", 50)) == 50
     from benchmarks.dynamicmem.env import get_task_list as dm_list
     if os.path.isdir(os.path.join(REPO, "benchmarks", "dynamicmem", "user_data")):
-        assert len(dm_list("test", None)) == 4
-        assert len(dm_list("search", None)) == 6
+        from benchmarks.dynamicmem.env import EVAL_USERS, TRAIN_USERS
+        assert len(dm_list("test", None)) == EVAL_USERS
+        assert len(dm_list("search", None)) == TRAIN_USERS
 
 
 def test_locomo_full_qa_is_all_cat14():
@@ -555,7 +563,10 @@ def test_build_objectives_no_mean():
             "locomo": {"raw_score": 0.42, "score_max": 1, "stage": 3.0, "tokens": 100},
             "dynamicmem": {"raw_score": 0.31, "score_max": 1, "stage": 3.0, "tokens": 50},
         }
-        obj = _build_objectives(per_ds, __import__("pathlib").Path(hd))
+        # Cost axes are recorded only for a run that asked for them (the
+        # `metrics:` setting); accuracy axes are always there.
+        obj = _build_objectives(per_ds, __import__("pathlib").Path(hd),
+                                ["accuracy", "efficiency"])
     assert "accuracy" not in obj            # NO mean
     assert obj["accuracy_locomo"] == 0.42
     assert obj["accuracy_dynamicmem"] == 0.31

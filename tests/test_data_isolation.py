@@ -139,7 +139,8 @@ def test_no_manifest_recomputes_normally():
         s, t = lme._compute_split()
     finally:
         lme._SPLIT_CACHE = orig_cache
-    assert len(s) == 300 and len(t) == 200
+    from benchmarks.longmemeval.env import SEARCH_SIZE
+    assert len(s) == SEARCH_SIZE and len(s) + len(t) == 500
 
 
 # ---------------- orchestrator gating ----------------
