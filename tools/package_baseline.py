@@ -246,7 +246,7 @@ def package(name: str, arm: str, unified_models: Dict[str, str] | None,
     return out
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("baseline", help="a name under baselines/harness/ (e.g. mem0)")
     p.add_argument("--arm", default="faithful", choices=["faithful", "unified"])
@@ -258,7 +258,11 @@ def main() -> None:
                    help="arm=unified only: the embedder (must be an API model)")
     p.add_argument("--out", type=Path, required=True,
                    help="directory to write the packaged harness into (replaced)")
-    args = p.parse_args()
+    return p
+
+
+def main() -> None:
+    args = build_parser().parse_args()
 
     unified = ({"llm": args.unified_llm, "embedding": args.unified_embedding}
                if args.arm == "unified" else None)

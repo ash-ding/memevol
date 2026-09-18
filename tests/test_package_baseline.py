@@ -117,6 +117,24 @@ def test_a_vendored_baseline_travels_with_its_src_and_resolved_config():
         assert cls(config={"mem0_llm_model": "x"}).config == {"mem0_llm_model": "x"}
 
 
+def test_the_unified_arm_is_packaged_at_low_reasoning_effort():
+    """These methods batch large prompts and carry their own client timeouts
+    (mem0's is 600 s). At default effort gpt-5-mini thinks past it on every
+    extraction call, so the run records nothing; at /low the same call returns
+    in seconds. The suffix is the repo convention, and it has to be one the
+    shim actually understands — a typo would reach the SDK verbatim and 400."""
+    from tools.package_baseline import build_parser
+    from baselines.harness.model_config import normalise_chat_params
+
+    args = build_parser().parse_args(["mem0", "--arm", "unified", "--out", "x"])
+    model = args.unified_llm
+    assert model.endswith("/low"), f"the unified default lost its effort suffix: {model}"
+
+    out = normalise_chat_params({"model": model, "messages": []})
+    assert out["model"] == model.split("/")[0]
+    assert out["reasoning_effort"] == "low"
+
+
 def main():
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = []
