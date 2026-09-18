@@ -25,6 +25,10 @@ What's NOT bound (vs the previous /app:ro bind):
   - /app/.git, /app/baselines, /app/docs, /app/CLAUDE.md, /app/configs, etc.
   - /app/forge/{orchestrator,proposer,evaluator,...}.py (host-side outer-loop)
   - /app/seeds          (evaluator never reads seeds)
+
+Bound in addition to the source tree: the host's Hugging Face cache, at
+/hf-cache. `--containall` gives the container its own HOME, so a local model
+would otherwise be downloaded again on every single eval.
   - /app/venv           (container has its own python env)
 
 Uses alma's dual-signal wait: race process.communicate() against score.json
@@ -125,6 +129,12 @@ async def run_evaluation(
             except OSError as exc:
                 log.warning(f"evaluator: could not remove stale {fname}: {exc}")
 
+    # Where the shared model cache lives on the host: the operator's HF_HOME
+    # when they set one (penguin points it at scratch), else the standard
+    # location. Created if absent so the bind never fails on a fresh machine.
+    hf_cache = Path(os.environ.get("HF_HOME") or (Path.home() / ".cache" / "huggingface"))
+    hf_cache.mkdir(parents=True, exist_ok=True)
+
     env_vals = dotenv_values(str(PROJECT_ROOT / ".env"))
     openai_key = env_vals.get("OPENAI_API_KEY", os.environ.get("OPENAI_API_KEY", ""))
     anthropic_key = env_vals.get("ANTHROPIC_API_KEY", os.environ.get("ANTHROPIC_API_KEY", ""))
@@ -150,6 +160,12 @@ async def run_evaluation(
         "--bind", f"{PROJECT_ROOT}/forge/memo_class.py:/app/forge/memo_class.py:ro",
         "--bind", f"{harness_dir}:/harness:ro",
         "--bind", f"{out_dir}:/out:rw",
+        # One Hugging Face cache, shared by every eval. `--containall` gives
+        # the container its own HOME, so without this each run re-downloads
+        # whatever local model it uses — zep alone pulls bge-m3 plus its
+        # cross-encoder, ~4.5 GB, every single time. Writable on purpose: a
+        # read-only cache still makes huggingface_hub try to take its locks.
+        "--bind", f"{hf_cache}:/hf-cache:rw",
     ]
     # Search-mode data isolation: overlay binds that shadow the test split
     # inside /app/benchmarks (see forge/data_isolation.py). Passed only for
@@ -182,6 +198,9 @@ async def run_evaluation(
         # the per-run out dir so they're writable and colocated with artifacts.
         "--env", "EVALS_LOG_DIR=/out",
         "--env", "MEMEVOL_LOG_FILE=subprocess.log",
+        # Point every HF loader at the shared cache bound above.
+        "--env", "HF_HOME=/hf-cache",
+        "--env", "HUGGINGFACE_HUB_CACHE=/hf-cache/hub",
         str(image_path),
         "python", "/app/forge/launch.py",
         "--harness-dir", "/harness",
