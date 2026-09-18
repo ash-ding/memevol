@@ -218,6 +218,35 @@ def test_the_sdk_patch_caps_how_many_calls_are_in_flight():
     assert peak[0] > 1, "the gate must not serialise every call"
 
 
+def test_a_vendored_client_gets_retries_it_did_not_ask_for():
+    """Retries are a client setting, not a per-request one, so this is the one
+    default that has to be installed at construction. zep measured why it
+    matters: 799 build calls succeeded, then one timed out three times and the
+    whole 75-minute build scored 0.000."""
+    mc.install_openai_client_defaults()
+    import openai
+
+    assert openai.OpenAI(api_key="k").max_retries == mc.VENDORED_MAX_RETRIES
+    assert openai.AsyncOpenAI(api_key="k").max_retries == mc.VENDORED_MAX_RETRIES
+
+
+def test_a_client_that_chose_its_own_retries_keeps_them():
+    mc.install_openai_client_defaults()
+    import openai
+
+    assert openai.OpenAI(api_key="k", max_retries=1).max_retries == 1
+
+
+def test_installing_the_client_defaults_twice_does_not_stack_wrappers():
+    mc.install_openai_client_defaults()
+    import openai
+
+    before = openai.OpenAI.__init__
+    mc.install_openai_client_defaults()
+    assert openai.OpenAI.__init__ is before
+    assert not hasattr(openai.OpenAI.__init__._real_init, "_real_init")
+
+
 def test_sdk_patch_is_idempotent():
     from openai.resources.chat.completions import AsyncCompletions, Completions
 

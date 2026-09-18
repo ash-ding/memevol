@@ -371,6 +371,58 @@ VENDORED_REQUEST_TIMEOUT_SECONDS = 180.0
 #: charged against it.
 VENDORED_MAX_CONCURRENT = 8
 
+#: How many times a vendored call is retried when its client did not say.
+#:
+#: The SDK's default is 2 — three attempts — and `common.llm.Agent` already
+#: documents why that is too few for this API: "Do not set max_retries < 5
+#: unless you have a specific reason", because transient timeouts and 5xx are
+#: routine and a dropped call silently loses work. Our own calls follow that;
+#: the vendored ones were getting 2, which is the same inconsistency the
+#: timeout default fixed.
+#:
+#: zep measured the cost: 799 build calls succeeded at 5.6 s each, then one
+#: timed out three times and took the whole 75-minute build down with it,
+#: scoring 0.000. At 799 calls even a 0.1% per-call failure rate fails a run
+#: better than half the time, so the call count decides how much headroom a
+#: baseline needs — not how well it is written.
+VENDORED_MAX_RETRIES = 5
+
+_clients_patched = False
+
+
+def install_openai_client_defaults() -> None:
+    """Give a vendored `OpenAI(...)` more retries when it asked for none.
+
+    Retries are a CLIENT setting — `chat.completions.create` takes `timeout`
+    but not `max_retries` — so unlike the other rewrites this one has to
+    happen at construction. Patched on the classes, since the vendored code
+    builds its own clients whenever it likes. Idempotent.
+    """
+    global _clients_patched
+    if _clients_patched:
+        return
+    try:
+        import openai
+    except Exception:
+        return
+
+    def _wrap(cls):
+        real = cls.__init__
+
+        def __init__(self, *args, **kwargs):
+            kwargs.setdefault("max_retries", VENDORED_MAX_RETRIES)
+            return real(self, *args, **kwargs)
+
+        __init__._real_init = real   # type: ignore[attr-defined]
+        cls.__init__ = __init__
+
+    for name in ("OpenAI", "AsyncOpenAI"):
+        cls = getattr(openai, name, None)
+        if cls is not None and not hasattr(cls.__init__, "_real_init"):
+            _wrap(cls)
+    _clients_patched = True
+
+
 _sync_gate = threading.BoundedSemaphore(VENDORED_MAX_CONCURRENT)
 _async_gates: "Dict[int, Any]" = {}
 _async_gates_lock = threading.Lock()
@@ -465,6 +517,7 @@ def install_openai_param_normalisation() -> None:
     times — this catches all of them, including ones built before this call.
     Idempotent; a no-op if the SDK layout is unrecognised.
     """
+    install_openai_client_defaults()
     global _params_patched
     if _params_patched:
         return
