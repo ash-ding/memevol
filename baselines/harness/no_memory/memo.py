@@ -22,16 +22,19 @@ contract (`forge/memo_class.py`), for use as a forge seed. Two entry shapes
 for one trivial method: `memo.py` is what `eval_harness` evaluates, and
 `harness.py` is what a forge workspace copies in and runs in-container.
 """
-from typing import Any, Dict
+from typing import Dict
 
 from common.memo_class import MemoClass
 
 # No method knobs: there is no method. Declared anyway so `--describe` and
-# `resolve_memo_config` behave uniformly across the registry.
-CONFIG_DEFAULTS: Dict[str, Any] = {}
+# `resolve_memo_config` behave uniformly across the registry. Written as plain
+# assignments, like every other baseline: tests/test_model_config.py reads
+# these out of the source with ast.literal_eval and an annotated assignment
+# reads as "not declared".
+CONFIG_DEFAULTS = {}
 
 # `arm: unified` has nothing to switch here — this baseline calls no model.
-UNIFIED_MODEL_KEYS: Dict[str, Any] = {}
+UNIFIED_MODEL_KEYS = {}
 
 
 class NoMemoryMemo(MemoClass):
