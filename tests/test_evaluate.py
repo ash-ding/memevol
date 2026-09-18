@@ -205,7 +205,8 @@ def test_config_defaults_fill():
     assert "threshold" in dm["stage1"] and "threshold" in dm["stage2"]
     assert "threshold" not in dm["stage3"]
     lc = cfg["datasets"]["locomo"]["stages"]
-    assert lc["stage1"] == {"n_conversations": 2, "n_qa": 20, "threshold": lc["stage1"]["threshold"]}
+    from common.evaluate import DEFAULT_STAGES
+    assert lc["stage1"] == dict(DEFAULT_STAGES["locomo"]["stage1"])
     lme = cfg["datasets"]["longmemeval_s"]["stages"]
     assert lme["stage3"] == {"n_questions": 100}
     # per-dataset judge_model default still applied
