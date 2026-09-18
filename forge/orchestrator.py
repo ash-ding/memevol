@@ -1339,8 +1339,14 @@ def _build_objectives(
                                  entries stay absent rather than look free.
 
     Harness-level fields (single value):
-      - `code_length`            bytes of the harness's whole code tree
-                                 (rough simplicity proxy; lower = simpler)
+      - `code_length`            bytes of the harness's whole code tree.
+                                 RECORDED, NOT AN OBJECTIVE: nothing selects
+                                 on it and neither direction is better — a
+                                 long implementation that generalizes and
+                                 scores well is a good harness, and for a
+                                 packaged baseline most of the bytes are the
+                                 vendored method anyway. Kept because "how
+                                 big was it" is worth knowing after the fact.
       - `tokens_total`           sum of total_tokens across all datasets and models
                                  (rough $-cost proxy; lower = cheaper)
 
@@ -1396,10 +1402,11 @@ def _build_objectives(
             out.update(phase_totals)
 
     # Harness-level: code_length over the WHOLE code tree, not the entry file
-    # alone. A harness is its tree (see _code_files), so measuring memo.py
-    # would both understate a packaged baseline — mem0's entry is a 2.5 KB
-    # wrapper over 58 vendored files — and hand the proposer a way to shrink
-    # the number without simplifying anything, by moving code into src/.
+    # alone. A harness is its tree (see _code_files), and measuring memo.py
+    # alone understated a packaged baseline badly — mem0's entry is a 3 KB
+    # wrapper over 62 files totalling ~530 KB. It is telemetry, not an axis:
+    # the proposer is told plainly that neither direction is better, so there
+    # is nothing here to optimize toward or away from.
     # Best-effort: a crashed propose that wrote nothing records 0.
     try:
         out["code_length"] = sum(f.stat().st_size for f in _code_files(harness_dir))
