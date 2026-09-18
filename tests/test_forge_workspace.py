@@ -44,7 +44,7 @@ def _pending(body="# harness body\n", meta=None):
     """A harness dir as the proposer leaves it: pending name, code inside."""
     d = paths.harnesses_dir / O._new_pending_id()
     d.mkdir(parents=True)
-    (d / "harness.py").write_text(body, encoding="utf-8")
+    (d / "memo.py").write_text(body, encoding="utf-8")
     (d / "meta.json").write_text(json.dumps(meta or {"parent_ids": ["abc123def456"]}),
                                  encoding="utf-8")
     return d
@@ -147,7 +147,7 @@ def test_results_are_not_part_of_the_code():
         O._copy_harness_code(harness, copied)
         assert not (copied / "locomo").exists() and not (copied / "runs").exists()
         assert not (copied / "sanity_status.txt").exists()
-        assert (copied / "harness.py").exists()
+        assert (copied / "memo.py").exists()
 
 
 # ---------------- history.json ----------------

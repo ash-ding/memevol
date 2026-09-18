@@ -31,7 +31,7 @@ CLI flags always override the config file when both are given. See
 Outputs (per-run, under workspace/<run_id>/):
     harnesses/<hash>/<dataset>/         full-eval score + traces
     harnesses/<hash>/<dataset>/sanity/  small sanity-check score + traces
-    harnesses/<hash>/harness.py         the harness code itself
+    harnesses/<hash>/memo.py            the harness's interface
     harnesses/<hash>/meta.json          parent_ids, description, content_hash, created_at
     frontier.json                       population snapshot (with sanity_status)
     history.json                        which harnesses each step produced, in order
@@ -75,6 +75,8 @@ from forge.env_builder import EnvBuildError, ensure_image
 from forge.evaluator import run_evaluation
 from benchmarks.registry import DATASETS
 from forge.paths import (
+    ENTRY_FILE,
+    entry_file,
     LOGS_DIR,
     PROJECT_ROOT,
     SEEDS_DIR,
@@ -108,7 +110,7 @@ class ProposerInfraError(RuntimeError):
     Distinct from harness-level failures (sanity_failed, env_build, eval crash)
     which the search loop continues past — those are CC's design mistakes that
     the search is supposed to learn from. ProposerInfraError means the proposer
-    subprocess never completed (no harness.py written), so there's no signal
+    subprocess never completed (no memo.py written), so there's no signal
     to learn from and continuing would just generate a placeholder entry that
     pollutes the frontier and confuses resume logic.
 
@@ -258,7 +260,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         # agent writes the first harness from scratch with parent_ids=[].
         #
         # Each source is either a cached harness id under seeds/ (which comes
-        # with its results) or a path to a directory holding harness.py (a
+        # with its results) or a path to a directory holding memo.py (a
         # method that has never been through forge, e.g.
         # baselines/harness/no_memory). Several are allowed: step 0 then holds
         # one directory per seed.
@@ -878,7 +880,7 @@ def _resolve_metrics(value: Any) -> List[str]:
 #: A harness is named by the content hash of its code, so the name says WHAT
 #: the harness is rather than when it arrived (order lives in history.json).
 #: While the proposer is still writing — and while the sanity-fix loop may
-#: still rewrite harness.py — the code has no final identity, so the dir gets
+#: still rewrite memo.py — the code has no final identity, so the dir gets
 #: a pending name and is renamed once the code settles.
 HARNESS_ID_LEN = 12
 _PENDING_RX = re.compile(r"^pending_[0-9a-f]{8}$")
@@ -973,7 +975,7 @@ def _history_record(harness_id: str, sanity_status: str,
 #: (one dir per dataset, plus the evaluator's transient runs/), the cache's own
 #: index, and status files the pipeline writes next to the code. Everything
 #: else in the directory IS the harness — a proposal is usually just
-#: harness.py, but a packaged baseline (tools/package_baseline.py) brings a
+#: memo.py, but a packaged baseline (tools/package_baseline.py) brings a
 #: whole package tree with it.
 _NON_CODE_DIRS = frozenset({"runs", "evals", "__pycache__", ".git"}) | frozenset(DATASETS)
 _NON_CODE_FILES = frozenset({
@@ -1008,9 +1010,8 @@ def _compute_content_hash(harness_dir: Path) -> str:
     top-level files alone would give every packaged baseline with the same
     requirements the same identity.
     """
-    harness_py = harness_dir / "harness.py"
-    if not harness_py.exists():
-        raise FileNotFoundError(f"harness.py missing in {harness_dir}")
+    if entry_file(harness_dir) is None:
+        raise FileNotFoundError(f"{ENTRY_FILE} missing in {harness_dir}")
     h = hashlib.sha256()
     for path in _code_files(harness_dir):
         h.update(str(path.relative_to(harness_dir)).encode("utf-8"))
@@ -1095,12 +1096,12 @@ def _resolve_seed_source(seed_source: str) -> Optional[Path]:
     `baselines/harness/no_memory`, which is code only.
     """
     cached = SEEDS_DIR / seed_source
-    if (cached / "harness.py").exists():
+    if entry_file(cached) is not None:
         return cached
     as_path = Path(seed_source)
     if not as_path.is_absolute():
         as_path = PROJECT_ROOT / as_path
-    if (as_path / "harness.py").exists():
+    if entry_file(as_path) is not None:
         return as_path
     return None
 
@@ -1120,7 +1121,7 @@ def _bootstrap_seed(seed_source: str) -> Optional[str]:
         log.error(
             f"seed source not found: {seed_source!r}. Give either a cached "
             f"harness id under seeds/ (currently {cached or 'empty — nothing has been evaluated yet'}) "
-            f"or a path to a directory holding harness.py "
+            f"or a path to a directory holding memo.py "
             f"(e.g. baselines/harness/no_memory). Or run with --no-seed."
         )
         return None
@@ -1338,7 +1339,8 @@ def _build_objectives(
                                  entries stay absent rather than look free.
 
     Harness-level fields (single value):
-      - `code_length`            bytes of harness.py (rough simplicity proxy; lower = simpler)
+      - `code_length`            bytes of the harness's whole code tree
+                                 (rough simplicity proxy; lower = simpler)
       - `tokens_total`           sum of total_tokens across all datasets and models
                                  (rough $-cost proxy; lower = cheaper)
 
@@ -1393,10 +1395,14 @@ def _build_objectives(
         if any_phase_data:
             out.update(phase_totals)
 
-    # Harness-level: code_length (best-effort; missing harness.py from a crashed
-    # propose just means we record 0 rather than crashing).
+    # Harness-level: code_length over the WHOLE code tree, not the entry file
+    # alone. A harness is its tree (see _code_files), so measuring memo.py
+    # would both understate a packaged baseline — mem0's entry is a 2.5 KB
+    # wrapper over 58 vendored files — and hand the proposer a way to shrink
+    # the number without simplifying anything, by moving code into src/.
+    # Best-effort: a crashed propose that wrote nothing records 0.
     try:
-        out["code_length"] = (harness_dir / "harness.py").stat().st_size
+        out["code_length"] = sum(f.stat().st_size for f in _code_files(harness_dir))
     except OSError:
         out["code_length"] = 0
 
@@ -1650,7 +1656,7 @@ async def propose_eval_one(
 
     Returns (final_id, per_dataset_scores, sanity_status, parent_ids):
       - final_id: harness id after the content-hash rename (e.g.
-        "a1b2c3d4e5f6"); falls back to the pending id when no harness.py was
+        "a1b2c3d4e5f6"); falls back to the pending id when no memo.py was
         produced (proposer-failure path).
       - sanity_status: "passed" / "failed" / "skipped" / "passed_on_retry_N"
         (also "proposer_failed" / "env_build_failed").
@@ -1682,7 +1688,7 @@ async def propose_eval_one(
     def _settle_path() -> None:
         """Rename harness_dir → its content hash. Updates outer-scope vars."""
         nonlocal harness_dir, final_id, duplicate_of
-        if (harness_dir / "harness.py").exists() and not _HARNESS_ID_RX.match(harness_dir.name):
+        if entry_file(harness_dir) is not None and not _HARNESS_ID_RX.match(harness_dir.name):
             final_id, harness_dir, is_dup = _finalize_harness_dir(harness_dir)
             if is_dup:
                 duplicate_of = final_id
@@ -1711,12 +1717,12 @@ async def propose_eval_one(
             )
         except (TimeoutError, RuntimeError) as exc:
             # propose() failed — most likely subprocess exited rc!=0 (auth 401,
-            # SDK timeout, or other infra error). harness.py was almost
+            # SDK timeout, or other infra error). memo.py was almost
             # certainly never written. Clean up the empty harness dir so resume
             # isn't polluted, then propagate ProposerInfraError to abort the
             # search loop. main() catches it and sys.exit(2).
             log.error(f"proposer failed for {new_id}: {exc}")
-            if harness_dir.exists() and not (harness_dir / "harness.py").exists():
+            if harness_dir.exists() and entry_file(harness_dir) is None:
                 shutil.rmtree(harness_dir, ignore_errors=True)
                 log.info(f"cleaned up empty harness dir {harness_dir}")
             raise ProposerInfraError(
@@ -1788,7 +1794,7 @@ async def propose_eval_one(
                 )
             except (TimeoutError, RuntimeError) as exc:
                 # propose_with_fix subprocess died — same infra failure mode as
-                # propose() above. harness.py from the original propose still
+                # propose() above. memo.py from the original propose still
                 # exists (don't delete the dir), but we abort the loop because
                 # propose-side infra is unavailable. Resume picks up cleanly.
                 log.error(f"propose_with_fix failed for {new_id}: {exc}")
@@ -1876,7 +1882,7 @@ async def _seed_one(cfg: Dict[str, Any], source: str, frontier: Frontier,
         log.error(
             f"seed source not found: {source!r}. Give either a cached harness "
             f"id under seeds/ (currently {cached or 'empty — nothing has been evaluated yet'}) "
-            f"or a path to a directory holding harness.py "
+            f"or a path to a directory holding memo.py "
             f"(e.g. baselines/harness/no_memory)."
         )
         return None
@@ -2071,7 +2077,7 @@ async def search_loop(cfg: Dict[str, Any]) -> None:
 #   sanity_failed  hash-suffix dir + every <ds>/score.json contains
 #                  the "sanity_failed_after_retries" sentinel       →
 #                  build all-zero Entry, no eval
-#   incomplete     anything else (no harness.py, no hash suffix,
+#   incomplete     anything else (no memo.py, no hash suffix,
 #                  partial sanity, etc.)                            →
 #                  rm -rf the dir + warn
 # ---------------------------------------------------------------------------
@@ -2106,7 +2112,7 @@ def _classify_orphan(harness_dir: Path, dataset_names: List[str]) -> str:
     """Return 'complete' | 'sanity_passed' | 'sanity_failed' | 'incomplete'.
 
     Decision tree (in order):
-      - no harness.py                                  → 'incomplete'
+      - no memo.py                                     → 'incomplete'
       - dir still carries a pending name (Case B)      → 'incomplete'
       - meta.json missing or content_hash missing      → 'incomplete'
       - every <ds>/sanity/score.json present:
@@ -2117,7 +2123,7 @@ def _classify_orphan(harness_dir: Path, dataset_names: List[str]) -> str:
         sentinel                                       → 'sanity_failed'
       - else (partial / mixed-state)                   → 'incomplete'
     """
-    if not (harness_dir / "harness.py").exists():
+    if entry_file(harness_dir) is None:
         return "incomplete"
     if not _HARNESS_ID_RX.match(harness_dir.name):
         return "incomplete"
@@ -2194,12 +2200,12 @@ async def _adopt_orphan(
     if kind == "incomplete":
         log.warning(
             f"adoption: discarded incomplete orphan harnesses/{name} "
-            f"(missing harness.py / unsettled name / content_hash, or partial sanity/eval state)"
+            f"(missing memo.py / unsettled name / content_hash, or partial sanity/eval state)"
         )
         shutil.rmtree(harness_dir, ignore_errors=True)
         return None
 
-    # Defensive content_hash check: detects post-finalize edits to harness.py,
+    # Defensive content_hash check: detects post-finalize edits to memo.py,
     # which would mean the eval runs different code than the dir name claims.
     expected_hash = name
     try:
@@ -2215,7 +2221,7 @@ async def _adopt_orphan(
         log.warning(
             f"adoption: discarded harnesses/{name} — content_hash mismatch "
             f"(computed={actual_hash}, dir name={expected_hash}); "
-            f"harness.py was modified post-finalize"
+            f"memo.py was modified post-finalize"
         )
         shutil.rmtree(harness_dir, ignore_errors=True)
         return None
@@ -2326,7 +2332,7 @@ async def _adopt_orphan_dirs(cfg: Dict[str, Any], frontier: Frontier) -> int:
 # ---------------------------------------------------------------------------
 # Resume cleanup: drop polluting placeholder entries from prior partial runs.
 # Only `propose()`-failure entries (content_hash=None, integer-only id, empty
-# dir) are removed. Sanity-failed harnesses (have hash + harness.py) are kept
+# dir) are removed. Sanity-failed harnesses (have hash + memo.py) are kept
 # as legitimate "score=0 because design didn't pass sanity" data points.
 # ---------------------------------------------------------------------------
 
@@ -2346,7 +2352,7 @@ def _cleanup_polluting_entries(frontier: Frontier) -> int:
         # _finalize_harness_id sets content_hash) but defensively skip them.
         if "_" not in entry_id:
             harness_dir = paths.harnesses_dir / entry_id
-            if harness_dir.exists() and not (harness_dir / "harness.py").exists():
+            if harness_dir.exists() and entry_file(harness_dir) is None:
                 shutil.rmtree(harness_dir, ignore_errors=True)
                 n_dirs_removed += 1
     n_removed = frontier.remove_by_ids(polluting_ids)
@@ -2523,7 +2529,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--seed", dest="seed_sources", default=None,
                         help="Comma-separated seed sources for step 0: cached "
                              "harness ids under seeds/, or paths to dirs "
-                             "holding harness.py (e.g. "
+                             "holding memo.py (e.g. "
                              "baselines/harness/no_memory). Enables seeding.")
     parser.add_argument("--reuse-eval", action="store_true",
                         help="For a seed whose cached results were produced "

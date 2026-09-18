@@ -5,7 +5,7 @@ Zero-dependency runner (no pytest in the venvs):
     uv run python tests/test_heldout.py
 
 Covers:
-  - _stage_harness: copy-into-run isolation, missing-harness.py / duplicate-id
+  - _stage_harness: copy-into-run isolation, missing-memo.py / duplicate-id
     errors
   - heldout._run: ensure_image + evaluate_harness wiring (fakes), progressive & dataset
     dataset passthrough, heldout_results.json shape
@@ -48,7 +48,7 @@ def _test_workspace():
 def _mk_src_harness(td, name="3_abcd1234"):
     src = Path(td) / name
     src.mkdir()
-    (src / "harness.py").write_text("# harness body\n")
+    (src / "memo.py").write_text("# harness body\n")
     (src / "meta.json").write_text("{}")
     return src
 
@@ -61,10 +61,10 @@ def test_stage_harness_copies_and_isolates():
         hid = H._stage_harness(src)
         assert hid == "3_abcd1234"
         dst = paths.harnesses_dir / hid
-        assert (dst / "harness.py").exists() and (dst / "meta.json").exists()
+        assert (dst / "memo.py").exists() and (dst / "meta.json").exists()
         # source untouched, copies independent
-        (dst / "harness.py").write_text("mutated")
-        assert (src / "harness.py").read_text() == "# harness body\n"
+        (dst / "memo.py").write_text("mutated")
+        assert (src / "memo.py").read_text() == "# harness body\n"
 
 
 def test_stage_harness_rejects_missing_harness_py():
@@ -74,7 +74,7 @@ def test_stage_harness_rejects_missing_harness_py():
         try:
             H._stage_harness(empty)
         except SystemExit as exc:
-            assert "harness.py" in str(exc)
+            assert "memo.py" in str(exc)
         else:
             raise AssertionError("expected SystemExit")
 

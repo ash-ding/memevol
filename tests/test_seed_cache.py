@@ -55,7 +55,7 @@ def _evaluated_harness(root: Path, dataset="locomo", score=0.5):
     """A harness dir as it looks after an evaluation: code + results."""
     d = root / "abc123abc123"
     (d / dataset / "traces").mkdir(parents=True)
-    (d / "harness.py").write_text("# code\n", encoding="utf-8")
+    (d / "memo.py").write_text("# code\n", encoding="utf-8")
     (d / "meta.json").write_text('{"parent_ids": []}', encoding="utf-8")
     (d / dataset / "score.json").write_text(json.dumps({"raw_score": score}),
                                             encoding="utf-8")
@@ -99,7 +99,7 @@ def test_the_cache_it_writes_does_not_make_the_tree_dirty():
     with _temp_repo() as repo:
         clean = SC.repo_version()
         (repo / "seeds" / "abc123" / "evals").mkdir(parents=True)
-        (repo / "seeds" / "abc123" / "harness.py").write_text("# seed\n", encoding="utf-8")
+        (repo / "seeds" / "abc123" / "memo.py").write_text("# seed\n", encoding="utf-8")
         assert SC.repo_version() == clean
 
 
@@ -189,7 +189,7 @@ def test_store_keeps_the_code_the_results_and_a_readable_manifest():
 
         assert len(written) == 1
         entry = cache / "abc123abc123"
-        assert (entry / "harness.py").read_text() == "# code\n"
+        assert (entry / "memo.py").read_text() == "# code\n"
         assert not (entry / "locomo").exists(), "results live under evals/, not the code dir"
 
         result = written[0]
@@ -290,7 +290,7 @@ def test_restore_materialises_code_and_results_as_a_harness_dir():
         restored = SC.restore("abc123abc123", _CFG, ["locomo"], dst)
 
         assert restored is not None and set(restored) == {"locomo"}
-        assert (dst / "harness.py").read_text() == "# code\n"
+        assert (dst / "memo.py").read_text() == "# code\n"
         assert json.loads((dst / "locomo" / "score.json").read_text())["raw_score"] == 0.5
         assert (dst / "locomo" / "traces" / "u1.json").exists()
         assert not (dst / "locomo" / "manifest.json").exists(), \
@@ -346,14 +346,17 @@ def test_no_memory_is_a_registered_baseline_that_answers_from_nothing():
     assert not hasattr(memo, "use_memory_to_answer")
 
 
-def test_no_memory_also_ships_the_forge_harness_shape():
-    """The same method written against forge's contract, so a workspace can
-    seed from it before it has ever been cached."""
+def test_no_memory_is_seedable_straight_from_the_baselines_tree():
+    """One file serves both roles now: `memo.py` IS forge's interface, so a
+    workspace can seed from the baseline directly, with no second copy of the
+    same method written against a separate contract."""
     from forge.contract import load_harness_class
     from forge.paths import PROJECT_ROOT
 
     cls = load_harness_class(PROJECT_ROOT / "baselines" / "harness" / "no_memory")
-    assert cls.__name__ == "NoMemoryHarness"
+    assert cls.__name__ == "NoMemoryMemo"
+    assert not (PROJECT_ROOT / "baselines" / "harness" / "no_memory" / "harness.py").exists(), \
+        "the old duplicate is back"
 
 
 def main():

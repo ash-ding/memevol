@@ -20,7 +20,8 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("OPENAI_API_KEY", "test-dummy-key")
 
-from tools.package_baseline import _export_requirements, package   # noqa: E402
+from tools.package_baseline import (_SHARED_MODULES, _export_requirements,  # noqa: E402
+                                    package)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -53,10 +54,19 @@ def test_packaging_produces_a_harness_forge_can_load():
     with tempfile.TemporaryDirectory() as td:
         out = package("no_memory", "faithful", None, Path(td) / "pkg")
 
-        assert (out / "harness.py").exists() and (out / "meta.json").exists()
-        # The method keeps its real package path, so memo.py's own imports work.
-        assert (out / "baselines" / "harness" / "no_memory" / "memo.py").exists()
-        assert (out / "baselines" / "harness" / "model_config.py").exists()
+        # The shape an evolved candidate has: the interface, then everything
+        # else under src/. No nested package path, and nothing named memo.py
+        # inside src/ to be mistaken for a second interface.
+        assert (out / "memo.py").exists() and (out / "meta.json").exists()
+        assert (out / "src" / "adapter.py").exists()
+        assert (out / "src" / "model_config.py").exists()
+        assert not (out / "baselines").exists(), "the nested package path is gone"
+        assert not (out / "src" / "memo.py").exists()
+        assert not any(
+            "baselines." in f.read_text(encoding="utf-8")
+            for f in (out / "src").rglob("*.py")
+            if f.name in ("adapter.py",) + _SHARED_MODULES), \
+            "an absolute baselines.* import survived the flattening"
 
         cls = load_harness_class(out)
         assert cls.__name__ == "PackagedHarness"
@@ -72,7 +82,7 @@ def test_packaging_replaces_a_previous_package_rather_than_merging():
     with tempfile.TemporaryDirectory() as td:
         out = Path(td) / "pkg"
         package("no_memory", "faithful", None, out)
-        stale = out / "baselines" / "harness" / "no_memory" / "stale.py"
+        stale = out / "src" / "stale.py"
         stale.write_text("# left over from an older packaging\n", encoding="utf-8")
         package("no_memory", "faithful", None, out)
         assert not stale.exists()
@@ -91,7 +101,7 @@ def _mem0_importable() -> bool:
 
 def test_a_vendored_baseline_travels_with_its_src_and_resolved_config():
     """mem0 in its own venv: the vendored package comes along, and the unified
-    arm's models are baked into harness.py."""
+    arm's models are baked into memo.py."""
     if not _mem0_importable():
         print("    (skipped: needs baselines/harness/mem0's venv)")
         return
@@ -102,8 +112,7 @@ def test_a_vendored_baseline_travels_with_its_src_and_resolved_config():
                       {"llm": "gpt-5-mini", "embedding": "text-embedding-3-small"},
                       Path(td) / "pkg")
 
-        pkg = out / "baselines" / "harness" / "mem0"
-        assert (pkg / "src" / "mem0").is_dir(), "the vendored package travels with it"
+        assert (out / "src" / "mem0").is_dir(), "the vendored package travels with it"
         reqs = (out / "requirements.txt").read_text(encoding="utf-8")
         assert "qdrant-client==" in reqs and "openai==" in reqs
         assert "pywin32" not in reqs or "sys_platform" in reqs, \

@@ -559,7 +559,7 @@ def test_build_objectives_no_mean():
     import tempfile
     with tempfile.TemporaryDirectory() as td:
         hd = os.path.join(td, "h"); os.makedirs(hd)
-        open(os.path.join(hd, "harness.py"), "w").write("x = 1\n")
+        open(os.path.join(hd, "memo.py"), "w").write("x = 1\n")
         per_ds = {
             "locomo": {"raw_score": 0.42, "score_max": 1, "stage": 3.0, "tokens": 100},
             "dynamicmem": {"raw_score": 0.31, "score_max": 1, "stage": 3.0, "tokens": 50},
