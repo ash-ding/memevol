@@ -316,9 +316,44 @@ def install_embedder_factory() -> None:
 # Mirrors common/llm.py::_REASONING_MODEL_PREFIXES — keep the two in step.
 _RESTRICTED_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 
-# Params the reasoning families reject outright. `max_tokens` is not dropped
-# but RENAMED, since the caller genuinely means to cap the generation.
-_DROPPED_PARAMS = ("temperature", "top_p", "presence_penalty", "frequency_penalty")
+# Params the reasoning families reject outright — dropped, `max_tokens`
+# included (see normalise_chat_params for why renaming it was worse).
+_DROPPED_PARAMS = ("temperature", "top_p", "presence_penalty", "frequency_penalty",
+                   "max_tokens")
+
+#: Smallest completion budget we will let a vendored caller impose on a
+#: reasoning model. The budget covers REASONING as well as the answer, and the
+#: vendored numbers were all chosen for 4-series models: the caps found under
+#: `baselines/harness/*/src/` run from 10 to 2048, and mem0's own GPT-5 mapping
+#: sends 2000. Measured on gpt-5-mini: at 2000 an extraction call spends the
+#: whole budget thinking and returns EMPTY content (or, on a 30 k-char prompt,
+#: never returns at all); with room to finish it answers in seconds. Matches
+#: `common.llm.Agent`'s own default, so vendored and first-party calls get the
+#: same headroom.
+REASONING_MIN_COMPLETION_TOKENS = 16384
+
+#: Per-request read timeout for a vendored call that sets none.
+#:
+#: The vendored clients build their own `OpenAI(api_key=..., base_url=...)` and
+#: pass no timeout, so they inherit the SDK's defaults: a 600 s read timeout
+#: and 2 retries. One request that does not come back therefore costs 1800 s
+#: and takes the user down with it — measured to the second, twice: 1802 s of
+#: build phase with a single embedding call recorded and no chat completion at
+#: all.
+#:
+#: The bound does not make a bad provider window succeed — one measured window
+#: stalled this same call at 150 s, 180 s and 900 s alike — it makes the run
+#: fail in minutes instead of half an hour, and lets a one-off stall be retried
+#: while the budget still allows it.
+#:
+#: 180 s is ~8x the slowest real call measured on mem0's extraction prompt
+#: (33.6 k-char system prompt + a conversation session): gpt-5-mini at low
+#: effort 15-23 s, at minimal 5-6 s, gpt-4.1-mini 2-3 s, and a whole 19-session
+#: build averaged 26 s per session. It is deliberately not tighter: `common.llm`
+#: documents that server-side queueing legitimately pushes latency up under
+#: concurrency, and a client timeout tight enough to fire on queueing causes a
+#: retry storm.
+VENDORED_REQUEST_TIMEOUT_SECONDS = 180.0
 
 _params_patched = False
 
@@ -330,18 +365,42 @@ def _is_restricted_model(model: Optional[str]) -> bool:
 def normalise_chat_params(kwargs: Dict[str, Any]) -> Dict[str, Any]:
     """Rewrite one `chat.completions.create` kwarg dict for the target model.
 
-    Two rewrites, both no-ops on the 4-series models the faithful arm uses:
+    One rewrite applies to every model: a call that set no ``timeout`` gets
+    ``VENDORED_REQUEST_TIMEOUT_SECONDS`` instead of the SDK's 600 s default,
+    so a stalled request is retried in minutes rather than costing 1800 s and
+    the user with it. See that constant for the measurement.
+
+    Two more are no-ops on the 4-series models the faithful arm uses:
 
       * a repo-convention ``"model/effort"`` suffix (e.g. ``gpt-5-mini/low``)
         is split into ``model`` + ``reasoning_effort``. Vendored clients pass
         the configured string straight through and would 400 on the suffix;
-      * for a reasoning model, ``temperature``/``top_p``/the penalties are
-        dropped and ``max_tokens`` becomes ``max_completion_tokens``.
+      * for a reasoning model, ``temperature``/``top_p``/the penalties AND
+        ``max_tokens`` are dropped, and a completion cap below
+        ``REASONING_MIN_COMPLETION_TOKENS`` is raised to it.
+
+    `max_tokens` used to be RENAMED to `max_completion_tokens`, on the
+    reasoning that the caller means to cap the generation. That was wrong, and
+    expensively so: on a reasoning model the cap covers reasoning AND output
+    together, so a vendored value chosen for a 4-series model (mem0 sends
+    2000) leaves nothing for the answer. Measured against gpt-5-mini with a
+    30 k-char extraction prompt and `response_format=json_object`: capped, the
+    request never returned (300 s timeout, and 30 min of retries in a real
+    run); with the cap dropped it answered in 4.2 s. A cap written for a
+    non-reasoning model has no equivalent meaning here, so the honest
+    translation is to drop it — a caller who really wants one can pass
+    `max_completion_tokens` itself, which is left untouched.
 
     Returns a new dict; the caller's is left alone.
     """
     out = dict(kwargs)
     model = out.get("model")
+
+    # Bound the wait before anything model-specific: the vendored clients pass
+    # no timeout at all, and the SDK's default is long enough that one stuck
+    # request ends the run.
+    if "timeout" not in out or out["timeout"] is None:
+        out["timeout"] = VENDORED_REQUEST_TIMEOUT_SECONDS
 
     if isinstance(model, str) and "/" in model:
         base, effort = model.split("/", 1)
@@ -354,10 +413,13 @@ def normalise_chat_params(kwargs: Dict[str, Any]) -> Dict[str, Any]:
 
     for name in _DROPPED_PARAMS:
         out.pop(name, None)
-    if "max_tokens" in out:
-        # Only rename when the caller did not already set the new name.
-        out.setdefault("max_completion_tokens", out.pop("max_tokens"))
-        out.pop("max_tokens", None)
+
+    # A cap the vendored code set ITSELF (mem0 maps its max_tokens to this for
+    # the GPT-5 family) is kept, but never below the floor: a 4-series budget
+    # leaves a reasoning model nothing to answer with.
+    cap = out.get("max_completion_tokens")
+    if isinstance(cap, int) and cap < REASONING_MIN_COMPLETION_TOKENS:
+        out["max_completion_tokens"] = REASONING_MIN_COMPLETION_TOKENS
     return out
 
 

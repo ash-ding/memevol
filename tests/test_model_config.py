@@ -55,8 +55,12 @@ def test_is_api_embedding_model():
 # this rewrite the unified arm cannot run at all on 5 of the 7 baselines.
 
 def test_normalise_leaves_4_series_untouched():
+    """Nothing model-specific is rewritten for a 4-series call. The stall
+    bound is added for every model, so it is the one permitted addition."""
     given = {"model": "gpt-4o-mini", "temperature": 0.7, "max_tokens": 1000}
-    assert mc.normalise_chat_params(given) == given
+    out = mc.normalise_chat_params(given)
+    assert {k: out[k] for k in given} == given
+    assert set(out) - set(given) == {"timeout"}
 
 
 def test_normalise_drops_sampling_params_for_reasoning_models():
@@ -69,17 +73,59 @@ def test_normalise_drops_sampling_params_for_reasoning_models():
     assert out["model"] == "gpt-5-mini"
 
 
-def test_normalise_renames_max_tokens_for_reasoning_models():
+def test_normalise_bounds_a_call_that_set_no_timeout():
+    """The vendored clients build their own OpenAI() with no timeout, so they
+    inherit the SDK's 600 s read timeout and 2 retries: one request the server
+    never answers costs 1800 s and fails the user. Measured twice, exactly."""
+    out = mc.normalise_chat_params({"model": "gpt-5-mini", "messages": []})
+    assert out["timeout"] == mc.VENDORED_REQUEST_TIMEOUT_SECONDS
+    # Not a reasoning-model-only rewrite — a stall is model-agnostic.
+    out = mc.normalise_chat_params({"model": "gpt-4.1", "messages": []})
+    assert out["timeout"] == mc.VENDORED_REQUEST_TIMEOUT_SECONDS
+
+
+def test_normalise_leaves_a_caller_supplied_timeout_alone():
+    """A caller that thought about its own deadline keeps it."""
+    out = mc.normalise_chat_params({"model": "gpt-5-mini", "messages": [], "timeout": 30})
+    assert out["timeout"] == 30
+
+
+def test_normalise_drops_max_tokens_for_reasoning_models():
+    """It used to be renamed to max_completion_tokens. On a reasoning model
+    that cap covers reasoning AND output, so a value chosen for a 4-series
+    model (mem0 sends 2000) leaves nothing for the answer: measured against
+    gpt-5-mini with a 30k-char json_object prompt, the capped request never
+    returned (300 s), the uncapped one answered in 4.2 s."""
     out = mc.normalise_chat_params({"model": "gpt-5-mini", "max_tokens": 1000})
     assert "max_tokens" not in out
-    assert out["max_completion_tokens"] == 1000
+    assert "max_completion_tokens" not in out, "a 4-series cap is not a reasoning cap"
 
 
-def test_normalise_does_not_clobber_an_explicit_max_completion_tokens():
+def test_normalise_raises_a_starving_completion_cap():
+    """mem0 maps its own max_tokens=2000 to max_completion_tokens for the GPT-5
+    family. That budget covers REASONING too: measured on gpt-5-mini, an
+    extraction call spends all 2000 thinking and returns empty content, so the
+    memory system stores nothing and every answer is a guess."""
     out = mc.normalise_chat_params(
         {"model": "o3", "max_tokens": 10, "max_completion_tokens": 99})
-    assert out["max_completion_tokens"] == 99
+    assert out["max_completion_tokens"] == mc.REASONING_MIN_COMPLETION_TOKENS
     assert "max_tokens" not in out
+
+
+def test_normalise_keeps_a_cap_that_already_has_room():
+    out = mc.normalise_chat_params({"model": "gpt-5-mini", "max_completion_tokens": 40000})
+    assert out["max_completion_tokens"] == 40000, "a caller asking for more keeps it"
+
+
+def test_normalise_adds_no_cap_where_there_was_none():
+    out = mc.normalise_chat_params({"model": "gpt-5-mini", "messages": []})
+    assert "max_completion_tokens" not in out
+
+
+def test_normalise_leaves_the_four_series_alone():
+    out = mc.normalise_chat_params(
+        {"model": "gpt-4o-mini", "max_tokens": 1000, "temperature": 0.7})
+    assert out["max_tokens"] == 1000 and out["temperature"] == 0.7
 
 
 def test_normalise_splits_the_effort_suffix():
@@ -127,7 +173,7 @@ def test_sdk_patch_rewrites_a_real_create_call():
     ) == "ok"
     assert "temperature" not in sent
     assert "max_tokens" not in sent
-    assert sent["max_completion_tokens"] == 1000
+    assert "max_completion_tokens" not in sent, "a 4-series cap is not carried over"
     assert sent["model"] == "gpt-5-mini"
 
 

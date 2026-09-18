@@ -13,6 +13,7 @@ import contextlib
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import traceback
@@ -63,6 +64,74 @@ def _evaluated_harness(root: Path, dataset="locomo", score=0.5):
     return d
 
 
+@contextlib.contextmanager
+def _temp_repo():
+    """A real git repo with one committed file under an evaluation-code path,
+    with repo_version() pointed at it."""
+    tmp = Path(tempfile.mkdtemp())
+    (tmp / "forge").mkdir()
+    (tmp / "forge" / "evaluator.py").write_text("x = 1\n", encoding="utf-8")
+    run = lambda *a: subprocess.run(["git", "-C", str(tmp), *a],
+                                    capture_output=True, text=True)
+    run("init", "-q")
+    run("config", "user.email", "t@example.com")
+    run("config", "user.name", "t")
+    run("add", "-A")
+    run("commit", "-q", "-m", "initial")
+    real = SC.PROJECT_ROOT
+    SC.PROJECT_ROOT = tmp
+    try:
+        yield tmp
+    finally:
+        SC.PROJECT_ROOT = real
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_a_clean_tree_is_just_its_commit():
+    with _temp_repo():
+        assert "-dirty" not in SC.repo_version()
+
+
+def test_the_cache_it_writes_does_not_make_the_tree_dirty():
+    """`seeds/` is git-tracked by design and uncommitted until someone commits
+    it. Counting it as an edit to the evaluation code would mark every run
+    after the first one dirty — and the marker would be meaningless."""
+    with _temp_repo() as repo:
+        clean = SC.repo_version()
+        (repo / "seeds" / "abc123" / "evals").mkdir(parents=True)
+        (repo / "seeds" / "abc123" / "harness.py").write_text("# seed\n", encoding="utf-8")
+        assert SC.repo_version() == clean
+
+
+def test_two_different_uncommitted_edits_do_not_share_a_version():
+    """A bare `-dirty` marker is one constant string, so every uncommitted
+    state collides with every other and the cache serves numbers computed by
+    code that is not the code now running."""
+    with _temp_repo() as repo:
+        target = repo / "forge" / "evaluator.py"
+        target.write_text("x = 2\n", encoding="utf-8")
+        first = SC.repo_version()
+        target.write_text("x = 3\n", encoding="utf-8")
+        second = SC.repo_version()
+        assert "-dirty." in first and "-dirty." in second
+        assert first != second
+
+
+def test_the_same_edit_twice_is_the_same_version():
+    """Reuse must still work while you iterate uncommitted."""
+    with _temp_repo() as repo:
+        (repo / "forge" / "evaluator.py").write_text("x = 2\n", encoding="utf-8")
+        assert SC.repo_version() == SC.repo_version()
+
+
+def test_an_untracked_source_file_is_part_of_the_version():
+    with _temp_repo() as repo:
+        (repo / "forge" / "new_stage.py").write_text("def go(): pass\n", encoding="utf-8")
+        with_file = SC.repo_version()
+        (repo / "forge" / "new_stage.py").write_text("def go(): return 1\n", encoding="utf-8")
+        assert SC.repo_version() != with_file
+
+
 # ---------------- the key ----------------
 
 def test_the_key_ignores_ordering_but_not_content():
@@ -96,7 +165,8 @@ def test_every_input_that_can_change_a_number_changes_the_key():
 
 def test_a_dirty_tree_never_matches_a_clean_one():
     clean = SC.eval_key(SC.eval_inputs(_CFG, "locomo") | {"repo_version": "abc123"})
-    dirty = SC.eval_key(SC.eval_inputs(_CFG, "locomo") | {"repo_version": "abc123-dirty"})
+    dirty = SC.eval_key(SC.eval_inputs(_CFG, "locomo")
+                        | {"repo_version": "abc123-dirty.d6ace3c373f7"})
     assert clean != dirty
 
 

@@ -31,8 +31,16 @@ of everything that can change a number:
                                 only honest way to avoid serving numbers that
                                 predate a change in how they are computed
 
-A dirty working tree gets `<sha>-dirty`, which never matches a later key: an
-uncommitted change is not a version anyone can come back to.
+A dirty working tree gets `<sha>-dirty.<digest>`, where the digest covers the
+uncommitted change itself — so two runs of the SAME edit reuse each other's
+numbers, and a run of a DIFFERENT edit does not. A bare `-dirty` marker cannot
+do that: it is one constant string, so every uncommitted state collides with
+every other.
+
+"Dirty" is judged over the evaluation code only (see `_CODE_PATHS`). The cache
+writes `seeds/`, which is git-tracked by design but uncommitted until someone
+commits it — counting that as an edit to the evaluation code would mark every
+run after the first one dirty, for no reason anyone could act on.
 
 `manifest.json` stores those inputs in readable form next to the hash, so a
 cache entry can always be explained ("which run produced this, and under what
@@ -53,8 +61,7 @@ from forge.paths import PROJECT_ROOT, SEEDS_DIR
 
 log = get_logger("main")
 
-#: Files that make up a harness (everything else in the dir is eval output).
-_CODE_GLOBS = ("harness.py", "meta.json", "requirements.txt", "*.py")
+
 
 #: Per-dataset artifacts worth keeping. Traces are big and kept anyway — they
 #: are the only record of what the harness actually answered, which is the
@@ -62,27 +69,60 @@ _CODE_GLOBS = ("harness.py", "meta.json", "requirements.txt", "*.py")
 _RESULT_DIR_NAME = "evals"
 
 
+#: What counts as "the evaluation code" when deciding whether the tree is
+#: dirty. Everything else at the top level is inputs or outputs: `seeds/` is
+#: this module's own output, `workspace/` is per-run scratch, and the data
+#: files are not code. Naming the code explicitly keeps the cache from
+#: declaring itself a change to the thing it is versioning.
+_CODE_PATHS = ("forge", "common", "benchmarks", "baselines", "tools", "tracing")
+
+
+def _git(*args: str, timeout: int = 30) -> Optional[str]:
+    """Run one git command in the project root; None if git cannot answer."""
+    try:
+        r = subprocess.run(["git", "-C", str(PROJECT_ROOT), *args],
+                           capture_output=True, text=True, timeout=timeout)
+    except Exception:
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
 def repo_version() -> str:
-    """The commit this evaluation code is at; `<sha>-dirty` when edited.
+    """The commit this evaluation code is at; `<sha>-dirty.<digest>` when edited.
 
     Falls back to "unknown" outside a git checkout (a tarball deployment),
     which then never matches another key — the safe direction.
     """
-    try:
-        sha = subprocess.run(
-            ["git", "-C", str(PROJECT_ROOT), "rev-parse", "--short=12", "HEAD"],
-            capture_output=True, text=True, timeout=10,
-        )
-        if sha.returncode != 0:
-            return "unknown"
-        dirty = subprocess.run(
-            ["git", "-C", str(PROJECT_ROOT), "status", "--porcelain"],
-            capture_output=True, text=True, timeout=30,
-        )
-        suffix = "-dirty" if dirty.stdout.strip() else ""
-        return sha.stdout.strip() + suffix
-    except Exception:
+    sha = _git("rev-parse", "--short=12", "HEAD")
+    if sha is None:
         return "unknown"
+    sha = sha.strip()
+
+    status = _git("status", "--porcelain", "--", *_CODE_PATHS)
+    if status is None:
+        return "unknown"
+    if not status.strip():
+        return sha
+
+    # Identify the edit, not just its existence: the tracked diff, plus the
+    # bytes of anything untracked (porcelain never lists ignored files, so
+    # this is new source, not build output).
+    h = hashlib.sha256()
+    h.update(status.encode("utf-8", "replace"))
+    h.update((_git("diff", "HEAD", "--", *_CODE_PATHS) or "").encode("utf-8", "replace"))
+    for line in status.splitlines():
+        if not line.startswith("?? "):
+            continue
+        path = PROJECT_ROOT / line[3:].strip().strip('"')
+        for f in sorted(path.rglob("*")) if path.is_dir() else [path]:
+            if not f.is_file():
+                continue
+            h.update(str(f.relative_to(PROJECT_ROOT)).encode("utf-8", "replace"))
+            try:
+                h.update(f.read_bytes())
+            except OSError:
+                h.update(b"<unreadable>")
+    return f"{sha}-dirty.{h.hexdigest()[:12]}"
 
 
 def eval_inputs(cfg: Dict[str, Any], dataset: str) -> Dict[str, Any]:
@@ -120,11 +160,10 @@ def lookup(harness_id: str, key: str) -> Optional[Path]:
 
 
 def _copy_code(harness_dir: Path, dst: Path) -> None:
-    dst.mkdir(parents=True, exist_ok=True)
-    for pattern in _CODE_GLOBS:
-        for src in sorted(harness_dir.glob(pattern)):
-            if src.is_file():
-                shutil.copy2(src, dst / src.name)
+    """Code in, results out — see `forge.orchestrator._copy_harness_code`,
+    which owns the rule (a harness can be one file or a whole package tree)."""
+    from forge.orchestrator import _copy_harness_code
+    _copy_harness_code(harness_dir, dst)
 
 
 def store(harness_dir: Path, harness_id: str, cfg: Dict[str, Any],

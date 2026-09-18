@@ -37,6 +37,21 @@ Then seed a search from the result::
 
     ... python -m forge.orchestrator --config my.yaml --seed seeds_src/mem0_unified
 
+Why the unified LLM defaults to `gpt-5-mini/low`
+-----------------------------------------------
+These methods were written against 4-series models and batch large prompts
+(mem0 hands the extractor a whole conversation slice, ~34 k chars). A
+reasoning model at default effort thinks for minutes on such a prompt, and the
+vendored clients have their own timeouts — mem0's is 600 s with two retries,
+so a run spends half an hour and records NOTHING. Measured on that exact call:
+default effort timed out three times; `gpt-5-mini/low` answered in 2.3 s with
+the facts extracted. `common.llm`'s "model/effort" convention carries it, and
+`model_config.normalise_chat_params` splits the suffix into `reasoning_effort`
+before the SDK sees it.
+
+Pass `--unified-llm gpt-5-mini` to compare against full effort — but expect
+the vendored timeouts to bite.
+
 What this does NOT do is make every baseline fit the container: lightmem pins
 `transformers<5` and hipporag2 pins `torch==2.5.1` against a base image built
 with torch 2.6, so their requirements.txt installs a second multi-GB stack on
@@ -123,15 +138,47 @@ container has no arm/unified_models machinery, and because a seed should carry
 the exact settings its numbers came from.
 """
 import sys
+import tempfile
 from pathlib import Path
 
 _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
+from baselines.harness.{name} import memo as _memo   # noqa: E402
 from baselines.harness.{name}.memo import {class_name}   # noqa: E402
 
 CONFIG = {pretty}
+
+
+def _redirect_writable_paths() -> None:
+    """Send the baseline's on-disk store somewhere writable.
+
+    Five of the baselines keep their per-user store (Qdrant, LanceDB, FAISS,
+    JSON) in an `outputs/` directory NEXT TO THEIR OWN SOURCE — fine in the
+    repo, impossible here: forge mounts the harness read-only. The container's
+    /tmp is private to it (`singularity --containall`) and discarded with it,
+    which is exactly the lifetime a per-run store wants.
+
+    `OUTPUTS_DIR` is read at call time by every baseline that has one, so
+    rebinding it is enough — except where the path was already baked into a
+    module-level setting at import (simplemem's LANCEDB_PATH), which is why
+    the string rewrite below exists too.
+    """
+    old = getattr(_memo, "OUTPUTS_DIR", None)
+    if old is None:
+        return
+    new = Path(tempfile.mkdtemp(prefix="memevol-{name}-"))
+    _memo.OUTPUTS_DIR = new
+    for value in vars(_memo).values():
+        if not isinstance(value, dict):
+            continue
+        for key, entry in list(value.items()):
+            if isinstance(entry, str) and entry.startswith(str(old)):
+                value[key] = entry.replace(str(old), str(new), 1)
+
+
+_redirect_writable_paths()
 
 
 class PackagedHarness({class_name}):
@@ -199,17 +246,23 @@ def package(name: str, arm: str, unified_models: Dict[str, str] | None,
     return out
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("baseline", help="a name under baselines/harness/ (e.g. mem0)")
     p.add_argument("--arm", default="faithful", choices=["faithful", "unified"])
-    p.add_argument("--unified-llm", default="gpt-5-mini",
-                   help="arm=unified only: the internal LLM every baseline uses")
+    p.add_argument("--unified-llm", default="gpt-5-mini/low",
+                   help="arm=unified only: the internal LLM every baseline uses. "
+                        "The `/low` suffix is the repo's effort convention and "
+                        "the default ON PURPOSE — see the module docstring.")
     p.add_argument("--unified-embedding", default="text-embedding-3-small",
                    help="arm=unified only: the embedder (must be an API model)")
     p.add_argument("--out", type=Path, required=True,
                    help="directory to write the packaged harness into (replaced)")
-    args = p.parse_args()
+    return p
+
+
+def main() -> None:
+    args = build_parser().parse_args()
 
     unified = ({"llm": args.unified_llm, "embedding": args.unified_embedding}
                if args.arm == "unified" else None)
