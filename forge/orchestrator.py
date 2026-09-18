@@ -943,7 +943,7 @@ def _finalize_harness_dir(harness_dir: Path) -> Tuple[str, Path, bool]:
     with meta_path.open("w", encoding="utf-8") as f:
         json.dump(meta, f, indent=2, ensure_ascii=False)
 
-    return final_id, final_dir
+    return final_id, final_dir, False
 
 
 # ---------------------------------------------------------------------------
