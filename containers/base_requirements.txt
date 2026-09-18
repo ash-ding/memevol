@@ -23,7 +23,13 @@
 #              a small downgrade, torch untouched.
 
 # --- LLM APIs (small wheels; a baseline pinning an older openai is cheap) ---
-openai>=1.107
+# Upper bound, not a pin: common/openai_usage.py records a vendored method's
+# token usage by patching the SDK's resource classes, and it no-ops QUIETLY
+# when it cannot find them — a major SDK release could therefore turn token
+# accounting into silent zeros at the next image rebuild. 3.15.0 is what this
+# image was built and tested with (tests/test_openai_usage_shim.py passes
+# inside it); raise the bound deliberately, after re-running that test.
+openai>=1.107,<4
 # [vertex] extra pulls google-auth — required for common/llm.py's Claude-via-
 # Vertex transport (MEMEVOL_ANTHROPIC_TRANSPORT=vertex) inside the eval
 # container.
