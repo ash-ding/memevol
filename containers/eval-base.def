@@ -2,7 +2,7 @@ Bootstrap: docker
 From: python:3.12-slim
 
 %files
-    containers/base_requirements_cpu.txt /opt/base_requirements.txt
+    containers/base_requirements.txt /opt/base_requirements.txt
 
 %post
     set -e
@@ -17,7 +17,12 @@ From: python:3.12-slim
     echo "=== post-apt check ===" && ls -la /opt/base_requirements.txt
 
     python -m pip install --no-cache-dir --upgrade pip setuptools wheel
-    pip install --no-cache-dir -r /opt/base_requirements.txt
+    # torch comes from PyTorch's CUDA 12.4 index: PyPI's Linux wheels bundle
+    # CUDA 13, which needs NVIDIA driver >= 580 (penguin runs 550). Everything
+    # else resolves from PyPI as usual — the extra index only adds candidates.
+    pip install --no-cache-dir \
+        --extra-index-url https://download.pytorch.org/whl/cu124 \
+        -r /opt/base_requirements.txt
     rm /opt/base_requirements.txt
 
 %environment
@@ -28,4 +33,4 @@ From: python:3.12-slim
     Author ding
     Purpose forge-eval-base
     Python 3.12
-    Torch 2.6.0-cpu
+    Torch 2.6.0+cu124
