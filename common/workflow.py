@@ -621,15 +621,14 @@ class BaseWorkflow(ABC):
                     recorder, self._prompt_text(prompt), baseline)
             )
 
-            full_prompt = f"{system_msg}\n\n{user_msg}" if system_msg else user_msg
             try:
                 with tokens.phase(tokens.ANSWER):
-                    answer = await memo.use_memory_to_answer(retrieve_recorder, retrieved, full_prompt)
-                    if answer is None:
-                        agent.messages = [{"role": "system", "content": system_msg}]
-                        answer = await agent.ask(
-                            user_msg, with_history=False, reasoning_effort=self.reasoning_effort
-                        )
+                    # The shared QA agent answers for every memo (the contract
+                    # has no answer hook): same answerer, same answer-side cost.
+                    agent.messages = [{"role": "system", "content": system_msg}]
+                    answer = await agent.ask(
+                        user_msg, with_history=False, reasoning_effort=self.reasoning_effort
+                    )
             except Exception as exc:
                 # QA-agent transport failure (retries already exhausted in
                 # common.llm). Mirror the retrieve-error path: record a

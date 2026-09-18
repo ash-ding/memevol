@@ -10,9 +10,8 @@ call passes only the newly-visible delta.
 
 RETRIEVE: ``Memory.search(query, filters={"user_id": ...}, top_k=...)`` — vector
 search over those facts. Returned as ``{"passages": [...]}`` for the SHARED QA
-agent; ``use_memory_to_answer`` is NOT overridden (hipporag2/amem/simplemem
-pattern), so the comparison stays about the memory rather than each method's own
-answerer.
+agent, which answers for every memo (answering is not part of the contract), so
+the comparison stays about the memory rather than each method's own answerer.
 
 ISOLATION: one Mem0 instance per user, each with its own on-disk Qdrant
 collection and its own history DB, so nothing leaks between conversations. The

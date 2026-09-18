@@ -59,7 +59,7 @@ ablation.
 | `build_memory_from_data` | ingestion units → chat messages → `Memory.add(..., user_id)` in batches of `add_batch_size` |
 | `retrieve_memory_for_query` | `Memory.search(query, filters={user_id}, top_k, threshold)` → `{"passages": [...]}` |
 
-`use_memory_to_answer` is NOT overridden: the SHARED QA agent answers from the
+Answering is not a hook: the SHARED QA agent answers from the
 retrieved facts (hipporag2/amem/simplemem pattern), so the comparison is about
 memory rather than about each method's own answerer.
 

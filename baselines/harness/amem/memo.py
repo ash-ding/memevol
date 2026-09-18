@@ -11,8 +11,8 @@ into keywords (prompt + JSON schema copied from
 test_advanced.py::generate_query_llm; a separate LLMController mirroring
 advancedMemAgent.retriever_llm), then `find_related_memories_raw(keywords, k)`
 returns one formatted string (top-k notes + linked neighbors). Read-only
-(DynamicMem query non-pollution holds). The shared QA agent answers —
-`use_memory_to_answer` is NOT overridden (hipporag2 pattern).
+(DynamicMem query non-pollution holds). The shared QA agent answers, as it does
+for every memo — answering is not part of the contract.
 
 Ingestion units (recorder.init dispatch, cf. hipporag2's _init_to_passages):
   locomo ("conversation"): one note per turn, VERBATIM official unit

@@ -10,7 +10,7 @@ Phases
 ``build``     inside ``build_memory_from_data``
 ``retrieve``  inside ``retrieve_memory_for_query`` (query rewriting, planning,
               reranking — memory-system work, but not build)
-``answer``    the shared QA agent + ``use_memory_to_answer`` overrides
+``answer``    the benchmark's shared QA agent (the only answerer there is)
 ``judge``     ``common.metric.Judge`` and the benchmark judges — evaluation
               overhead, excluded from any cost claim
 ``other``     the fallback when no phase is in scope (harness setup, ad-hoc

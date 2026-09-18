@@ -45,7 +45,7 @@ class GoodMemo(MemoClass):
 
     async def retrieve_memory_for_query(self, recorder):
         return {"context": "ok"}
-    # use_memory_to_answer NOT overridden -> MemoClass default None -> agent answers
+    # the shared QA agent answers (the contract has no answer hook)
 
 
 class BadRetrieveMemo(GoodMemo):

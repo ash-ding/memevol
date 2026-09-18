@@ -216,15 +216,16 @@ def test_get_embedding_is_safe_to_call_from_many_threads():
             u._model_cache[key] = saved_model
 
 
-def test_memo_implements_the_three_hook_contract():
+def test_memo_implements_the_two_hook_contract():
     from common.memo_class import MemoClass
     from baselines.harness.memoryos.memo import MemoryOSMemo
     assert issubclass(MemoryOSMemo, MemoClass)
     for hook in ("build_memory_from_data", "retrieve_memory_for_query"):
         assert callable(getattr(MemoryOSMemo, hook, None)), hook
-    # MemoryOS ships its own answerer (get_response); it must stay unused so the
-    # comparison is about memory, not about each method's generator.
-    assert "use_memory_to_answer" not in vars(MemoryOSMemo)
+    # MemoryOS ships its own answerer (get_response); it stays unused — the
+    # shared QA agent answers, so the comparison is about memory, not about
+    # each method's generator.
+    assert not hasattr(MemoryOSMemo, "use_memory_to_answer")
 
 
 def test_hooks_run_off_the_event_loop():

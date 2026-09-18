@@ -195,14 +195,14 @@ def test_config_defaults_and_unified_models():
     assert _resolved()["embedding_dims"] == 384
 
 
-def test_memo_implements_the_three_hook_contract():
+def test_memo_implements_the_two_hook_contract():
     from common.memo_class import MemoClass
     from baselines.harness.lightmem.memo import LightMemMemo
     assert issubclass(LightMemMemo, MemoClass)
     for hook in ("build_memory_from_data", "retrieve_memory_for_query"):
         assert callable(getattr(LightMemMemo, hook, None)), hook
-    # use_memory_to_answer must NOT be overridden: the shared QA agent answers.
-    assert "use_memory_to_answer" not in vars(LightMemMemo)
+    # Answering is not a hook: the shared QA agent answers for every memo.
+    assert not hasattr(LightMemMemo, "use_memory_to_answer")
 
 
 def test_system_construction_holds_the_model_load_lock():

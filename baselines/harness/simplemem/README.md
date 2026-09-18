@@ -1,7 +1,7 @@
 # SimpleMem baseline
 
 [SimpleMem](https://github.com/aiming-lab/SimpleMem) — semantic-compression
-lifelong memory — as a ready-made memory system on the 3-hook `MemoClass`
+lifelong memory — as a ready-made memory system on the 2-hook `MemoClass`
 contract. Paper: [arXiv 2601.02553](https://arxiv.org/abs/2601.02553).
 
 **Provenance**: the `src/simplemem/` subtree is vendored from
@@ -42,7 +42,7 @@ SimpleMem's three-stage text pipeline runs untouched:
    index, with optional reflection rounds.
 
 Retrieved memory units are returned as `{"passages": [...]}` and the **shared QA
-agent answers** — `use_memory_to_answer` is not overridden (hipporag2/amem
+agent answers** — as it does for every memo, answering being no hook (hipporag2/amem
 pattern). This keeps the comparison about *memory* (SimpleMem's compression +
 retrieval), not about SimpleMem's own `answer_generator`.
 
@@ -188,7 +188,7 @@ table from `embedding_model.dimension`. The per-user store is rebuilt with
 
 ## Validation status
 
-Written against the vendored code and the 3-hook contract; **not yet run
+Written against the vendored code and the 2-hook contract; **not yet run
 end-to-end** here (this baseline's own venv + a GPU for the Qwen3 embedder + an
 OpenAI key are only available on the eval server). To smoke each ingestion branch
 cheaply on the search split (mirrors amem's per-branch check):

@@ -61,10 +61,6 @@ class DemoMemo:
         # Strictly read-only: just surface the current note contents.
         return {"retrieved": [n.content for n in self._system.memories.values()]}
 
-    async def use_memory_to_answer(self, recorder: Any, retrieved: Dict,
-                                   prompt: str) -> Optional[str]:
-        return "demo-answer"
-
 
 class _DemoRecorder:
     """Minimal recorder stand-in (only ``.init`` is read by the fake memo)."""
@@ -89,8 +85,7 @@ async def _drive(memo: Any) -> None:
 
     # RETRIEVE x2 — read-only, so commit-on-change produces NO new commit.
     q = _DemoRecorder({"query": "Where does Alice live?"})
-    retrieved = await memo.retrieve_memory_for_query(q)
-    await memo.use_memory_to_answer(q, retrieved, "Where does Alice live?")
+    await memo.retrieve_memory_for_query(q)
     await memo.retrieve_memory_for_query(_DemoRecorder({"query": "What pet?"}))
 
     # Rewrite a note in place, then force an opt-in semantic checkpoint — the

@@ -239,9 +239,9 @@ class DynamicMemWorkflow(BaseWorkflow):
         answer_err: Optional[Tuple[str, str]] = None
         try:
             with tokens.phase(tokens.ANSWER):
-                ans = await memo.use_memory_to_answer(retrieve_recorder, retrieved, prompt)
-                if ans is None:
-                    ans = await agent.ask(prompt, reasoning_effort=self.reasoning_effort)
+                # The shared QA agent answers for every memo (the contract has
+                # no answer hook) — official DynamicMem behaviour too.
+                ans = await agent.ask(prompt, reasoning_effort=self.reasoning_effort)
             raw_answer = ans
         except Exception as exc:
             # Keep the official empty-answer semantics (parse failure → 0)

@@ -37,7 +37,9 @@ def test_build_and_retrieve_are_required_answer_is_optional():
 
     m = Minimal()
     assert not hasattr(m, "database")
-    assert asyncio.new_event_loop().run_until_complete(m.use_memory_to_answer(None, {}, "PROMPT")) is None
+    # Answering is NOT part of the contract: the benchmark's shared QA agent
+    # answers for every memo, so a memo cannot substitute its own answerer.
+    assert not hasattr(m, "use_memory_to_answer")
 
 
 def test_harness_loaders_name_the_unimplemented_hook():
@@ -119,30 +121,6 @@ def test_phase1_update_calls_build_memory_once():
     assert calls == [[1, 2, 3, 4, 5]]   # ONE call, whole data (not chunked by the workflow)
 
 
-def test_use_memory_to_answer_used_else_agent():
-    """The answer step uses memo.use_memory_to_answer; falls back to the agent on None."""
-    import asyncio
-    from common.workflow import BaseWorkflow  # noqa: F401 (import proves module loads post-refactor)
-    from common.memo_class import MemoClass
-
-    class _Base(MemoClass):
-        async def build_memory_from_data(self, recorder): return None
-        async def retrieve_memory_for_query(self, recorder): return {}
-
-    class _Answering(_Base):
-        async def use_memory_to_answer(self, recorder, retrieved, prompt):
-            return "MEMO:" + prompt
-
-    class _Deferring(_Base):
-        pass  # use_memory_to_answer default None → agent answers
-
-    loop = asyncio.new_event_loop()
-    a = _Answering()
-    assert loop.run_until_complete(a.use_memory_to_answer(None, {}, "Q")) == "MEMO:Q"
-    d = _Deferring()
-    assert loop.run_until_complete(d.use_memory_to_answer(None, {}, "Q")) is None
-
-
 def test_memo_class_is_pure_contract():
     """common/ purification guard (2026-07-16): Sub_memo_layer must not flow
     back into common.memo_class (it is alma-owned design vocabulary, at
@@ -167,21 +145,20 @@ def test_memo_class_is_pure_contract():
     assert Sub_memo_layer.__module__ == "baselines.evolve.alma.memo_layers"
 
 
-def test_use_memory_to_answer_gets_query_scoped_recorder():
-    """Both answer sites pass the query-scoped retrieve_recorder to use_memory_to_answer,
-    not the phase-1 recorder — so recorder.init means the same thing everywhere."""
+def test_no_answer_hook_anywhere_in_the_eval_path():
+    """Answering is the benchmarks' own shared QA agent, not a memo hook: the
+    contract must not declare `use_memory_to_answer` and neither answer site
+    may call one (a memo that answered itself would also hide its cost from
+    the answer-phase token accounting)."""
     import inspect
     from common import workflow as bw
+    from common.memo_class import MemoClass
     from benchmarks.dynamicmem import workflow as dw
 
-    base_src = inspect.getsource(bw.BaseWorkflow.run_single_user)
-    dm_src = inspect.getsource(dw.DynamicMemWorkflow._run_item)
-
-    # Both should pass retrieve_recorder (spaces removed for robustness)
-    assert "use_memory_to_answer(retrieve_recorder" in base_src.replace(" ", ""), \
-        "BaseWorkflow.run_single_user must pass retrieve_recorder to use_memory_to_answer"
-    assert "use_memory_to_answer(retrieve_recorder" in dm_src.replace(" ", ""), \
-        "DynamicMemWorkflow._run_item must pass retrieve_recorder to use_memory_to_answer"
+    assert not hasattr(MemoClass, "use_memory_to_answer")
+    for src in (inspect.getsource(bw.BaseWorkflow.run_single_user),
+                inspect.getsource(dw.DynamicMemWorkflow._run_item)):
+        assert "use_memory_to_answer" not in src
 
 
 def test_dynamicmem_ingests_each_checkpoint_segment_from_scratch():

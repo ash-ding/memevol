@@ -15,8 +15,8 @@ RETRIEVE: ``LightMemory.retrieve(query, limit)`` — embed the query, search the
 Qdrant index, return the top-k memories as formatted strings (this is exactly how
 LightMem's own LongMemEval driver retrieves). Read-only (DynamicMem query
 non-pollution holds). Returned as ``{"passages": [...]}`` and the SHARED QA agent
-answers — ``use_memory_to_answer`` is NOT overridden (hipporag2/amem/simplemem
-pattern; keeps the comparison about memory, not about a bespoke answerer).
+answers, as it does for every memo (answering is not part of the contract), which
+keeps the comparison about memory, not about a bespoke answerer.
 
 Ingestion units (recorder.init dispatch, cf. hipporag2's _init_to_passages):
   locomo ("conversation"): one turn per utterance — user content = turn text,

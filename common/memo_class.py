@@ -1,12 +1,17 @@
 """The standardized memory-system contract every benchmark evaluates through.
 
-`MemoClass` exposes three hooks. BUILD (`build_memory_from_data`) and
-RETRIEVE (`retrieve_memory_for_query`) are ABSTRACT — a subclass that misses
-either (a typo'd name included) fails at instantiation instead of silently
-evaluating as a no-memory system. ANSWER (`use_memory_to_answer`) is optional:
-its default defers to the benchmark's shared QA agent. A fresh instance is
-created per user/sample BY THE FRAMEWORK (the per-dataset workflow), so no
-cross-user state is possible.
+`MemoClass` exposes two hooks, BUILD (`build_memory_from_data`) and RETRIEVE
+(`retrieve_memory_for_query`), both ABSTRACT — a subclass that misses either (a
+typo'd name included) fails at instantiation instead of silently evaluating as
+a no-memory system. A fresh instance is created per user/sample BY THE
+FRAMEWORK (the per-dataset workflow), so no cross-user state is possible.
+
+ANSWERING IS NOT A HOOK. Every benchmark answers through its own shared QA
+agent, from what RETRIEVE returned — so a score compares memories, not
+answerers, and the answer-side cost is the same for every system. (An optional
+`use_memory_to_answer` hook existed until 2026-09; no baseline ever
+implemented it, the forge proposer was never told about it, and the baseline
+tests asserted against overriding it.)
 
 Configuration: the framework may pass a `config` dict to the constructor;
 each instance keeps its own copy at `self.config`. The class holds no defaults
@@ -61,9 +66,3 @@ class MemoClass(ABC):
         context). Return retrieved context; `{"inline_memory_blocks": [str,...]}`
         controls inline rendering. MUST be read-only w.r.t. memory."""
 
-    async def use_memory_to_answer(self, recorder: Basic_Recorder, retrieved: Dict,
-                                    prompt: str) -> Optional[str]:
-        """ANSWER (OPTIONAL). Return the answer string, or None to defer to the
-        benchmark's standard QA agent (the default). `prompt` is the workflow's
-        fully-formatted answer prompt. Default: None."""
-        return None

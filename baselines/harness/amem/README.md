@@ -1,7 +1,7 @@
 # A-mem baseline
 
 [A-Mem: Agentic Memory for LLM Agents](https://arxiv.org/pdf/2502.12110) as a
-ready-made memory system on the 3-hook `MemoClass` contract.
+ready-made memory system on the 2-hook `MemoClass` contract.
 
 **Provenance**: `src/memory_layer.py` is vendored VERBATIM from
 <https://github.com/WujiangXu/A-mem> @
@@ -21,7 +21,7 @@ consolidates every 100 evolutions. Retrieval rewrites the question into
 keywords (LLM; prompt verbatim from the official eval driver
 `test_advanced.py::generate_query_llm`) and returns the top-k notes + linked
 neighbors as one formatted string in `{"memories": ...}`. The shared QA agent
-answers — `use_memory_to_answer` is not overridden (hipporag2 pattern; note
+answers, as it does for every memo (answering is not a hook; note
 memevol's locomo QA prompts are themselves ported from the IREM A-mem
 baseline, so the answer side is already A-mem-shaped there).
 

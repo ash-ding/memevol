@@ -31,7 +31,7 @@ and `R_recency` as a side effect), plus the LPM's top knowledge entries.
 | `retrieve_memory_for_query` | `Retriever.retrieve_context(query)` + `short_term_memory.get_all()` → `{"passages": [...]}` |
 
 MemoryOS ships its own answerer (`get_response`), which builds a prompt on top of
-`retrieve_context`. It is deliberately UNUSED: `use_memory_to_answer` is not
+`retrieve_context`. It is deliberately UNUSED: answering is not
 overridden, so the SHARED QA agent answers and the comparison stays about memory.
 
 **Page model.** A page is a PAIR, not a single utterance — the updater, the heat

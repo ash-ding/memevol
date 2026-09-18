@@ -14,8 +14,8 @@ RETRIEVE: the paper's contribution — ``HybridRetriever.retrieve(query)`` runs
 intent-aware planning + semantic/keyword/structured multi-view search (+ optional
 reflection). Read-only (DynamicMem query non-pollution holds). Its retrieved
 ``MemoryEntry`` units are returned as ``{"passages": [...]}`` and the SHARED QA
-agent answers — ``use_memory_to_answer`` is NOT overridden (hipporag2/amem
-pattern; keeps the comparison about memory, not about SimpleMem's own answerer).
+agent answers, as it does for every memo (answering is not part of the contract),
+which keeps the comparison about memory, not about SimpleMem's own answerer.
 
 Ingestion units (recorder.init dispatch, cf. hipporag2's _init_to_passages):
   locomo ("conversation"): one Dialogue per turn (speaker, text), time = session

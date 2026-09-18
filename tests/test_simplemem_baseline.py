@@ -184,14 +184,14 @@ def test_config_defaults_and_unified_models():
     assert unified["embedding_model"] == "text-embedding-3-small"
 
 
-def test_memo_implements_the_three_hook_contract():
+def test_memo_implements_the_two_hook_contract():
     from common.memo_class import MemoClass
     from baselines.harness.simplemem.memo import SimpleMemMemo
     assert issubclass(SimpleMemMemo, MemoClass)
     for hook in ("build_memory_from_data", "retrieve_memory_for_query"):
         assert callable(getattr(SimpleMemMemo, hook, None)), hook
-    # use_memory_to_answer must NOT be overridden: the shared QA agent answers.
-    assert "use_memory_to_answer" not in vars(SimpleMemMemo)
+    # Answering is not a hook: the shared QA agent answers for every memo.
+    assert not hasattr(SimpleMemMemo, "use_memory_to_answer")
 
 
 def test_hooks_run_off_the_event_loop():

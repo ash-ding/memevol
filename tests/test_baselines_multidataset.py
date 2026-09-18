@@ -39,8 +39,7 @@ def test_alma_still_imports_shared_registry():
 
 
 def test_base_workflow_default_answer_call_signature():
-    """When memo.use_memory_to_answer defers (returns None, the default), the
-    answer step in run_single_user MUST set agent.messages=[{system}] then
+    """The answer step in run_single_user MUST set agent.messages=[{system}] then
     call agent.ask(user_msg, with_history=False, reasoning_effort=...) —
     exact byte-identity of the pre-refactor _answer_query default, now
     inlined at the call site instead of a separate overridable hook."""
@@ -60,7 +59,6 @@ def test_base_workflow_default_answer_call_signature():
     class _Memo(MemoClass):
         async def build_memory_from_data(self, r): return None
         async def retrieve_memory_for_query(self, r): return {}
-        # use_memory_to_answer NOT overridden -> defaults to None (defers to agent)
 
     class _Rec:
         def __init__(self):
@@ -105,8 +103,7 @@ def test_base_workflow_default_answer_call_signature():
 
 
 def test_dynamicmem_default_answer_call_signature():
-    """When memo.use_memory_to_answer defers, DynamicMem's answer step in
-    _run_item MUST call agent.ask(prompt, reasoning_effort=...) with NO
+    """DynamicMem's answer step in _run_item MUST call agent.ask(prompt, reasoning_effort=...) with NO
     with_history kwarg and NO system message set — exact byte-identity of
     the pre-refactor _answer_query default, now inlined in _run_item."""
     import asyncio
@@ -129,7 +126,6 @@ def test_dynamicmem_default_answer_call_signature():
     class _Memo(MemoClass):
         async def build_memory_from_data(self, r): return None
         async def retrieve_memory_for_query(self, r): return {}
-        # use_memory_to_answer NOT overridden -> defaults to None (defers to agent)
 
     item = {
         "task_family": "apply_service",   # != TASK_FAMILY_STATE_COMPLETION -> Task C branch
