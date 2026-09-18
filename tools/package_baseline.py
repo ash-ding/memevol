@@ -61,10 +61,11 @@ if str(PROJECT_ROOT) not in sys.path:
 
 HARNESS_DIR = PROJECT_ROOT / "baselines" / "harness"
 
-#: Modules from `baselines/harness/` that every packaged baseline needs: the
-#: embedder/param shims memo.py installs, and the concurrency helpers its hooks
-#: use. Copied rather than imported — `baselines/` is not in the container.
-_SHARED_MODULES = ("model_config.py", "concurrency.py", "__init__.py")
+#: Modules from `baselines/harness/` a memo.py may import: the embedder/param
+#: shims it installs, the concurrency helpers its hooks use, and the shared
+#: app-log rendering. Copied rather than imported — `baselines/` is not
+#: mounted in the container.
+_SHARED_MODULES = ("model_config.py", "concurrency.py", "passages.py")
 
 
 def _export_requirements(project_dir: Path) -> str:

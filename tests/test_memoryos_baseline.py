@@ -98,7 +98,7 @@ def test_longmemeval_pairs_user_then_assistant():
 
 def test_dynamicmem_uses_shared_passage_text():
     from baselines.harness.memoryos.memo import _pairs_from_init
-    from baselines.harness.hipporag2.memo import app_log_to_passage
+    from baselines.harness.passages import app_log_to_passage
     entry = {"app_log_id": "1", "timestamp": "2023-01-01", "app_name": "Mail",
              "api_name": "send", "request": {"to": "x"}}
     pages = _pairs_from_init({"app_logs": [entry]})

@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Dict, List
 
 from common.memo_class import MemoClass
+from baselines.harness.passages import app_log_to_passage
 from baselines.harness.concurrency import model_load_lock
 
 # `import hipporag` must resolve to the byte-identical vendored copy under src/,
@@ -61,17 +62,6 @@ from common.openai_usage import install as _install_openai_usage
 _install_openai_usage()
 
 OUTPUTS_DIR = Path(__file__).resolve().parent / "outputs"
-
-
-def app_log_to_passage(log_entry: dict) -> str:
-    # verbatim from the old eval_hipporag2.py (lines 99-113)
-    ts = log_entry.get("timestamp", ""); app = log_entry.get("app_name", "")
-    api = log_entry.get("api_name", "")
-    req = json.dumps(log_entry.get("request", {}), ensure_ascii=False)
-    resp = json.dumps(log_entry.get("response", {}), ensure_ascii=False)
-    domain = log_entry.get("metadata", {}).get("domain", "")
-    return (f"[{ts}] App: {app}, Action: {api}\nDomain: {domain}\n"
-            f"Request: {req}\nResponse: {resp}")
 
 
 def _init_to_passages(init: Dict) -> List[str]:

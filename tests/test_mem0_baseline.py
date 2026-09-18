@@ -72,7 +72,7 @@ def test_dynamicmem_uses_shared_passage_text():
     # Identical passage content across baselines is what keeps dynamicmem
     # numbers comparable, so this must go through hipporag2's renderer.
     from baselines.harness.mem0.memo import _init_to_messages
-    from baselines.harness.hipporag2.memo import app_log_to_passage
+    from baselines.harness.passages import app_log_to_passage
     entry = {"app_log_id": "1", "timestamp": "2023-01-01", "app_name": "Mail",
              "api_name": "send", "request": {"to": "x"}}
     msgs = _init_to_messages({"app_logs": [entry]})

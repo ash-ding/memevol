@@ -61,7 +61,7 @@ def test_longmemeval_messages_keep_role_and_empty_date_becomes_none():
 
 def test_dynamicmem_uses_shared_passage_text():
     from baselines.harness.simplemem.memo import _init_to_dialogues
-    from baselines.harness.hipporag2.memo import app_log_to_passage
+    from baselines.harness.passages import app_log_to_passage
     entry = {"timestamp": "2024-01-01T00:00:00", "app_name": "cal", "api_name": "add"}
     dialogues, _ = _init_to_dialogues({"app_logs": [entry]}, 1)
     assert dialogues[0].speaker == "cal"

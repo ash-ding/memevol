@@ -97,7 +97,7 @@ def test_units_longmemeval_per_message():
 
 def test_units_dynamicmem_uses_hipporag2_passage_text():
     from baselines.harness.amem.memo import _init_to_note_units
-    from baselines.harness.hipporag2.memo import app_log_to_passage
+    from baselines.harness.passages import app_log_to_passage
     entry = {"timestamp": "2024-01-01T00:00:00", "app_name": "cal",
              "api_name": "add", "request": {"a": 1}, "response": {"ok": True},
              "metadata": {"domain": "productivity"}}
