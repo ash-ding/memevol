@@ -162,8 +162,9 @@ def test_a_dataset_that_produced_nothing_is_not_cached():
                            {"locomo": {"raw_score": 0.5},
                             "dynamicmem": {"raw_score": 0.0}},   # no score.json on disk
                            sanity_status="passed", run_id="r1")
-        assert [w.parent.parent.name for w in written] == ["evals"]
-        assert len(written) == 1
+        assert len(written) == 1, [str(w) for w in written]
+        manifest = json.loads((written[0] / "manifest.json").read_text())
+        assert manifest["inputs"]["dataset"] == "locomo", "only the one with results"
 
 
 def test_a_cache_failure_never_fails_the_run():
