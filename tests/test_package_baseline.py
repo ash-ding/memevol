@@ -117,21 +117,32 @@ def test_a_vendored_baseline_travels_with_its_src_and_resolved_config():
         assert cls(config={"mem0_llm_model": "x"}).config == {"mem0_llm_model": "x"}
 
 
-def test_the_unified_arm_is_packaged_at_low_reasoning_effort():
-    """These methods batch large prompts and carry their own client timeouts
-    (mem0's is 600 s). At default effort gpt-5-mini thinks past it on every
-    extraction call, so the run records nothing; at /low the same call returns
-    in seconds. The suffix is the repo convention, and it has to be one the
-    shim actually understands — a typo would reach the SDK verbatim and 400."""
+def test_the_unified_arm_is_packaged_on_a_model_these_methods_can_drive():
+    """The vendored methods batch large prompts, fan out hard and carry their
+    own timeouts. Measured on mem0's real extraction call, a reasoning model
+    took 15-23 s against 2-3 s here, emitted ~5x the completion tokens, and
+    repeatedly hit windows where it never returned — LightMem and SimpleMem
+    never completed a build that way. Whatever the default is, the shim has to
+    understand it: a string it cannot parse reaches the SDK verbatim."""
     from tools.package_baseline import build_parser
     from baselines.harness.model_config import normalise_chat_params
 
     args = build_parser().parse_args(["mem0", "--arm", "unified", "--out", "x"])
     model = args.unified_llm
-    assert model.endswith("/low"), f"the unified default lost its effort suffix: {model}"
+    assert not model.startswith(("gpt-5", "o1", "o3", "o4")), \
+        f"the unified default is a reasoning model again: {model}"
 
     out = normalise_chat_params({"model": model, "messages": []})
     assert out["model"] == model.split("/")[0]
+    assert "reasoning_effort" not in out
+
+
+def test_an_effort_suffix_still_reaches_the_shim_intact():
+    """Opting into a reasoning model stays available."""
+    from baselines.harness.model_config import normalise_chat_params
+
+    out = normalise_chat_params({"model": "gpt-5-mini/low", "messages": []})
+    assert out["model"] == "gpt-5-mini"
     assert out["reasoning_effort"] == "low"
 
 
