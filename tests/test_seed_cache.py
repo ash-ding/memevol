@@ -189,7 +189,7 @@ def test_store_keeps_the_code_the_results_and_a_readable_manifest():
 
         assert len(written) == 1
         entry = cache / "abc123abc123"
-        assert (entry / "harness.py").read_text() == "# code\n"
+        assert (entry / "memo.py").read_text() == "# code\n"
         assert not (entry / "locomo").exists(), "results live under evals/, not the code dir"
 
         result = written[0]
@@ -290,7 +290,7 @@ def test_restore_materialises_code_and_results_as_a_harness_dir():
         restored = SC.restore("abc123abc123", _CFG, ["locomo"], dst)
 
         assert restored is not None and set(restored) == {"locomo"}
-        assert (dst / "harness.py").read_text() == "# code\n"
+        assert (dst / "memo.py").read_text() == "# code\n"
         assert json.loads((dst / "locomo" / "score.json").read_text())["raw_score"] == 0.5
         assert (dst / "locomo" / "traces" / "u1.json").exists()
         assert not (dst / "locomo" / "manifest.json").exists(), \
