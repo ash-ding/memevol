@@ -8,7 +8,7 @@ test split, WITHOUT the search loop's proposer / sanity gate / frontier.
     # CLI overrides: --harness (repeatable) REPLACES the YAML `harnesses:`
     # list; every orchestrator flag (--datasets, ...) works too.
     uv run python -m forge.heldout --config configs/test_example.yaml \\
-        --harness workspace/<run>/harnesses/3_9f00aa11
+        --harness workspace/<run>/harnesses/9f00aa11b2c3
 
 Flow per harness:
   1. Copy the harness dir into this run's workspace (source stays untouched;
@@ -81,7 +81,7 @@ def _stage_harness(src: Path) -> str:
     if not (src / "harness.py").exists():
         raise SystemExit(
             f"--harness {src}: no harness.py found — pass a harness directory "
-            f"(e.g. workspace/<run>/harnesses/<int>_<hash8>)"
+            f"(e.g. workspace/<run>/harnesses/<hash>)"
         )
     dst = paths.harnesses_dir / src.name
     if dst.exists():

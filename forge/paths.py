@@ -81,6 +81,17 @@ class _Paths:
     def frontier_path(self) -> Path:
         return self.workspace / "frontier.json"
 
+    @property
+    def history_path(self) -> Path:
+        """Ordered log of what each search step produced.
+
+        Harness dirs are named by the hash of their code, which says WHAT a
+        harness is but not WHEN it arrived; this file is where the order
+        lives. Appended as each candidate settles, so an interrupted run
+        keeps the steps it finished.
+        """
+        return self.workspace / "history.json"
+
 
 paths = _Paths()
 

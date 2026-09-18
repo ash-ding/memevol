@@ -29,20 +29,26 @@ CLI flags always override the config file when both are given. See
 `configs/search_example.yaml` (exhaustive, runnable) for the full config schema.
 
 Outputs (per-run, under workspace/<run_id>/):
-    harnesses/<int>_<hash>/<dataset>/         full-eval score + traces
-    harnesses/<int>_<hash>/<dataset>/sanity/  small sanity-check score + traces
-    harnesses/<int>_<hash>/harness.py         the harness code itself
-    harnesses/<int>_<hash>/meta.json          parent_ids, description, content_hash, created_at
-    frontier.json                             population snapshot (with sanity_status)
-    forge/logs/orchestrator.log               rotating log (shared across runs)
+    harnesses/<hash>/<dataset>/         full-eval score + traces
+    harnesses/<hash>/<dataset>/sanity/  small sanity-check score + traces
+    harnesses/<hash>/harness.py         the harness code itself
+    harnesses/<hash>/meta.json          parent_ids, description, content_hash, created_at
+    frontier.json                       population snapshot (with sanity_status)
+    history.json                        which harnesses each step produced, in order
+    forge/logs/orchestrator.log         rotating log (shared across runs)
+
+A harness dir is named by the hash of its own code, so the same code is the
+same directory: a proposal that reproduces an earlier harness byte-for-byte is
+recognised as a duplicate and reuses that harness's evaluation instead of
+paying for it twice. Names therefore carry no ordering — `history.json` does.
 
 Per-harness eval over multiple datasets is serial (one Singularity exec per
 dataset). `Frontier.entries[i].objectives` stores both the mean ("accuracy")
 and per-dataset scores ("accuracy_<dataset>"). v4: parent selection is
 delegated to the proposer agent — the search loop has NO selection rule.
 v5: each orchestrator invocation gets its own per-run dir (`--run-name`
-or auto timestamp); harness dirs are renamed `<int>` → `<int>_<hash8>`
-after sanity loop settles, before full eval.
+or auto timestamp); a harness dir is renamed `pending_<n>` → `<hash>` once
+the sanity loop settles, before full eval.
 """
 from __future__ import annotations
 
@@ -58,6 +64,7 @@ import re
 import shutil
 import sys
 import time
+import uuid
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -228,7 +235,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "max_retries": 2,     # on sanity failure, call propose_with_fix up to this many times
     },
     "seed": {
-        # When enabled, copy seeds/<source>/ → <run>/harnesses/0/ at startup
+        # When enabled, copy seeds/<source>/ into this run at startup
         # to give the proposer a known baseline to reference. Default is OFF
         # — CC writes the first harness from scratch with parent_ids=[].
         # Opt in via `seed: {enabled: true, source: <name>}` in YAML or the
@@ -797,17 +804,76 @@ def _resolve_claude_auth(cfg: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
 # Id allocation
 # ---------------------------------------------------------------------------
 
-def _next_id(existing: List[str]) -> str:
-    """Return the next integer id as a string. Tolerates v5 ids of the form
-    `<int>_<hash>` — splits on `_` and takes the integer prefix."""
-    nums: List[int] = []
-    for id in existing:
-        head = id.split("_", 1)[0]
+#: A harness is named by the content hash of its code, so the name says WHAT
+#: the harness is rather than when it arrived (order lives in history.json).
+#: While the proposer is still writing — and while the sanity-fix loop may
+#: still rewrite harness.py — the code has no final identity, so the dir gets
+#: a pending name and is renamed once the code settles.
+HARNESS_ID_LEN = 12
+_PENDING_RX = re.compile(r"^pending_[0-9a-f]{8}$")
+_HARNESS_ID_RX = re.compile(r"^[0-9a-f]{%d}$" % HARNESS_ID_LEN)
+
+
+def _new_pending_id() -> str:
+    """A unique working name for a harness dir whose code is not settled yet."""
+    return f"pending_{uuid.uuid4().hex[:8]}"
+
+
+# ---------------------------------------------------------------------------
+# history.json — the order the hash-named harnesses arrived in
+# ---------------------------------------------------------------------------
+
+def _read_history() -> Dict[str, Any]:
+    """This workspace's history, or an empty skeleton."""
+    path = paths.history_path
+    if path.exists():
         try:
-            nums.append(int(head))
-        except ValueError:
-            continue
-    return str(max(nums, default=-1) + 1)
+            with path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict) and isinstance(data.get("steps"), list):
+                return data
+            log.warning(f"{path} is malformed; starting a fresh history")
+        except Exception as exc:
+            log.warning(f"could not parse {path}: {exc} (starting a fresh history)")
+    return {"run_id": paths.run_id, "steps": []}
+
+
+def _record_history(step: int, kind: str, record: Dict[str, Any]) -> None:
+    """Append one harness to `step`'s entry in history.json, rewriting the file.
+
+    `step` 0 is the seed; 1..N are search steps. `kind` is "seed" or
+    "propose". Written after every candidate rather than once at the end, so
+    a run that dies mid-search still explains what it produced.
+    """
+    history = _read_history()
+    for entry in history["steps"]:
+        if entry.get("step") == step:
+            entry["harnesses"].append(record)
+            break
+    else:
+        history["steps"].append({
+            "step": step,
+            "kind": kind,
+            "started_at": _dt.datetime.now().isoformat(timespec="seconds"),
+            "harnesses": [record],
+        })
+    history["steps"].sort(key=lambda e: e.get("step", 0))
+    paths.history_path.parent.mkdir(parents=True, exist_ok=True)
+    with paths.history_path.open("w", encoding="utf-8") as f:
+        json.dump(history, f, indent=2, ensure_ascii=False)
+
+
+def _history_record(harness_id: str, sanity_status: str,
+                    per_ds: Dict[str, Dict[str, Any]],
+                    parent_ids: List[str]) -> Dict[str, Any]:
+    """One harness's line in history.json: who it came from and how it scored."""
+    return {
+        "id": harness_id,
+        "sanity": sanity_status,
+        "parent_ids": list(parent_ids),
+        "scores": {ds: m.get("raw_score") for ds, m in per_ds.items()},
+        "at": _dt.datetime.now().isoformat(timespec="seconds"),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -836,26 +902,26 @@ def _compute_content_hash(harness_dir: Path) -> str:
     return hashlib.sha256(b"\n".join(parts)).hexdigest()[:16]
 
 
-def _finalize_harness_id(int_id: str, harness_dir: Path) -> Tuple[str, Path]:
-    """Rename `harnesses/<int>` → `harnesses/<int>_<hash8>` and stamp meta.json.
+def _finalize_harness_dir(harness_dir: Path) -> Tuple[str, Path, bool]:
+    """Rename `harnesses/pending_<n>` → `harnesses/<content hash>`.
 
-    Idempotent for already-finalized dirs (e.g. seed copied from `seeds/`
-    that may already include a content_hash). Returns `(final_id, new_dir)`.
+    Returns `(final_id, final_dir, is_duplicate)`. `is_duplicate` is True when
+    a harness with this exact code was already evaluated in this workspace:
+    the proposer wrote byte-identical code twice, so re-evaluating it would
+    buy nothing but tokens. The pending copy is dropped and the caller reuses
+    the existing directory and its results.
+
+    Idempotent for dirs that already carry their final name.
     """
-    # Already finalized? (e.g. user passed a pre-named dir; or seed already had hash)
-    if "_" in harness_dir.name:
-        return harness_dir.name, harness_dir
+    if _HARNESS_ID_RX.match(harness_dir.name):
+        return harness_dir.name, harness_dir, False
 
     full_hash = _compute_content_hash(harness_dir)
-    short = full_hash[:8]
-    final_id = f"{int_id}_{short}"
+    final_id = full_hash[:HARNESS_ID_LEN]
     final_dir = harness_dir.parent / final_id
     if final_dir.exists() and final_dir != harness_dir:
-        # Two harnesses with the same int prefix shouldn't exist; if they do,
-        # someone manually fiddled the workspace. Don't clobber.
-        raise RuntimeError(
-            f"target dir already exists: {final_dir} (refusing to overwrite)"
-        )
+        shutil.rmtree(harness_dir, ignore_errors=True)
+        return final_id, final_dir, True
     if final_dir != harness_dir:
         os.rename(harness_dir, final_dir)
 
@@ -882,15 +948,17 @@ def _finalize_harness_id(int_id: str, harness_dir: Path) -> Tuple[str, Path]:
 
 # ---------------------------------------------------------------------------
 # Seed harness bootstrap.
-# When cfg.seed.enabled, copy seeds/<source>/ → <run>/harnesses/0/ at startup.
+# When cfg.seed.enabled, copy seeds/<source>/ into this run at startup.
 # ---------------------------------------------------------------------------
 
 def _bootstrap_seed(seed_source: str) -> Optional[str]:
-    """Copy the seed library entry into this run's harnesses/0/.
+    """Copy the seed library entry into a pending dir in this run's harnesses/.
 
-    Returns the destination integer-id string (always "0") if a copy happened
-    or the dir already existed; returns None if no seed library entry was
-    found at `seeds/<seed_source>/` (caller should treat as "no seed").
+    Returns that pending id, or None when `seeds/<seed_source>/` does not
+    exist (the caller treats that as "no seed"). The dir is renamed to the
+    seed's content hash once it settles, exactly like a proposed harness — so
+    re-running a workspace that already holds this seed is detected as a
+    duplicate and costs nothing.
     """
     src = SEEDS_DIR / seed_source
     if not src.exists():
@@ -899,14 +967,12 @@ def _bootstrap_seed(seed_source: str) -> Optional[str]:
             f"valid --seed-source from {[p.name for p in SEEDS_DIR.iterdir()] if SEEDS_DIR.exists() else '[]'}"
         )
         return None
-    dst = paths.harnesses_dir / "0"
-    if dst.exists():
-        log.info(f"seed already present at {dst}; skipping copy")
-        return "0"
+    pending_id = _new_pending_id()
+    dst = paths.harnesses_dir / pending_id
     paths.harnesses_dir.mkdir(parents=True, exist_ok=True)
     shutil.copytree(src, dst)
     log.info(f"seed bootstrapped: {src} → {dst}")
-    return "0"
+    return pending_id
 
 
 # ---------------------------------------------------------------------------
@@ -1412,17 +1478,19 @@ async def propose_eval_one(
     """End-to-end for one harness (seed or proposed).
 
     Returns (final_id, per_dataset_scores, sanity_status, parent_ids):
-      - final_id: harness id after content-hash rename (e.g. "3_a1b2c3d4");
-        falls back to the integer id if no harness.py was produced
-        (proposer-failure path).
+      - final_id: harness id after the content-hash rename (e.g.
+        "a1b2c3d4e5f6"); falls back to the pending id when no harness.py was
+        produced (proposer-failure path).
       - sanity_status: "passed" / "failed" / "skipped" / "passed_on_retry_N"
         (also "proposer_failed" / "env_build_failed").
       - parent_ids: list of harness ids the proposer drew from
         (empty for the seed; populated from `meta.json::parent_ids`).
 
-    The harness directory is renamed `harnesses/<int>` →
-    `harnesses/<int>_<hash8>` after the sanity-retry loop settles, so the
-    suffix reflects the code that's actually evaluated.
+    The harness directory is renamed `harnesses/pending_<n>` →
+    `harnesses/<content hash>` after the sanity-retry loop settles, so the
+    name reflects the code that is actually evaluated. When that hash already
+    exists in this workspace the candidate is a duplicate: its results are
+    reused, `sanity_status` is "duplicate", and nothing is re-evaluated.
 
     `step_index` (the outer-loop step this candidate belongs to; 0 for the
     seed) feeds `common.sampling.derive_sample_seed` when cfg.random_sample
@@ -1437,13 +1505,16 @@ async def propose_eval_one(
     sanity_enabled = (not cfg["smoke_test"]) and cfg["sanity"]["enabled"]
 
     harness_dir = paths.harnesses_dir / new_id
-    final_id = new_id  # may get renamed to f"{new_id}_{hash8}" below
+    final_id = new_id      # replaced by the content hash once the code settles
+    duplicate_of: Optional[str] = None
 
     def _settle_path() -> None:
-        """Rename harness_dir → <int>_<hash8>. Updates outer-scope vars."""
-        nonlocal harness_dir, final_id
-        if (harness_dir / "harness.py").exists() and "_" not in harness_dir.name:
-            final_id, harness_dir = _finalize_harness_id(new_id, harness_dir)
+        """Rename harness_dir → its content hash. Updates outer-scope vars."""
+        nonlocal harness_dir, final_id, duplicate_of
+        if (harness_dir / "harness.py").exists() and not _HARNESS_ID_RX.match(harness_dir.name):
+            final_id, harness_dir, is_dup = _finalize_harness_dir(harness_dir)
+            if is_dup:
+                duplicate_of = final_id
 
     # Propose (unless seed). No parent_id passed — the agent browses the
     # workspace itself and records its chosen prior(s) in meta.json::parent_ids.
@@ -1571,9 +1642,19 @@ async def propose_eval_one(
                 )
             return final_id, {ds: {"raw_score": 0.0, "score_max": 1, "per_user_stddev": None, "tokens": 0} for ds in dataset_names}, "failed", _read_parent_ids(harness_dir)
 
-    # Sanity loop settled (or skipped). Compute hash on the post-fix code,
-    # rename `<int>` → `<int>_<hash8>`, then run full eval against the new dir.
+    # Sanity loop settled (or skipped). Name the dir by the hash of the code
+    # that will actually run, then evaluate it — unless this exact code was
+    # already evaluated in this workspace, in which case its results stand and
+    # re-running them would only spend tokens.
     _settle_path()
+    if duplicate_of is not None:
+        log.info(
+            f"{new_id}: byte-identical to harnesses/{duplicate_of} — reusing "
+            f"its evaluation instead of re-running it"
+        )
+        return (final_id,
+                {ds: _read_dataset_metrics(harness_dir, ds) for ds in dataset_names},
+                "duplicate", _read_parent_ids(harness_dir))
 
     # Per-step sample seed (2026-07-25): when random_sample is on, each step
     # gets a different but reproducible subset per dataset; otherwise every
@@ -1624,8 +1705,8 @@ async def search_loop(cfg: Dict[str, Any]) -> None:
 
     # Resume orphan adoption: re-attach harness dirs that exist on disk but
     # aren't in frontier (e.g. orchestrator killed mid-eval). Runs BEFORE
-    # seed-bootstrap so an orphaned 0_<hash> seed is auto-detected and the
-    # bootstrap's `seed_already_in_frontier` check below sees it.
+    # seed-bootstrap so an orphaned seed dir is auto-detected and the
+    # `seed_already_in_frontier` check below sees it.
     if cfg.get("adopt_orphans", True):
         n_adopted = await _adopt_orphan_dirs(cfg, frontier)
         if n_adopted:
@@ -1634,18 +1715,27 @@ async def search_loop(cfg: Dict[str, Any]) -> None:
     datasets_config: Dict[str, Dict[str, Any]] = cfg["datasets"]
     dataset_names = list(datasets_config.keys())
 
-    # Seed harness bootstrap (v5): copy seeds/<source>/ → harnesses/0/ when
-    # enabled. Then evaluate seed and rename → 0_<hash>. Skips the seed entirely
+    # Seed harness bootstrap: copy seeds/<source>/ into this run when
+    # enabled, evaluate it, name it by its hash. Skips the seed entirely
     # when seed.enabled=false, so CC's first proposal becomes the first entry.
-    seed_already_in_frontier = any(e.id.split("_", 1)[0] == "0" for e in frontier.all_entries())
+    # A seed is identified by the hash of its code, like every other harness,
+    # so a re-run of this workspace recognises the seed it already evaluated.
+    seed_id: Optional[str] = None
+    if cfg["seed"]["enabled"]:
+        try:
+            seed_id = _compute_content_hash(SEEDS_DIR / cfg["seed"]["source"])[:HARNESS_ID_LEN]
+        except Exception as exc:
+            log.error(f"cannot read seed {cfg['seed']['source']}: {exc}; aborting search")
+            return
+    seed_already_in_frontier = bool(seed_id) and frontier.get(seed_id) is not None
     if cfg["seed"]["enabled"] and not seed_already_in_frontier:
-        seed_int_id = _bootstrap_seed(cfg["seed"]["source"])
-        if seed_int_id is None:
+        seed_pending_id = _bootstrap_seed(cfg["seed"]["source"])
+        if seed_pending_id is None:
             log.error("seed bootstrap failed; aborting search")
             return
         log.info(f"evaluating seed harness on {dataset_names} ...")
         seed_final_id, per_ds, sanity_status, parent_ids = await propose_eval_one(
-            cfg, new_id=seed_int_id, is_seed=True,
+            cfg, new_id=seed_pending_id, is_seed=True,
         )
         seed_dir = paths.harnesses_dir / seed_final_id
         objectives = _build_objectives(per_ds, seed_dir)
@@ -1658,6 +1748,8 @@ async def search_loop(cfg: Dict[str, Any]) -> None:
         frontier.add(entry)
         _persist_sanity_status(entry.id, sanity_status)
         frontier.save(paths.frontier_path)
+        _record_history(0, "seed", _history_record(
+            seed_final_id, sanity_status, per_ds, parent_ids))
         log.info(
             f"seed {seed_final_id}: "
             + ", ".join(
@@ -1671,7 +1763,7 @@ async def search_loop(cfg: Dict[str, Any]) -> None:
 
     # Search loop. v4: no parent selection — for each step, propose k harnesses
     # back-to-back; each call lets CC browse the workspace and pick its own
-    # priors. v5: dir is renamed to <int>_<hash> after sanity settles.
+    # priors. The dir is renamed to its content hash after sanity settles.
     #
     # Resume semantics (2026-04-28): cfg["steps"] is the TOTAL number of search
     # steps across all invocations of this --run-name. We compute "proposals
@@ -1681,12 +1773,9 @@ async def search_loop(cfg: Dict[str, Any]) -> None:
     k = int(cfg["propose"]["k_per_step"])
     total = cfg["steps"] * k
     done = len(frontier.all_entries())
-    # Seed (if bootstrapped) sits at id "0_<hash>" — it's a baseline reference,
-    # not a "search proposal". Subtract it from `done` so it doesn't eat into
-    # the proposal budget.
-    if cfg["seed"]["enabled"] and any(
-        e.id.startswith("0_") for e in frontier.all_entries()
-    ):
+    # The seed is a baseline reference, not a "search proposal" — subtract it
+    # from `done` so it does not eat into the proposal budget.
+    if seed_id and frontier.get(seed_id) is not None:
         done = max(0, done - 1)
 
     if done >= total:
@@ -1703,16 +1792,16 @@ async def search_loop(cfg: Dict[str, Any]) -> None:
     for n in range(done, total):
         step = n // k + 1
         j = n % k + 1
-        int_id = _next_id([e.id for e in frontier.all_entries()])
-        log.info(f"[step {step}/{cfg['steps']}] candidate {j}/{k} → int_id={int_id}")
+        pending_id = _new_pending_id()
+        log.info(f"[step {step}/{cfg['steps']}] candidate {j}/{k} → {pending_id}")
         try:
             final_id, per_ds, sanity_status, parent_ids = await propose_eval_one(
-                cfg, new_id=int_id, is_seed=False, step_index=step,
+                cfg, new_id=pending_id, is_seed=False, step_index=step,
             )
         except ProposerInfraError as exc:
             log.error(
                 f"[step {step}/{cfg['steps']}] propose subprocess failed for "
-                f"{int_id}: {exc}\n"
+                f"{pending_id}: {exc}\n"
                 f"  → search aborted to avoid generating placeholder entries.\n"
                 f"  → Resume with the SAME --run-name (total {cfg['steps']} steps; "
                 f"{n} of {total} proposals done before this attempt's failure)."
@@ -1730,6 +1819,8 @@ async def search_loop(cfg: Dict[str, Any]) -> None:
         frontier.add(entry)
         _persist_sanity_status(entry.id, sanity_status)
         frontier.save(paths.frontier_path)
+        _record_history(step, "propose", _history_record(
+            final_id, sanity_status, per_ds, parent_ids))
         log.info(
             f"[step {step}/{j}] {final_id} "
             + ", ".join(
@@ -1761,35 +1852,30 @@ async def search_loop(cfg: Dict[str, Any]) -> None:
 #                  rm -rf the dir + warn
 # ---------------------------------------------------------------------------
 
-# Matches a valid harness dir name: integer (pre-finalize) or integer_hash8
-# (post-finalize). Anything else (e.g. user-created `notes/`, transient
+# A valid harness dir is named by its content hash; `pending_*` is one whose
+# code never settled. Anything else (e.g. user-created `notes/`, transient
 # scratch files) is filtered out by _scan_orphan_dirs.
-_HARNESS_DIR_RX = re.compile(r"^\d+(_[0-9a-f]{8})?$")
 
 
 def _scan_orphan_dirs(frontier: Frontier) -> List[Path]:
-    """Return harness dirs on disk whose int prefix isn't in `frontier`,
-    sorted by integer prefix ascending so adoption runs in id order."""
+    """Harness dirs on disk that `frontier` does not know about.
+
+    A `pending_*` dir is a harness whose code never settled (the run died
+    while the proposer was writing it), so it has no identity to adopt: it is
+    returned too, and `_classify_orphan` discards it. Ordered by the dir's own
+    creation time so adoption replays roughly the order they arrived in.
+    """
     if not paths.harnesses_dir.exists():
         return []
-    in_frontier_int_prefixes = {
-        e.id.split("_", 1)[0] for e in frontier.all_entries()
-    }
-    orphans: List[Tuple[int, Path]] = []
-    for child in paths.harnesses_dir.iterdir():
-        if not child.is_dir():
-            continue
-        if not _HARNESS_DIR_RX.match(child.name):
-            continue
-        int_prefix = child.name.split("_", 1)[0]
-        if int_prefix in in_frontier_int_prefixes:
-            continue
-        try:
-            orphans.append((int(int_prefix), child))
-        except ValueError:
-            continue
-    orphans.sort(key=lambda t: t[0])
-    return [path for _, path in orphans]
+    known = {e.id for e in frontier.all_entries()}
+    orphans = [
+        child for child in paths.harnesses_dir.iterdir()
+        if child.is_dir()
+        and (_HARNESS_ID_RX.match(child.name) or _PENDING_RX.match(child.name))
+        and child.name not in known
+    ]
+    orphans.sort(key=lambda p: (p.stat().st_mtime, p.name))
+    return orphans
 
 
 def _classify_orphan(harness_dir: Path, dataset_names: List[str]) -> str:
@@ -1797,7 +1883,7 @@ def _classify_orphan(harness_dir: Path, dataset_names: List[str]) -> str:
 
     Decision tree (in order):
       - no harness.py                                  → 'incomplete'
-      - dir name has no underscore (Case B)            → 'incomplete'
+      - dir still carries a pending name (Case B)      → 'incomplete'
       - meta.json missing or content_hash missing      → 'incomplete'
       - every <ds>/sanity/score.json present:
           if every <ds>/score.json present             → 'complete'
@@ -1809,7 +1895,7 @@ def _classify_orphan(harness_dir: Path, dataset_names: List[str]) -> str:
     """
     if not (harness_dir / "harness.py").exists():
         return "incomplete"
-    if "_" not in harness_dir.name:
+    if not _HARNESS_ID_RX.match(harness_dir.name):
         return "incomplete"
     meta = _read_meta(harness_dir)
     if not meta.get("content_hash"):
@@ -1883,18 +1969,16 @@ async def _adopt_orphan(
     if kind == "incomplete":
         log.warning(
             f"adoption: discarded incomplete orphan harnesses/{name} "
-            f"(missing harness.py / hash suffix / content_hash, or partial sanity/eval state)"
+            f"(missing harness.py / unsettled name / content_hash, or partial sanity/eval state)"
         )
         shutil.rmtree(harness_dir, ignore_errors=True)
         return None
 
-    # Defensive content_hash check (only meaningful for hash-suffixed dirs,
-    # which all surviving cases here are). Detects post-finalize edits to
-    # harness.py — would mean the eval would run different code than the
-    # hash suffix advertises.
-    expected_hash8 = name.split("_", 1)[1]
+    # Defensive content_hash check: detects post-finalize edits to harness.py,
+    # which would mean the eval runs different code than the dir name claims.
+    expected_hash = name
     try:
-        actual_hash8 = _compute_content_hash(harness_dir)[:8]
+        actual_hash = _compute_content_hash(harness_dir)[:HARNESS_ID_LEN]
     except Exception as exc:
         log.warning(
             f"adoption: discarded harnesses/{name} — could not "
@@ -1902,10 +1986,10 @@ async def _adopt_orphan(
         )
         shutil.rmtree(harness_dir, ignore_errors=True)
         return None
-    if actual_hash8 != expected_hash8:
+    if actual_hash != expected_hash:
         log.warning(
             f"adoption: discarded harnesses/{name} — content_hash mismatch "
-            f"(computed={actual_hash8}, dir suffix={expected_hash8}); "
+            f"(computed={actual_hash}, dir name={expected_hash}); "
             f"harness.py was modified post-finalize"
         )
         shutil.rmtree(harness_dir, ignore_errors=True)

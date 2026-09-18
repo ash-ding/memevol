@@ -103,11 +103,12 @@ Each propose call runs Claude Code in a fresh Singularity container with a
 
 ```
 /workspace                      (RW, cwd)  = workspace/<run_id>/ — THIS run only
-├── harnesses/<int>_<hash8>/    every prior candidate: harness.py, meta.json,
+├── harnesses/<hash>/           every prior candidate: harness.py, meta.json,
 │                                <dataset>/score.json + stages.json + traces/,
 │                                and the exact prompts that produced it
 │                                (.prompt_system.txt / .prompt_task.txt)
-└── frontier.json               the population with per-benchmark scores
+├── frontier.json               the population with per-benchmark scores
+└── history.json                which harnesses each step produced, in order
 
 /app                            (RO, selective; PYTHONPATH=/app)
 ├── forge/memo_class.py       the MemoClass base the new harness must inherit
@@ -282,7 +283,7 @@ uv run python -m forge.orchestrator \
 ```
 
 Everything the run produces lands under `workspace/<run_name>/`:
-`harnesses/<int>_<hash8>/` (code + per-benchmark scores + traces),
+`harnesses/<hash>/` (code + per-benchmark scores + traces),
 `frontier.json` (the population), `orchestrator.log`.
 
 ### Part B — held-out test of a discovered harness
@@ -304,7 +305,7 @@ uv run python -m forge.heldout --config configs/test_example.yaml
 
 # Or point at specific harness dir(s) from a finished search run
 uv run python -m forge.heldout --config configs/test_example.yaml \
-  --harness workspace/my_search/harnesses/3_9f00aa11
+  --harness workspace/my_search/harnesses/9f00aa11b2c3
 
 # → workspace/heldout_<ts>/heldout_results.json + per-benchmark artifacts
 ```
