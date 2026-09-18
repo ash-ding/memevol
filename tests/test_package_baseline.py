@@ -94,8 +94,11 @@ def test_packaging_replaces_a_previous_package_rather_than_merging():
 
 
 def _mem0_importable() -> bool:
+    """True in mem0's own venv. The vendored package lives under `src/` and is
+    only reachable through memo.py (which puts it on sys.path), so importing
+    `mem0` directly would say nothing."""
     try:
-        import mem0  # noqa: F401
+        import baselines.harness.mem0.memo  # noqa: F401
         return True
     except Exception:
         return False
