@@ -16,7 +16,7 @@ History:
                    common/{memo_class,llm,logger,__init__}.py + datasets/
                    + forge/{__init__,prompts,propose_in_container}.py;
                    /seeds bind dropped (selected seed already copied into
-                   /workspace/harnesses/0/ at startup). PROPOSER_SYSTEM made
+                   the run's harnesses/ at startup). PROPOSER_SYSTEM made
                    sanity-conditional via build_proposer_system(...).
   2026-07-16       common/recorder.py added to the bind list (Basic_Recorder
                    moved out of the contract module — the in-container
