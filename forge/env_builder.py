@@ -57,8 +57,14 @@ From: {EVAL_BASE_SIF}
 
 %post
     set -e
+    # pip unpacks wheels under $TMPDIR (= /tmp), and singularity binds the
+    # HOST's /tmp into the build — a small shared partition on the machines
+    # this runs on. Unpack inside the image instead; see containers/eval-base.def.
+    export TMPDIR=/opt/build-tmp
+    mkdir -p "$TMPDIR"
     pip install --no-cache-dir -r /opt/extra_requirements.txt
     rm /opt/extra_requirements.txt
+    rm -rf /opt/build-tmp
 
 %labels
     ForgeDelta 1
@@ -114,9 +120,20 @@ async def ensure_image(
             def_path = Path(tmp) / "delta.def"
             def_path.write_text(_delta_def(reqs_staged.name), encoding="utf-8")
 
+            # Singularity unpacks the whole image into a scratch sandbox
+            # before writing the .sif. That is several GB, and its default
+            # ($TMPDIR, else /tmp) is a small system partition on the machines
+            # this runs on — penguin's /tmp holds under 3 GB free, which a
+            # torch-bearing image overflows with "No space left on device"
+            # halfway through pip. Keep the scratch next to the images, where
+            # the space for them already is.
+            scratch = FORGE_IMAGES_DIR / ".build-scratch"
+            scratch.mkdir(parents=True, exist_ok=True)
             env = {
                 **os.environ,
                 "PATH": f"{PROOT_BIN_DIR}:{os.environ.get('PATH', '')}",
+                "SINGULARITY_TMPDIR": str(scratch),
+                "SINGULARITY_CACHEDIR": str(scratch / "cache"),
             }
 
             cmd = [

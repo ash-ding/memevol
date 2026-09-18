@@ -16,6 +16,14 @@ From: python:3.12-slim
 
     echo "=== post-apt check ===" && ls -la /opt/base_requirements.txt
 
+    # pip unpacks wheels under $TMPDIR, which is /tmp — and singularity binds
+    # the HOST's /tmp into the build. On a shared machine that is a small
+    # partition (9.8G on penguin, mostly other people's files), so a
+    # torch-sized install dies with "No space left on device" and takes the
+    # partition down with it. Keep the unpacking inside the image being built.
+    export TMPDIR=/opt/build-tmp
+    mkdir -p "$TMPDIR"
+
     python -m pip install --no-cache-dir --upgrade pip setuptools wheel
     # torch comes from PyTorch's CUDA 12.4 index: PyPI's Linux wheels bundle
     # CUDA 13, which needs NVIDIA driver >= 580 (penguin runs 550). Everything
@@ -24,6 +32,7 @@ From: python:3.12-slim
         --extra-index-url https://download.pytorch.org/whl/cu124 \
         -r /opt/base_requirements.txt
     rm /opt/base_requirements.txt
+    rm -rf /opt/build-tmp
 
 %environment
     export PYTHONUNBUFFERED=1
