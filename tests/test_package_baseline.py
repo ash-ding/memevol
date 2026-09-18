@@ -29,10 +29,10 @@ def _have_uv() -> bool:
     return shutil.which("uv") is not None
 
 
-def test_exported_requirements_are_pinned_and_container_only():
+def test_exported_requirements_are_pinned_and_carry_their_markers():
     """Read straight out of uv.lock, a Windows-only wheel (portalocker pulls
-    pywin32) would be pinned and fail the image build — so the export asks for
-    the container's platform."""
+    pywin32) is pinned as if it were needed and the image build dies on it.
+    The export writes it with its marker instead, which pip applies."""
     if not _have_uv():
         print("    (skipped: needs uv on PATH)")
         return
@@ -41,7 +41,8 @@ def test_exported_requirements_are_pinned_and_container_only():
             if l.strip() and not l.startswith("#") and not l.startswith(" ")]
     assert len(pins) > 10, pins[:5]
     assert all("==" in p for p in pins), "every dependency is pinned"
-    assert not any(p.startswith("pywin32") for p in pins), pins
+    windows_only = [p for p in pins if p.startswith("pywin32")]
+    assert all(";" in p and "win32" in p for p in windows_only), windows_only
     assert not any("memevol-baseline" in p for p in pins), \
         "the project itself is not a dependency"
 
@@ -105,7 +106,8 @@ def test_a_vendored_baseline_travels_with_its_src_and_resolved_config():
         assert (pkg / "src" / "mem0").is_dir(), "the vendored package travels with it"
         reqs = (out / "requirements.txt").read_text(encoding="utf-8")
         assert "qdrant-client==" in reqs and "openai==" in reqs
-        assert "pywin32" not in reqs, "a Windows-only wheel would fail the build"
+        assert "pywin32" not in reqs or "sys_platform" in reqs, \
+            "a Windows-only pin must carry its marker or not be there at all"
 
         cls = load_harness_class(out)
         memo = cls()

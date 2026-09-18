@@ -67,22 +67,18 @@ HARNESS_DIR = PROJECT_ROOT / "baselines" / "harness"
 _SHARED_MODULES = ("model_config.py", "concurrency.py", "__init__.py")
 
 
-#: The container: `pip install` there must not be handed Windows-only wheels.
-_CONTAINER_PLATFORM = "x86_64-unknown-linux-gnu"
-
-
 def _export_requirements(project_dir: Path) -> str:
     """Pinned requirements for the container, from the baseline's uv.lock.
 
-    Exported by `uv` rather than read out of the lock by hand: the lock holds
-    every platform's resolution, and a naive read pins Windows-only packages
-    (portalocker pulls `pywin32`) which then fail the image build. `uv export`
-    resolves for one platform and keeps the environment markers.
+    Exported by `uv` rather than read out of the lock by hand. The lock holds
+    every platform's resolution, so a naive read pins Windows-only packages
+    (portalocker pulls `pywin32`) as if they were needed, and the image build
+    dies on them. `uv export` writes each pin with its environment marker —
+    `pywin32==312 ; sys_platform == 'win32'` — which pip then skips on Linux.
     """
     cmd = [
         "uv", "export", "--frozen", "--no-hashes", "--no-emit-project",
-        "--no-dev", "--python-platform", _CONTAINER_PLATFORM,
-        "--project", str(project_dir),
+        "--no-dev", "--project", str(project_dir),
     ]
     try:
         done = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
@@ -184,8 +180,9 @@ def package(name: str, arm: str, unified_models: Dict[str, str] | None,
 
     if (src / "uv.lock").exists():
         (out / "requirements.txt").write_text(
-            f"# Exported from baselines/harness/{name}/uv.lock for "
-            f"{_CONTAINER_PLATFORM} — the exact set this baseline was tested with.\n"
+            f"# Exported from baselines/harness/{name}/uv.lock — the exact set "
+            f"this baseline was tested with. Pins carry their environment "
+            f"markers; pip applies them.\n"
             + _export_requirements(src),
             encoding="utf-8")
 
