@@ -127,15 +127,20 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "judge_model": "gpt-5-mini",
     "max_sample_concurrent": 3,
     # Evaluation workload shape (search loop AND forge.heldout). The single knob:
+    #   progressive: false (DEFAULT since 2026-09) — ONE evaluation per
+    #                        benchmark sized by the REQUIRED `single_stage`
+    #                        block (no stage1/2, no elimination; wire stage
+    #                        "single", artifacts under <ds>/single/). One
+    #                        evaluation shape per step also keeps per-step cost
+    #                        metrics comparable, which the gauntlet's changing
+    #                        stage sizes do not.
     #   progressive: true  — the staged gauntlet (stage1→2→3 nested sampling +
     #                        promotion thresholds), sized by each dataset's
-    #                        `stages` block.
-    #   progressive: false — ONE evaluation per benchmark sized by the REQUIRED
-    #                        `single_stage` block (no stage1/2, no elimination;
-    #                        wire stage "single", artifacts under <ds>/single/).
-    # The sanity gate and smoke_test runs are unaffected.
+    #                        `stages` block. Each stage keeps its own metrics.
+    # The sanity gate and smoke_test runs are unaffected (they size from
+    # `stages`/the family defaults either way).
     # CLI: --progressive / --no-progressive.
-    "progressive": True,
+    "progressive": False,
     # When True, each search step samples a DIFFERENT (but still
     # deterministic + reproducible) subset per benchmark, via
     # common.sampling.derive_sample_seed(sampling_seed, step_index, dataset).
@@ -346,7 +351,7 @@ def _forge_strict_validate(provided_tree: Dict[str, Any], resolved_cfg: Dict[str
     if not isinstance(ds, dict) or not ds:
         missing.append("datasets (non-empty)")
     else:
-        progressive = bool(resolved_cfg.get("progressive", True))
+        progressive = bool(resolved_cfg.get("progressive", False))
         for name, params in ds.items():
             missing += missing_sizing_config(name, params or {}, progressive, path_prefix=f"datasets.{name}")
     raise_completeness("forge config", missing)
@@ -550,9 +555,9 @@ def _resolve_config(args: argparse.Namespace, *,
 
     # progressive / random_sample / sampling_seed.
     # `progressive` (YAML key OR --progressive/--no-progressive) is the single
-    # knob: the staged stage1→2→3 gauntlet (True, default) vs ONE single-stage
-    # pass (False, sized by each dataset's `single_stage` block). Absent,
-    # DEFAULT_CONFIG's progressive=True stands.
+    # knob: ONE single-stage pass (False, the default, sized by each dataset's
+    # `single_stage` block) vs the staged stage1→2→3 gauntlet (True). Absent,
+    # DEFAULT_CONFIG's progressive=False stands.
     if getattr(args, "progressive", None) is not None:
         cfg["progressive"] = bool(args.progressive)
 
@@ -1260,17 +1265,18 @@ async def evaluate_harness(
     max_sample_concurrent: int,
     gpu: bool = False,
     llm_cfg: Optional[Dict[str, Any]] = None,
-    progressive: bool = True,
+    progressive: bool = False,
     data_isolation_binds: Optional[List[str]] = None,
     sample_seed_for: Callable[[str], Optional[str]] = lambda ds: None,
 ) -> Dict[str, Dict[str, Any]]:
     """Run the evaluation on every dataset (serial).
 
-    progressive=True (default): the STAGED gauntlet below, from the dataset's
-    `stages` block. progressive=False: ONE pass per benchmark (plan =
+    progressive=False (default): ONE pass per benchmark (plan =
     [("single", spec, no threshold)], via `common.evaluate.resolve_sampling_plan`),
     sized by the dataset's REQUIRED `single_stage` config block (raises ValueError
     if absent — no automatic whole-split fallback) — same loop, no promotion gates.
+    progressive=True: the STAGED gauntlet below, from the dataset's `stages`
+    block.
 
     Per benchmark (independent promotion): run stage1 → stage2 → stage3,
     publishing each stage's artifacts to `harnesses/<id>/<ds>/<stage>/`.
@@ -2140,11 +2146,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
                              "instead of the search-split-only overlay.")
     parser.add_argument("--progressive", dest="progressive",
                         action="store_true", default=None,
-                        help="Run the staged stage1→2→3 gauntlet (default).")
+                        help="Run the staged stage1→2→3 gauntlet, sized by "
+                             "each dataset's `stages` block.")
     parser.add_argument("--no-progressive", dest="progressive",
                         action="store_false", default=None,
-                        help="Skip the gauntlet — ONE single-stage pass per "
-                             "benchmark, sized by each dataset's `single_stage` block.")
+                        help="Skip the gauntlet (the default) — ONE "
+                             "single-stage pass per benchmark, sized by each "
+                             "dataset's `single_stage` block.")
     parser.add_argument("--random-sample", action="store_true",
                         help="Sample a DIFFERENT (deterministic) subset each "
                              "search step, seeded from --sampling-seed via "

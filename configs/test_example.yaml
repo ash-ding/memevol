@@ -8,9 +8,9 @@
 #
 # CLI flags override matching YAML fields; `--harness <dir>` (repeatable)
 # REPLACES the `harnesses:` list below entirely. Fields you omit fall back to
-# `forge/orchestrator.py::DEFAULT_CONFIG` — except `progressive`, which defaults
-# to `false` in the heldout flow (final-numbers semantics: ONE single-stage
-# pass) rather than the search loop's `true`.
+# `forge/orchestrator.py::DEFAULT_CONFIG`. `progressive` defaults to `false`
+# everywhere (heldout additionally REJECTS `true`: final numbers are always ONE
+# single-stage pass).
 #
 # Notes on semantics fixed by the heldout flow (not configurable here):
 #   - the split is ALWAYS test (heldout has no mode/smoke_test concept)

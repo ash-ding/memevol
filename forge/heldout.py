@@ -156,11 +156,15 @@ def _yaml_raw(args) -> Dict[str, Any]:
 def _apply_heldout_progressive_default(
     cfg: Dict[str, Any], args, raw_yaml: Dict[str, Any]
 ) -> None:
-    """Held-out evaluation is a final-numbers flow — default to `progressive=False`
-    (ONE single-stage pass per benchmark) when `progressive` is not given anywhere
-    (CLI or YAML), overriding DEFAULT_CONFIG's `progressive=True` (a search-loop
-    default, not a heldout one). An explicit `progressive:` (YAML key or
-    --progressive/--no-progressive) is respected. Mutates `cfg` in place."""
+    """Held-out evaluation is a final-numbers flow — it is ALWAYS ONE
+    single-stage pass per benchmark, so `progressive` defaults to False here
+    when it is not given anywhere (CLI or YAML). This agrees with
+    DEFAULT_CONFIG's own default since 2026-09; it is kept explicit because
+    heldout's semantics are fixed rather than inherited (a future search-loop
+    default must not leak the gauntlet into final numbers). An explicit
+    `progressive:` (YAML key or --progressive/--no-progressive) is respected —
+    and `True` is then rejected outright by `_reject_progressive_on_heldout`.
+    Mutates `cfg` in place."""
     progressive_given = (
         getattr(args, "progressive", None) is not None or "progressive" in raw_yaml
     )
