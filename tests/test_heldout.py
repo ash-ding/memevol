@@ -191,15 +191,16 @@ def test_search_example_yaml_parses():
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     cfg_path = os.path.join(repo, "configs", "search_example.yaml")
     cfg = _resolve_config(build_arg_parser().parse_args(["--config", cfg_path]))
-    assert cfg["progressive"] is True
+    assert cfg["progressive"] is False   # the example demonstrates the default
 
 
 # ---------------- heldout progressive default ----------------
 
 def test_heldout_omitted_progressive_defaults_to_false():
     """A heldout config that omits `progressive:` gets progressive=False (a
-    single-stage pass) — heldout's own default (`_apply_heldout_progressive_default`),
-    overriding DEFAULT_CONFIG's search-loop `progressive=True`."""
+    single-stage pass). DEFAULT_CONFIG now says False too, so this checks that
+    heldout keeps its OWN default — held-out numbers must stay a single pass
+    even if the search-loop default ever moves back."""
     import yaml
     from forge.orchestrator import _resolve_config
     with tempfile.TemporaryDirectory() as td:
@@ -210,9 +211,13 @@ def test_heldout_omitted_progressive_defaults_to_false():
         args = H._heldout_arg_parser().parse_args(
             ["--config", str(cfg_path), "--no-strict-config"])
         cfg = _resolve_config(args)
-        assert cfg["progressive"] is True   # _resolve_config's search-loop default
         H._apply_heldout_progressive_default(cfg, args, H._yaml_raw(args))
         assert cfg["progressive"] is False  # heldout forces the single-stage pass
+
+        # ... and it still forces it when the search-loop default says True.
+        cfg["progressive"] = True
+        H._apply_heldout_progressive_default(cfg, args, H._yaml_raw(args))
+        assert cfg["progressive"] is False
 
 
 def test_heldout_yaml_progressive_true_respected():
@@ -430,8 +435,9 @@ def test_evaluate_harness_mounts_no_memory_cache():
 
 
 def test_evaluate_harness_gauntlet_plan():
-    """Default progressive=true → ONE container whose plan carries the resolved
-    stages block; metrics.json's stage (3.0) flows back to the frontier."""
+    """progressive=True → ONE container whose plan carries the resolved stages
+    block; metrics.json's stage (3.0) flows back to the frontier. (Passed
+    explicitly: the default is the single-stage pass.)"""
     calls = []
     with tempfile.TemporaryDirectory() as td, _test_workspace():
         src = _mk_src_harness(td)
@@ -446,7 +452,7 @@ def test_evaluate_harness_gauntlet_plan():
                 hid, Path("/fake.sif"),
                 datasets_config=ds_cfg,
                 split="test", model="gpt-5-mini", judge_model="gpt-5-mini",
-                max_sample_concurrent=1,
+                max_sample_concurrent=1, progressive=True,
             ))
         finally:
             O.run_evaluation = orig
@@ -507,7 +513,7 @@ def test_evaluate_harness_missing_metrics_degrades():
             per_ds = asyncio.run(O.evaluate_harness(
                 hid, Path("/fake.sif"), datasets_config=ds_cfg,
                 split="test", model="gpt-5-mini", judge_model="gpt-5-mini",
-                max_sample_concurrent=1,
+                max_sample_concurrent=1, progressive=True,
             ))
         finally:
             O.run_evaluation = orig

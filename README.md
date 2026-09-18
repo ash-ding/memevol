@@ -86,9 +86,9 @@ nothing is cached across stages or runs.
 
 How much and which data each eval covers is controlled by three flags,
 honored by forge AND every baseline (alma + the harness/ baselines):
-`progressive` (default `true` — the staged gauntlet above vs. one
-single-stage pass over the whole split; unifies/supersedes the older
-`progressive: true|false`), `random_sample` (default `false` — whether each
+`progressive` (default `false` — one single-stage pass, sized by each
+dataset's `single_stage` block, vs. the staged gauntlet above),
+`random_sample` (default `false` — whether each
 search-loop step evaluates a different reproducibly-seeded task subset or
 the same fixed one every step), and `sampling_seed` (default `42` — the
 base seed for the per-step subset derivation). See

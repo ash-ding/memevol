@@ -44,7 +44,9 @@ _BASE_YAML = "datasets:\n  locomo: {}\n"
 
 def test_defaults_preserve_current_behavior():
     cfg = _resolve(_BASE_YAML)
-    assert cfg["progressive"] is True
+    # progressive defaults to False (2026-09): ONE single-stage pass per step,
+    # so every step's cost metrics are measured on the same evaluation shape.
+    assert cfg["progressive"] is False
     assert cfg["random_sample"] is False
     assert cfg["sampling_seed"] == 42
     # `coverage` is gone (2026-08) — `progressive` is the single knob.
