@@ -211,6 +211,34 @@ def test_the_proposer_prompt_describes_only_the_axes_it_will_see():
     assert "cost_tokens_per_query" in both and "EFFICIENCY" in both
 
 
+# ---------------- seeds ----------------
+
+def test_seeds_are_off_by_default_and_a_list_when_on():
+    cfg = _resolve("datasets:\n  locomo: {}\n")
+    assert cfg["seed"]["enabled"] is False
+    assert cfg["seed"]["reuse_results"] is False
+
+    cfg = _resolve("datasets:\n  locomo: {}\n",
+                   ["--seed", "baselines/harness/no_memory,abc123abc123"])
+    assert cfg["seed"]["enabled"] is True, "--seed enables seeding"
+    assert cfg["seed"]["sources"] == ["baselines/harness/no_memory", "abc123abc123"]
+
+
+def test_no_seed_beats_everything_else():
+    """So a config's seeds can be skipped for one run without editing it."""
+    cfg = _resolve("datasets:\n  locomo: {}\nseed:\n  enabled: true\n"
+                   "  sources: [baselines/harness/no_memory]\n  reuse_results: false\n",
+                   ["--seed", "abc123abc123", "--no-seed"])
+    assert cfg["seed"]["enabled"] is False
+
+
+def test_reusing_cached_results_is_opt_in():
+    yaml_text = ("datasets:\n  locomo: {}\nseed:\n  enabled: true\n"
+                 "  sources: [baselines/harness/no_memory]\n  reuse_results: false\n")
+    assert _resolve(yaml_text)["seed"]["reuse_results"] is False
+    assert _resolve(yaml_text, ["--reuse-eval"])["seed"]["reuse_results"] is True
+
+
 def main():
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = []

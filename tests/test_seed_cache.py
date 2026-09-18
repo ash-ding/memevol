@@ -208,6 +208,57 @@ def test_a_seed_source_is_a_cache_entry_or_a_path():
         assert O._resolve_seed_source("no_such_thing") is None
 
 
+# ---------------- restoring into a run ----------------
+
+def test_restore_materialises_code_and_results_as_a_harness_dir():
+    with _cache_dir(), tempfile.TemporaryDirectory() as td:
+        src = _evaluated_harness(Path(td))
+        SC.store(src, "abc123abc123", _CFG, {"locomo": {"raw_score": 0.5}},
+                 sanity_status="passed", run_id="r1")
+
+        dst = Path(td) / "workspace" / "abc123abc123"
+        restored = SC.restore("abc123abc123", _CFG, ["locomo"], dst)
+
+        assert restored is not None and set(restored) == {"locomo"}
+        assert (dst / "harness.py").read_text() == "# code\n"
+        assert json.loads((dst / "locomo" / "score.json").read_text())["raw_score"] == 0.5
+        assert (dst / "locomo" / "traces" / "u1.json").exists()
+        assert not (dst / "locomo" / "manifest.json").exists(), \
+            "the manifest is cache bookkeeping, not an eval artifact"
+
+
+def test_restore_is_all_or_nothing_across_datasets():
+    """A harness with one benchmark cached still has to be evaluated: mixing a
+    cached score with a fresh one would date the entry from two runs."""
+    with _cache_dir(), tempfile.TemporaryDirectory() as td:
+        src = _evaluated_harness(Path(td))
+        SC.store(src, "abc123abc123", _CFG, {"locomo": {"raw_score": 0.5}},
+                 sanity_status="passed", run_id="r1")
+        dst = Path(td) / "workspace" / "abc123abc123"
+        assert SC.restore("abc123abc123", _CFG, ["locomo", "dynamicmem"], dst) is None
+        assert not dst.exists(), "nothing is materialised on a miss"
+
+
+def test_restore_refuses_results_from_another_configuration():
+    with _cache_dir(), tempfile.TemporaryDirectory() as td:
+        src = _evaluated_harness(Path(td))
+        SC.store(src, "abc123abc123", _CFG, {"locomo": {"raw_score": 0.5}},
+                 sanity_status="passed", run_id="r1")
+        other = json.loads(json.dumps(_CFG))
+        other["judge_model"] = "gpt-5.4-2026-03-05"
+        dst = Path(td) / "workspace" / "abc123abc123"
+        assert SC.restore("abc123abc123", other, ["locomo"], dst) is None
+
+
+def test_describe_names_the_run_the_numbers_came_from():
+    with _cache_dir(), tempfile.TemporaryDirectory() as td:
+        src = _evaluated_harness(Path(td))
+        written = SC.store(src, "abc123abc123", _CFG, {"locomo": {"raw_score": 0.5}},
+                           sanity_status="passed", run_id="run_42")
+        line = SC.describe("abc123abc123", written[0])
+        assert "run_42" in line and "locomo" in line and "key" in line
+
+
 # ---------------- the no_memory baseline ----------------
 
 def test_no_memory_is_a_registered_baseline_that_answers_from_nothing():

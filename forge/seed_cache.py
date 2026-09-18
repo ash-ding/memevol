@@ -211,6 +211,60 @@ def _write_index(entry: Path, harness_id: str) -> None:
         }, f, indent=2, ensure_ascii=False)
 
 
+def results_for(harness_id: str, cfg: Dict[str, Any],
+                datasets: List[str]) -> Optional[Dict[str, Path]]:
+    """Cached result dirs for EVERY dataset this run needs, or None.
+
+    All-or-nothing on purpose: a harness with locomo cached but dynamicmem
+    missing still has to be evaluated, and mixing a cached score with a fresh
+    one would produce an entry whose numbers came from two different days.
+    """
+    found: Dict[str, Path] = {}
+    for dataset in datasets:
+        hit = lookup(harness_id, eval_key(eval_inputs(cfg, dataset)))
+        if hit is None:
+            return None
+        found[dataset] = hit
+    return found
+
+
+def restore(harness_id: str, cfg: Dict[str, Any], datasets: List[str],
+            dst: Path) -> Optional[Dict[str, Path]]:
+    """Materialise a cached harness into `dst` — code plus its results.
+
+    Returns the per-dataset result dirs that were restored, or None when the
+    cache does not hold this exact configuration for every dataset (the caller
+    then evaluates normally). `dst` is left as a working harness dir: the same
+    layout an evaluation would have produced.
+    """
+    hits = results_for(harness_id, cfg, datasets)
+    if hits is None:
+        return None
+    entry = _entry_dir(harness_id)
+    _copy_code(entry, dst)
+    for dataset, src in hits.items():
+        target = dst / dataset
+        if target.exists():
+            shutil.rmtree(target, ignore_errors=True)
+        shutil.copytree(src, target)
+        (target / "manifest.json").unlink(missing_ok=True)   # cache bookkeeping
+    return hits
+
+
+def describe(harness_id: str, result_dir: Path) -> str:
+    """One line saying where reused numbers came from — a reuse must never be
+    silent."""
+    try:
+        with (result_dir / "manifest.json").open("r", encoding="utf-8") as f:
+            manifest = json.load(f)
+    except Exception:
+        return f"{harness_id}: cached results (manifest unreadable)"
+    inputs = manifest.get("inputs", {})
+    return (f"{harness_id}: reusing {inputs.get('dataset')} results from run "
+            f"{manifest.get('run_id')} ({manifest.get('stored_at')}, repo "
+            f"{inputs.get('repo_version')}, key {manifest.get('eval_key')})")
+
+
 def entries() -> List[Dict[str, Any]]:
     """Every cached harness, newest first — `{harness_id, first_seen, evals}`."""
     if not SEEDS_DIR.exists():

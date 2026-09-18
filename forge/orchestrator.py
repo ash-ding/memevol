@@ -252,13 +252,26 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "max_retries": 2,     # on sanity failure, call propose_with_fix up to this many times
     },
     "seed": {
-        # When enabled, copy seeds/<source>/ into this run at startup
-        # to give the proposer a known baseline to reference. Default is OFF
-        # — CC writes the first harness from scratch with parent_ids=[].
-        # Opt in via `seed: {enabled: true, source: <name>}` in YAML or the
-        # `--seed` CLI flag.
+        # Seeds are step 0: harnesses the run starts from, so the proposer has
+        # known designs (and known scores) to build on. Default is OFF — the
+        # agent writes the first harness from scratch with parent_ids=[].
+        #
+        # Each source is either a cached harness id under seeds/ (which comes
+        # with its results) or a path to a directory holding harness.py (a
+        # method that has never been through forge, e.g.
+        # baselines/harness/no_memory). Several are allowed: step 0 then holds
+        # one directory per seed.
+        #
+        # `reuse_results`: when a seed is cached AND was evaluated under this
+        # exact configuration (see forge/seed_cache.py's key — benchmark,
+        # sizing, models, sampling, repo commit), copy those results in
+        # instead of re-running them. OFF by default: reusing numbers is a
+        # claim about what has not changed, so it is opted into, and every
+        # reuse says in the log where the numbers came from.
+        # CLI: --seed <a,b> / --no-seed / --reuse-eval
         "enabled": False,
-        "source": "no_memory",
+        "sources": ["baselines/harness/no_memory"],
+        "reuse_results": False,
     },
     "gpu": {
         # When enabled, evaluator runs `singularity exec --nv ...` so the
@@ -333,7 +346,8 @@ FORGE_REQUIRED_SCHEMA = {
     "propose": {"k_per_step": REQUIRED},
     "sanity": {"enabled": REQUIRED, "max_retries": REQUIRED},
     "seed": {"enabled": REQUIRED,
-             "source": Cond(lambda c: bool(c.get("seed", {}).get("enabled")), REQUIRED)},
+             "sources": Cond(lambda c: bool(c.get("seed", {}).get("enabled")), REQUIRED),
+             "reuse_results": Cond(lambda c: bool(c.get("seed", {}).get("enabled")), REQUIRED)},
     "gpu": {"enabled": REQUIRED},
     "prompts": {"version": REQUIRED},
     # `datasets` validated by _forge_strict_validate's custom loop (dynamic keys).
@@ -551,10 +565,15 @@ def _resolve_config(args: argparse.Namespace, *,
         cfg["sanity"]["enabled"] = False
     if args.sanity_max_retries is not None:
         cfg["sanity"]["max_retries"] = args.sanity_max_retries
+    if getattr(args, "seed_sources", None):
+        cfg["seed"]["sources"] = [s.strip() for s in args.seed_sources.split(",") if s.strip()]
+        cfg["seed"]["enabled"] = True
+    if getattr(args, "reuse_eval", False):
+        cfg["seed"]["reuse_results"] = True
+    # --no-seed is the last word: it turns seeding off even if sources were
+    # given, so a config's seeds can be skipped without editing the file.
     if args.no_seed:
         cfg["seed"]["enabled"] = False
-    if args.seed_source is not None:
-        cfg["seed"]["source"] = args.seed_source
     if args.gpu:
         cfg["gpu"]["enabled"] = True
     if args.no_adopt_orphans:
@@ -1793,6 +1812,88 @@ async def propose_eval_one(
     return final_id, per_ds, sanity_status, _read_parent_ids(harness_dir)
 
 
+async def _seed_one(cfg: Dict[str, Any], source: str, frontier: Frontier,
+                    dataset_names: List[str]) -> Optional[str]:
+    """Put one seed into this run's step 0. Returns its harness id, or None.
+
+    Three ways a seed can already be settled, cheapest first:
+      1. this workspace evaluated it (a resumed run) — nothing to do;
+      2. `seeds/` holds its results for exactly this configuration and the run
+         opted into reuse — copy them in;
+      3. otherwise evaluate it like any other harness.
+    """
+    src = _resolve_seed_source(source)
+    if src is None:
+        cached = [e["harness_id"] for e in seed_cache.entries()]
+        log.error(
+            f"seed source not found: {source!r}. Give either a cached harness "
+            f"id under seeds/ (currently {cached or 'empty — nothing has been evaluated yet'}) "
+            f"or a path to a directory holding harness.py "
+            f"(e.g. baselines/harness/no_memory)."
+        )
+        return None
+    try:
+        seed_id = _compute_content_hash(src)[:HARNESS_ID_LEN]
+    except Exception as exc:                 # noqa: BLE001
+        log.error(f"cannot read seed {source!r}: {exc}")
+        return None
+
+    if frontier.get(seed_id) is not None:
+        log.info(f"seed {source!r} ({seed_id}) already evaluated in this workspace")
+        return seed_id
+
+    seed_dir = paths.harnesses_dir / seed_id
+    if cfg["seed"]["reuse_results"]:
+        restored = seed_cache.restore(seed_id, cfg, dataset_names, seed_dir)
+        if restored is not None:
+            for dataset, result_dir in restored.items():
+                log.info("seed cache: " + seed_cache.describe(seed_id, result_dir))
+            per_ds = {ds: _read_dataset_metrics(seed_dir, ds) for ds in dataset_names}
+            _add_seed_entry(cfg, seed_id, seed_dir, per_ds, frontier,
+                            sanity_status="reused", parent_ids=_read_parent_ids(seed_dir))
+            return seed_id
+        log.info(
+            f"seed {source!r} ({seed_id}): no cached results for this exact "
+            f"configuration — evaluating it"
+        )
+
+    pending_id = _bootstrap_seed(source)
+    if pending_id is None:
+        return None
+    log.info(f"evaluating seed {source!r} on {dataset_names} ...")
+    final_id, per_ds, sanity_status, parent_ids = await propose_eval_one(
+        cfg, new_id=pending_id, is_seed=True,
+    )
+    final_dir = paths.harnesses_dir / final_id
+    _add_seed_entry(cfg, final_id, final_dir, per_ds, frontier,
+                    sanity_status=sanity_status, parent_ids=parent_ids)
+    _cache_evaluated(final_dir, final_id, cfg, per_ds, sanity_status)
+    return final_id
+
+
+def _add_seed_entry(cfg: Dict[str, Any], seed_id: str, seed_dir: Path,
+                    per_ds: Dict[str, Dict[str, Any]], frontier: Frontier,
+                    *, sanity_status: str, parent_ids: List[str]) -> None:
+    """Record a settled seed: frontier entry, sanity status, history line."""
+    meta = _read_meta(seed_dir)
+    entry = Entry(
+        id=seed_id,
+        objectives=_build_objectives(per_ds, seed_dir, cfg["metrics"]),
+        parent_ids=parent_ids,
+        content_hash=meta.get("content_hash"),
+        created_at=meta.get("created_at"),
+    )
+    frontier.add(entry)
+    _persist_sanity_status(entry.id, sanity_status)
+    frontier.save(paths.frontier_path)
+    _record_history(0, "seed", _history_record(seed_id, sanity_status, per_ds, parent_ids))
+    log.info(
+        f"seed {seed_id}: "
+        + ", ".join(f"{ds}={per_ds.get(ds, {}).get('raw_score', 0):.3f}" for ds in per_ds)
+        + f"  [sanity={sanity_status}]"
+    )
+
+
 # ---------------------------------------------------------------------------
 # Outer loop
 # ---------------------------------------------------------------------------
@@ -1821,52 +1922,20 @@ async def search_loop(cfg: Dict[str, Any]) -> None:
     datasets_config: Dict[str, Dict[str, Any]] = cfg["datasets"]
     dataset_names = list(datasets_config.keys())
 
-    # Seed harness bootstrap: copy seeds/<source>/ into this run when
-    # enabled, evaluate it, name it by its hash. Skips the seed entirely
-    # when seed.enabled=false, so CC's first proposal becomes the first entry.
-    # A seed is identified by the hash of its code, like every other harness,
-    # so a re-run of this workspace recognises the seed it already evaluated.
-    seed_id: Optional[str] = None
+    # Step 0: the seeds. Each source is copied in, identified by the hash of
+    # its code like every other harness, and evaluated — unless this workspace
+    # already holds it, or its results are cached for exactly this
+    # configuration and the run opted into reusing them.
+    seed_ids: List[str] = []
     if cfg["seed"]["enabled"]:
-        try:
-            seed_id = _compute_content_hash(SEEDS_DIR / cfg["seed"]["source"])[:HARNESS_ID_LEN]
-        except Exception as exc:
-            log.error(f"cannot read seed {cfg['seed']['source']}: {exc}; aborting search")
-            return
-    seed_already_in_frontier = bool(seed_id) and frontier.get(seed_id) is not None
-    if cfg["seed"]["enabled"] and not seed_already_in_frontier:
-        seed_pending_id = _bootstrap_seed(cfg["seed"]["source"])
-        if seed_pending_id is None:
-            log.error("seed bootstrap failed; aborting search")
-            return
-        log.info(f"evaluating seed harness on {dataset_names} ...")
-        seed_final_id, per_ds, sanity_status, parent_ids = await propose_eval_one(
-            cfg, new_id=seed_pending_id, is_seed=True,
-        )
-        seed_dir = paths.harnesses_dir / seed_final_id
-        objectives = _build_objectives(per_ds, seed_dir, cfg["metrics"])
-        seed_meta = _read_meta(seed_dir)
-        entry = Entry(
-            id=seed_final_id, objectives=objectives, parent_ids=parent_ids,
-            content_hash=seed_meta.get("content_hash"),
-            created_at=seed_meta.get("created_at"),
-        )
-        frontier.add(entry)
-        _persist_sanity_status(entry.id, sanity_status)
-        frontier.save(paths.frontier_path)
-        _record_history(0, "seed", _history_record(
-            seed_final_id, sanity_status, per_ds, parent_ids))
-        _cache_evaluated(seed_dir, seed_final_id, cfg, per_ds, sanity_status)
-        log.info(
-            f"seed {seed_final_id}: "
-            + ", ".join(
-                f"{ds}={per_ds.get(ds, {}).get('raw_score', 0):.3f}"
-                for ds in dataset_names
-            )
-            + f"  [sanity={sanity_status}]"
-        )
-    elif not cfg["seed"]["enabled"] and not seed_already_in_frontier:
-        log.info("seed disabled — first proposed harness will have no prior to reference")
+        for source in cfg["seed"]["sources"]:
+            seed_id = await _seed_one(cfg, source, frontier, dataset_names)
+            if seed_id is None:
+                log.error(f"seed {source!r} failed; aborting search")
+                return
+            seed_ids.append(seed_id)
+    else:
+        log.info("no seeds — the first proposed harness has no prior to reference")
 
     # Search loop. v4: no parent selection — for each step, propose k harnesses
     # back-to-back; each call lets CC browse the workspace and pick its own
@@ -1880,10 +1949,9 @@ async def search_loop(cfg: Dict[str, Any]) -> None:
     k = int(cfg["propose"]["k_per_step"])
     total = cfg["steps"] * k
     done = len(frontier.all_entries())
-    # The seed is a baseline reference, not a "search proposal" — subtract it
-    # from `done` so it does not eat into the proposal budget.
-    if seed_id and frontier.get(seed_id) is not None:
-        done = max(0, done - 1)
+    # Seeds are baseline references, not "search proposals" — subtract them
+    # from `done` so they do not eat into the proposal budget.
+    done = max(0, done - sum(1 for sid in seed_ids if frontier.get(sid) is not None))
 
     if done >= total:
         log.info(
@@ -2404,9 +2472,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--no-seed", action="store_true",
                         help="Skip copying the seed harness — first proposed "
                              "harness has no prior to reference.")
-    parser.add_argument("--seed-source", default=None,
-                        help="Which subdir under seeds/ to copy as harness 0 "
-                             "(default 'no_memory').")
+    parser.add_argument("--seed", dest="seed_sources", default=None,
+                        help="Comma-separated seed sources for step 0: cached "
+                             "harness ids under seeds/, or paths to dirs "
+                             "holding harness.py (e.g. "
+                             "baselines/harness/no_memory). Enables seeding.")
+    parser.add_argument("--reuse-eval", action="store_true",
+                        help="For a seed whose cached results were produced "
+                             "under this exact config, copy them in instead of "
+                             "re-running the evaluation.")
 
     parser.add_argument("--gpu", action="store_true",
                         help="Pass --nv to evaluator's singularity exec so the "

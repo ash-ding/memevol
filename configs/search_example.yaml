@@ -243,14 +243,26 @@ sanity:
 # -----------------------------------------------------------------------------
 
 seed:
-  # Default off — CC writes the first harness from scratch with parent_ids=[].
-  # Enable to give CC a known baseline to reference.
+  # Default off — the agent writes the first harness from scratch with
+  # parent_ids=[]. Enable to start from known designs (and known scores).
+  # CLI: --seed <a,b> enables and sets sources; --no-seed always wins.
   enabled: false
 
-  # Which subdir under top-level `seeds/` to copy as harnesses/0/ at startup.
-  # Currently available: "no_memory" (Phase 1 no-op, Phase 2 returns {}).
-  # Add new seeds by creating seeds/<name>/{harness.py, meta.json}.
-  source: no_memory
+  # Step 0: one harness dir per source. Each is either
+  #   * a cached harness id under seeds/ — a harness that has already been
+  #     evaluated, so its results come with it (see `reuse_results`), or
+  #   * a path to a directory holding harness.py — a method that has never
+  #     been through forge, e.g. baselines/harness/no_memory (the calibration
+  #     floor: stores nothing, retrieves nothing).
+  sources: [baselines/harness/no_memory]
+
+  # Reuse a cached seed's results instead of re-running them — only when the
+  # cache holds that harness under THIS exact configuration (benchmark,
+  # sizing, models, sampling, repo commit; see forge/seed_cache.py). All or
+  # nothing across datasets, and every reuse logs which run the numbers came
+  # from. Off by default: reusing a number is a claim about what has not
+  # changed since. CLI: --reuse-eval
+  reuse_results: false
 
 # -----------------------------------------------------------------------------
 # GPU support for the eval container (NOT the proposer)
