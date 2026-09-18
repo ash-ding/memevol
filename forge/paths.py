@@ -33,19 +33,16 @@ ENTRY_FILE = "memo.py"
 #: single module, a package tree, a vendored library.
 IMPL_DIR = "src"
 
-#: What the entry file was called before 2026-09-18, when a candidate's whole
-#: implementation had to fit in it. Still LOADED, so workspaces and cached
-#: seeds written back then keep working; nothing writes it any more.
-LEGACY_ENTRY_FILE = "harness.py"
-
-
 def entry_file(harness_dir: Path) -> Optional[Path]:
-    """The harness's interface file, or None if it has neither name."""
-    for name in (ENTRY_FILE, LEGACY_ENTRY_FILE):
-        candidate = harness_dir / name
-        if candidate.is_file():
-            return candidate
-    return None
+    """The harness's interface file, or None if it has none.
+
+    Harnesses written before 2026-09-18 called this `harness.py` and had to
+    fit their whole implementation in it. That name is gone, not deprecated:
+    workspaces and cached seeds from before the change no longer load, and
+    re-packaging or re-running is the way back.
+    """
+    candidate = harness_dir / ENTRY_FILE
+    return candidate if candidate.is_file() else None
 
 FORGE_ROOT: Path = PROJECT_ROOT / "forge"
 

@@ -49,7 +49,6 @@ from benchmarks.registry import DATASETS
 #: Kept in step with forge.paths — the container gets only launch.py,
 #: memo_class.py and __init__.py from forge, so it cannot import that module.
 ENTRY_FILE = "memo.py"
-LEGACY_ENTRY_FILE = "harness.py"
 
 
 def _load_harness_class(harness_dir: Path) -> Type[MemoClass]:
@@ -60,10 +59,8 @@ def _load_harness_class(harness_dir: Path) -> Type[MemoClass]:
     becomes the trace shown to CC during sanity-retry — so write it for an
     LLM reader.
     """
-    harness_py = next(
-        (p for p in (harness_dir / ENTRY_FILE, harness_dir / LEGACY_ENTRY_FILE)
-         if p.exists()), None)
-    if harness_py is None:
+    harness_py = harness_dir / ENTRY_FILE
+    if not harness_py.exists():
         raise ImportError(
             f"{ENTRY_FILE} missing at {harness_dir / ENTRY_FILE}. The proposer "
             f"must write a {ENTRY_FILE} defining its MemoClass subclass; any "

@@ -34,7 +34,7 @@ from typing import Type
 
 from common.memo_class import MemoClass
 
-from forge.paths import ENTRY_FILE, LEGACY_ENTRY_FILE, entry_file
+from forge.paths import ENTRY_FILE, entry_file
 
 REQUIRED_FILE = ENTRY_FILE
 
@@ -47,9 +47,7 @@ def load_harness_class(harness_dir: Path) -> Type[MemoClass]:
     """Import the harness's interface file and return its MemoClass subclass."""
     harness_py = entry_file(harness_dir)
     if harness_py is None:
-        raise HarnessError(
-            f"Missing {REQUIRED_FILE} in {harness_dir} "
-            f"(also accepted for older harnesses: {LEGACY_ENTRY_FILE})")
+        raise HarnessError(f"Missing {REQUIRED_FILE} in {harness_dir}")
 
     dir_str = str(harness_dir)
     if dir_str not in sys.path:

@@ -53,7 +53,7 @@ def test_harness_loaders_name_the_unimplemented_hook():
 
     with tempfile.TemporaryDirectory() as td:
         d = Path(td)
-        (d / "harness.py").write_text(
+        (d / "memo.py").write_text(
             "from forge.memo_class import MemoClass\n"
             "class Half(MemoClass):\n"
             "    async def build_memory_from_data(self, recorder): return None\n",

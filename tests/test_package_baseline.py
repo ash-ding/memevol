@@ -53,7 +53,7 @@ def test_packaging_produces_a_harness_forge_can_load():
     with tempfile.TemporaryDirectory() as td:
         out = package("no_memory", "faithful", None, Path(td) / "pkg")
 
-        assert (out / "harness.py").exists() and (out / "meta.json").exists()
+        assert (out / "memo.py").exists() and (out / "meta.json").exists()
         # The method keeps its real package path, so memo.py's own imports work.
         assert (out / "baselines" / "harness" / "no_memory" / "memo.py").exists()
         assert (out / "baselines" / "harness" / "model_config.py").exists()
@@ -91,7 +91,7 @@ def _mem0_importable() -> bool:
 
 def test_a_vendored_baseline_travels_with_its_src_and_resolved_config():
     """mem0 in its own venv: the vendored package comes along, and the unified
-    arm's models are baked into harness.py."""
+    arm's models are baked into memo.py."""
     if not _mem0_importable():
         print("    (skipped: needs baselines/harness/mem0's venv)")
         return

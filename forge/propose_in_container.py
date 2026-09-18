@@ -60,16 +60,12 @@ from typing import Callable, List
 #: sandbox, which mounts only propose_in_container.py and memo_class.py from
 #: forge, so it cannot import that module.
 ENTRY_FILE = "memo.py"
-LEGACY_ENTRY_FILE = "harness.py"
 
 
 def entry_file(harness_dir: Path):
-    """The harness's interface file, or None if it has neither name."""
-    for name in (ENTRY_FILE, LEGACY_ENTRY_FILE):
-        candidate = harness_dir / name
-        if candidate.is_file():
-            return candidate
-    return None
+    """The harness's interface file, or None if it has none."""
+    candidate = harness_dir / ENTRY_FILE
+    return candidate if candidate.is_file() else None
 
 
 

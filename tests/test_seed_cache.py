@@ -55,7 +55,7 @@ def _evaluated_harness(root: Path, dataset="locomo", score=0.5):
     """A harness dir as it looks after an evaluation: code + results."""
     d = root / "abc123abc123"
     (d / dataset / "traces").mkdir(parents=True)
-    (d / "harness.py").write_text("# code\n", encoding="utf-8")
+    (d / "memo.py").write_text("# code\n", encoding="utf-8")
     (d / "meta.json").write_text('{"parent_ids": []}', encoding="utf-8")
     (d / dataset / "score.json").write_text(json.dumps({"raw_score": score}),
                                             encoding="utf-8")
@@ -99,7 +99,7 @@ def test_the_cache_it_writes_does_not_make_the_tree_dirty():
     with _temp_repo() as repo:
         clean = SC.repo_version()
         (repo / "seeds" / "abc123" / "evals").mkdir(parents=True)
-        (repo / "seeds" / "abc123" / "harness.py").write_text("# seed\n", encoding="utf-8")
+        (repo / "seeds" / "abc123" / "memo.py").write_text("# seed\n", encoding="utf-8")
         assert SC.repo_version() == clean
 
 
