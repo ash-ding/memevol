@@ -21,7 +21,7 @@ Ingestion units (recorder.init dispatch, cf. hipporag2's _init_to_passages):
   locomo ("conversation"): one Dialogue per turn (speaker, text), time = session
     date_time.  longmemeval ("sessions"): one Dialogue per message (role→speaker,
     content), time = session date.  dynamicmem ("app_logs"): one Dialogue per log
-    entry, content = hipporag2's app_log_to_passage text (identical content across
+    entry, content = the shared app_log_to_passage text (identical content across
     baselines), speaker = app_name, time = log timestamp.
 """
 from __future__ import annotations
@@ -36,7 +36,7 @@ from common.memo_class import MemoClass
 
 from common.openai_usage import install as _install_openai_usage
 from baselines.harness.concurrency import model_load_lock, quiet_stdout
-from baselines.harness.hipporag2.memo import app_log_to_passage
+from baselines.harness.passages import app_log_to_passage
 from baselines.harness.model_config import (
     install_embedder_factory, install_openai_param_normalisation,
 )

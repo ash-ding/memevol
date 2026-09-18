@@ -83,7 +83,7 @@ def test_longmemeval_one_episode_per_message():
 
 def test_dynamicmem_text_episode_uses_shared_passage_text():
     from baselines.harness.zep.memo import EpisodeType, _init_to_episodes
-    from baselines.harness.hipporag2.memo import app_log_to_passage
+    from baselines.harness.passages import app_log_to_passage
     entry = {"app_log_id": 42, "timestamp": "2024-01-01T00:00:00", "app_name": "cal"}
     eps = _init_to_episodes({"app_logs": [entry]})
     assert eps[0]["name"] == "42" and eps[0]["body"] == app_log_to_passage(entry)

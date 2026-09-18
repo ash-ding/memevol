@@ -20,7 +20,7 @@ Ingestion units (recorder.init dispatch, cf. hipporag2's _init_to_passages):
     date_time.  longmemeval ("sessions"): one note per message,
     "{role}: {content}", time = session date (A-mem never defined these
     benchmarks; analogous mapping).  dynamicmem ("app_logs"): one note per
-    log entry, content = hipporag2's app_log_to_passage text (identical
+    log entry, content = the shared app_log_to_passage text (identical
     content across baselines), time = log timestamp.
 """
 from __future__ import annotations
@@ -32,7 +32,7 @@ from typing import Dict, List, Tuple
 from common.memo_class import MemoClass
 from common.openai_usage import install as _install_openai_usage
 from baselines.harness.concurrency import model_load_lock, quiet_stdout
-from baselines.harness.hipporag2.memo import app_log_to_passage
+from baselines.harness.passages import app_log_to_passage
 from baselines.harness.model_config import (
     install_embedder_factory, install_openai_param_normalisation,
 )

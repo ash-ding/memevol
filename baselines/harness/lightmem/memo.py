@@ -43,7 +43,7 @@ from common.memo_class import MemoClass
 
 from common.openai_usage import install as _install_openai_usage
 from baselines.harness.concurrency import model_load_lock, quiet_stdout
-from baselines.harness.hipporag2.memo import app_log_to_passage
+from baselines.harness.passages import app_log_to_passage
 from baselines.harness.model_config import (
     install_embedder_factory, install_openai_param_normalisation,
     is_api_embedding_model, resolve_device,

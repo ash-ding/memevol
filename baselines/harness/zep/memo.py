@@ -29,7 +29,7 @@ Ingestion units (recorder.init dispatch, cf. hipporag2/amem):
     type — Graphiti auto-extracts the speaker as an entity), reference_time =
     session date.  longmemeval ("sessions"): one per message, "{role}: {content}",
     reference_time = session date.  dynamicmem ("app_logs"): one per log entry,
-    content = hipporag2's app_log_to_passage text (identical across baselines),
+    content = the shared app_log_to_passage text (identical across baselines),
     text type, reference_time = log timestamp.
 """
 from __future__ import annotations
@@ -46,7 +46,7 @@ from typing import Any, Dict, List, Optional
 
 from common.memo_class import MemoClass
 from common.openai_usage import install as _install_openai_usage
-from baselines.harness.hipporag2.memo import app_log_to_passage
+from baselines.harness.passages import app_log_to_passage
 from baselines.harness.concurrency import serialize_calls
 from baselines.harness.model_config import (
     api_embedding_dims, install_openai_param_normalisation, is_api_embedding_model,

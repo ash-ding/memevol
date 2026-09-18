@@ -45,7 +45,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from common.memo_class import MemoClass
 from baselines.harness.concurrency import model_load_lock, quiet_stdout, serialize_calls
-from baselines.harness.hipporag2.memo import app_log_to_passage
+from baselines.harness.passages import app_log_to_passage
 from baselines.harness.model_config import (
     get_embedder, install_openai_param_normalisation,
 )

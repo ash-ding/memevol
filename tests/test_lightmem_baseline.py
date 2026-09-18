@@ -73,7 +73,7 @@ def test_longmemeval_pairs_user_assistant_and_drops_leading_assistant():
 
 def test_dynamicmem_uses_shared_passage_text():
     from baselines.harness.lightmem.memo import _init_to_turns
-    from baselines.harness.hipporag2.memo import app_log_to_passage
+    from baselines.harness.passages import app_log_to_passage
     entry = {"timestamp": "2024-01-01T00:00:00", "app_name": "cal", "api_name": "add"}
     turns = _init_to_turns({"app_logs": [entry]})
     assert turns[0][0]["content"] == app_log_to_passage(entry)

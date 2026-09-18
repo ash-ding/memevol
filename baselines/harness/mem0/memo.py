@@ -38,7 +38,7 @@ from common.memo_class import MemoClass
 from baselines.harness.concurrency import model_load_lock
 
 from common.openai_usage import install as _install_openai_usage
-from baselines.harness.hipporag2.memo import app_log_to_passage
+from baselines.harness.passages import app_log_to_passage
 from baselines.harness.model_config import install_openai_param_normalisation
 
 # Mem0's OpenAI provider sends temperature + max_tokens on every extractor call,
