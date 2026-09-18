@@ -36,8 +36,12 @@ DATA_PATH: Path = (
     Path(_data_env) if _data_env else Path(__file__).resolve().parent / "locomo10.json"
 )
 
-TRAIN_SAMPLES = 6
-EVAL_SAMPLES = 4
+# 2:8 split of the 10 conversations — 20% to search on, 80% held out.
+# CHANGED 2026-09-18 from 6:4: scores from earlier runs are NOT comparable,
+# on either split (different membership, and a search score is now an average
+# over 2 conversations rather than 6, so it is noisier).
+TRAIN_SAMPLES = 2
+EVAL_SAMPLES = 8
 
 # LoCoMo category ids -> the names the papers report per category. cat-5
 # (adversarial) is absent deliberately: it carries no gold answer and is
@@ -143,8 +147,8 @@ def _load_all() -> List[Dict]:
 def get_task_list(status: str, eval_n_samples: Optional[int], seed: Optional[str] = None) -> List[str]:
     """Return sample_id strings for the requested split.
 
-    status='search' → first TRAIN_SAMPLES (6) samples, capped at eval_n_samples
-    status='test'   → last EVAL_SAMPLES (4) samples (held-out), same cap
+    status='search' → first TRAIN_SAMPLES (2) samples, capped at eval_n_samples
+    status='test'   → last EVAL_SAMPLES (8) samples (held-out), same cap
 
     Both splits honour the eval_n_samples cap (deterministic prefix ⇒
     staged nesting holds on the test split too — heldout single-stage sizing

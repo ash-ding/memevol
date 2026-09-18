@@ -14,7 +14,7 @@ RO dir bind):
                train = all 6, test = []) bound over the original file.
   DynamicMem   an empty dir bound over user_data/ hides all users; the
                search users are bound back individually (zero-copy).
-  LongMemEval  a filtered longmemeval_s json (the 300 search question_ids,
+  LongMemEval  a filtered longmemeval_s json (the search question_ids,
                from the env's own _compute_split) + a split_manifest.json the
                env prefers over recomputing (a filtered file would otherwise
                be re-stratified into a bogus 180/120 split).

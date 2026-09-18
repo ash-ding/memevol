@@ -64,9 +64,10 @@ def test_locomo_filtered_is_search_prefix():
         filtered = json.loads((Path(td) / "locomo10.json").read_text())
         full = json.loads(
             Path(REPO, "benchmarks", "locomo", "locomo10.json").read_text())
-        assert len(filtered) == 6
+        from benchmarks.locomo.env import TRAIN_SAMPLES
+        assert len(filtered) == TRAIN_SAMPLES
         assert [s["sample_id"] for s in filtered] == \
-               [s["sample_id"] for s in full[:6]]
+               [s["sample_id"] for s in full[:TRAIN_SAMPLES]]
 
 
 def test_longmemeval_filtered_matches_env_split():
@@ -97,7 +98,8 @@ def test_bind_targets_shadow_container_paths():
             assert "/app/benchmarks/dynamicmem/user_data" in dsts
             backbound = [d for d in dsts
                          if d.startswith("/app/benchmarks/dynamicmem/user_data/")]
-            assert len(backbound) == 6
+            from benchmarks.dynamicmem.env import TRAIN_USERS
+            assert len(backbound) == TRAIN_USERS
             assert all("00" + str(i) in d or f"00{i}" in d
                        for i, d in enumerate(sorted(backbound), start=1))
 

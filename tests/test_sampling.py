@@ -103,6 +103,37 @@ def test_locomo_qa_sampling_honors_stage_sample_seed():
     assert [q["query"] for q in stepped] != [q["query"] for q in base]
 
 
+def test_the_split_is_twenty_percent_search():
+    """The search/held-out ratio is a research decision, not an incidental
+    number: 20% to search on, 80% held out (changed from 60/40 on 2026-09-18).
+    Scores never cross a change to this — the membership differs."""
+    from benchmarks.locomo.env import TRAIN_SAMPLES, EVAL_SAMPLES
+    from benchmarks.dynamicmem.env import TRAIN_USERS, EVAL_USERS
+    from benchmarks.longmemeval.env import SEARCH_SIZE
+
+    assert (TRAIN_SAMPLES, EVAL_SAMPLES) == (2, 8)      # 10 conversations
+    assert (TRAIN_USERS, EVAL_USERS) == (2, 8)          # 10 users
+    assert SEARCH_SIZE == 100                            # of 500 questions
+
+
+def test_no_gauntlet_stage_asks_for_more_units_than_the_search_split_holds():
+    """A stage that exceeds the pool is silently clamped to it, which would
+    make two stages identical and the promotion gate between them a no-op."""
+    from common.evaluate import DEFAULT_STAGES
+    from benchmarks.locomo.env import TRAIN_SAMPLES
+    from benchmarks.dynamicmem.env import TRAIN_USERS
+    from benchmarks.longmemeval.env import SEARCH_SIZE
+
+    caps = {"locomo": ("n_conversations", TRAIN_SAMPLES),
+            "dynamicmem": ("n_users", TRAIN_USERS),
+            "longmemeval": ("n_questions", SEARCH_SIZE)}
+    for family, (field, cap) in caps.items():
+        sizes = [DEFAULT_STAGES[family][s][field]
+                 for s in ("sanity_check", "stage1", "stage2", "stage3")]
+        assert all(n <= cap for n in sizes), (family, sizes, cap)
+        assert sizes == sorted(sizes), f"{family} stages must not shrink: {sizes}"
+
+
 def main():
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = []
