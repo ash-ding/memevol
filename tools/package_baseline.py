@@ -50,6 +50,14 @@ repeatedly hit windows where it did not return at all, with 150 s, 180 s and
 answered in 2 s. LightMem and SimpleMem never completed a single build that
 way.
 
+Between the 4-series models, measured 20 rounds alternating (the endpoint
+drifts by the hour, so the two models take turns) with SDK retries off, on
+mem0's real extraction call: gpt-4.1-mini p50 2.4 s / p90 4.6 s, gpt-4o-mini
+p50 7.5 s / p90 11.6 s, both 19/19 once warm. The one difference in failures
+was the first call of a session, which gpt-4o-mini lost twice out of two
+observations — and a cold failure is not free here: LightMem swallows a failed
+call as `usage: None` and then dies somewhere unrelated.
+
 Pass `--unified-llm gpt-5-mini/low` (or any "model/effort" string) to use a
 reasoning model anyway; `model_config.normalise_chat_params` splits the suffix
 into `reasoning_effort` before the SDK sees it.
@@ -252,7 +260,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("baseline", help="a name under baselines/harness/ (e.g. mem0)")
     p.add_argument("--arm", default="faithful", choices=["faithful", "unified"])
-    p.add_argument("--unified-llm", default="gpt-4o-mini",
+    p.add_argument("--unified-llm", default="gpt-4.1-mini",
                    help="arm=unified only: the internal LLM every baseline "
                         "uses. A 4-series model ON PURPOSE — see the module "
                         "docstring. Accepts the repo's \"model/effort\" form.")
