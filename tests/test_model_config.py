@@ -446,6 +446,8 @@ def test_unified_model_keys_are_declared_defaults_with_known_roles():
     for d in _baseline_dirs():
         defaults, model_keys = _module_data(d / "memo.py")
         assert set(model_keys) <= MODEL_ROLES, f"{d.name}: {sorted(model_keys)}"
+        if not defaults and not model_keys:
+            continue        # no_memory: calls no model, so there is none to unify
         assert {"llm", "embedding"} <= set(model_keys), f"{d.name}: must map both models"
         keys = {k for ks in model_keys.values() for k in ks}
         assert keys <= set(defaults), f"{d.name}: undeclared {sorted(keys - set(defaults))}"
@@ -457,6 +459,8 @@ def test_unified_arm_is_one_llm_and_one_embedder_and_nothing_else():
     from baselines.harness.eval_harness import resolve_memo_config
     for d in _baseline_dirs():
         defaults, model_keys = _module_data(d / "memo.py")
+        if not defaults and not model_keys:
+            continue        # no_memory: no models, so no arm difference to check
         faithful = resolve_memo_config(defaults, model_keys, arm="faithful")
         unified = resolve_memo_config(defaults, model_keys, arm="unified", unified_models=EXAMPLE_UNIFIED)
         for key in model_keys["llm"]:
