@@ -355,6 +355,39 @@ REASONING_MIN_COMPLETION_TOKENS = 16384
 #: retry storm.
 VENDORED_REQUEST_TIMEOUT_SECONDS = 180.0
 
+#: How many chat completions a vendored baseline may have in flight at once.
+#:
+#: `common.llm` gates its own calls globally (MEMEVOL_LLM_MAX_CONCURRENT); the
+#: vendored clients have no gate at all, and several fan out hard —
+#: simplemem's packaged config runs 16 parallel workers, lightmem and mem0 use
+#: thread pools of their own. Measured on simplemem's real build, 16 in
+#: flight: the first batch took 211 s and 213 s for calls that take seconds on
+#: their own, and everything behind them queued. With a 180 s request budget
+#: that batch times out and retries, which adds load — the retry storm
+#: `common.llm` warns about, from the one direction that had no brake.
+#:
+#: The gate is also what makes the 180 s budget honest: the clock starts when
+#: the request is actually issued, so time spent waiting for a slot is not
+#: charged against it.
+VENDORED_MAX_CONCURRENT = 8
+
+_sync_gate = threading.BoundedSemaphore(VENDORED_MAX_CONCURRENT)
+_async_gates: "Dict[int, Any]" = {}
+_async_gates_lock = threading.Lock()
+
+
+def _async_gate():
+    """One asyncio.Semaphore per running loop (they are not shareable)."""
+    import asyncio
+    loop = asyncio.get_running_loop()
+    with _async_gates_lock:
+        gate = _async_gates.get(id(loop))
+        if gate is None:
+            gate = asyncio.Semaphore(VENDORED_MAX_CONCURRENT)
+            _async_gates[id(loop)] = gate
+        return gate
+
+
 _params_patched = False
 
 
@@ -424,7 +457,8 @@ def normalise_chat_params(kwargs: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def install_openai_param_normalisation() -> None:
-    """Patch the OpenAI SDK so every `chat.completions.create` is normalised.
+    """Patch the OpenAI SDK so every `chat.completions.create` is normalised
+    and gated.
 
     Patched on the resource CLASSES rather than on client instances, because
     the vendored code constructs its own ``OpenAI(...)`` clients at arbitrary
@@ -447,10 +481,14 @@ def install_openai_param_normalisation() -> None:
             # coroutine: the SDK's own method is a coroutine function, and
             # callers (and `inspect.iscoroutinefunction`) may rely on that.
             async def create(self, *args, **kwargs):
-                return await real(self, *args, **normalise_chat_params(kwargs))
+                params = normalise_chat_params(kwargs)
+                async with _async_gate():
+                    return await real(self, *args, **params)
         else:
             def create(self, *args, **kwargs):
-                return real(self, *args, **normalise_chat_params(kwargs))
+                params = normalise_chat_params(kwargs)
+                with _sync_gate:
+                    return real(self, *args, **params)
 
         create._real_create = real  # type: ignore[attr-defined]
         cls.create = create

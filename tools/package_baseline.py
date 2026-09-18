@@ -37,20 +37,30 @@ Then seed a search from the result::
 
     ... python -m forge.orchestrator --config my.yaml --seed seeds_src/mem0_unified
 
-Why the unified LLM defaults to `gpt-5-mini/low`
+Why the unified LLM defaults to a 4-series model
 -----------------------------------------------
-These methods were written against 4-series models and batch large prompts
-(mem0 hands the extractor a whole conversation slice, ~34 k chars). A
-reasoning model at default effort thinks for minutes on such a prompt, and the
-vendored clients have their own timeouts — mem0's is 600 s with two retries,
-so a run spends half an hour and records NOTHING. Measured on that exact call:
-default effort timed out three times; `gpt-5-mini/low` answered in 2.3 s with
-the facts extracted. `common.llm`'s "model/effort" convention carries it, and
-`model_config.normalise_chat_params` splits the suffix into `reasoning_effort`
-before the SDK sees it.
+These methods were written against 4-series models: they batch large prompts
+(mem0 hands its extractor a 33.6 k-char system prompt plus a conversation
+session), several fan out hard (simplemem runs 16 parallel workers), and they
+carry their own client timeouts. Pointed at gpt-5-mini the same call measured
+15-23 s at low effort against 2-3 s on a 4-series model, emitted ~5x the
+completion tokens — which lands straight in the efficiency metric — and
+repeatedly hit windows where it did not return at all, with 150 s, 180 s and
+900 s budgets failing alike while a small request to the same endpoint
+answered in 2 s. LightMem and SimpleMem never completed a single build that
+way.
 
-Pass `--unified-llm gpt-5-mini` to compare against full effort — but expect
-the vendored timeouts to bite.
+Between the 4-series models, measured 20 rounds alternating (the endpoint
+drifts by the hour, so the two models take turns) with SDK retries off, on
+mem0's real extraction call: gpt-4.1-mini p50 2.4 s / p90 4.6 s, gpt-4o-mini
+p50 7.5 s / p90 11.6 s, both 19/19 once warm. The one difference in failures
+was the first call of a session, which gpt-4o-mini lost twice out of two
+observations — and a cold failure is not free here: LightMem swallows a failed
+call as `usage: None` and then dies somewhere unrelated.
+
+Pass `--unified-llm gpt-5-mini/low` (or any "model/effort" string) to use a
+reasoning model anyway; `model_config.normalise_chat_params` splits the suffix
+into `reasoning_effort` before the SDK sees it.
 
 What this does NOT do is make every baseline fit the container: lightmem pins
 `transformers<5` and hipporag2 pins `torch==2.5.1` against a base image built
@@ -250,10 +260,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("baseline", help="a name under baselines/harness/ (e.g. mem0)")
     p.add_argument("--arm", default="faithful", choices=["faithful", "unified"])
-    p.add_argument("--unified-llm", default="gpt-5-mini/low",
-                   help="arm=unified only: the internal LLM every baseline uses. "
-                        "The `/low` suffix is the repo's effort convention and "
-                        "the default ON PURPOSE — see the module docstring.")
+    p.add_argument("--unified-llm", default="gpt-4.1-mini",
+                   help="arm=unified only: the internal LLM every baseline "
+                        "uses. A 4-series model ON PURPOSE — see the module "
+                        "docstring. Accepts the repo's \"model/effort\" form.")
     p.add_argument("--unified-embedding", default="text-embedding-3-small",
                    help="arm=unified only: the embedder (must be an API model)")
     p.add_argument("--out", type=Path, required=True,
