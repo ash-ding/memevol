@@ -73,13 +73,20 @@ cmd_finalize() {
 
     mv "$DRAFT_FILE" "$new_file"
     # Patch the PROMPT_VERSION constant inside. Tolerant of any prior value.
-    sed -i -E "s/^PROMPT_VERSION = \".*\"$/PROMPT_VERSION = \"${new_stem}\"/" "$new_file"
+    # `sed -i` wants a backup suffix on BSD/macOS and rejects one on GNU, so
+    # write through a temp file instead of editing in place.
+    sed -E "s/^PROMPT_VERSION = \".*\"$/PROMPT_VERSION = \"${new_stem}\"/" "$new_file" > "${new_file}.tmp"
+    mv "${new_file}.tmp" "$new_file"
     grep -q "^PROMPT_VERSION = \"${new_stem}\"$" "$new_file" \
         || die "failed to update PROMPT_VERSION inside $new_file (no matching line?)"
 
     # Smoke-load via the existing loader so missing exports / syntax errors
-    # surface here, not later in a search run.
-    ( cd "$ROOT" && uv run python -c "
+    # surface here, not later in a search run. `uv` is how this repo runs
+    # python, but the tool has to work on a laptop that only has python3 —
+    # the loader itself has no third-party imports.
+    local runner="python3"
+    command -v uv >/dev/null 2>&1 && runner="uv run python"
+    ( cd "$ROOT" && $runner -c "
 from forge.prompts import load_template_module
 mod = load_template_module('${new_stem}')
 assert mod.PROMPT_VERSION == '${new_stem}', mod.PROMPT_VERSION

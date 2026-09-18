@@ -50,6 +50,7 @@ from typing import Any, Dict, List
 from forge.env_builder import EnvBuildError, ensure_image
 from forge.orchestrator import (
     HELDOUT_REQUIRED_SCHEMA,
+    KNOWN_METRICS,
     _attach_run_log,
     _build_objectives,
     _resolve_config,
@@ -120,7 +121,9 @@ async def _run(cfg: Dict[str, Any], harness_paths: List[str]) -> None:
             progressive=cfg["progressive"],
         )
         results[hid] = {
-            "objectives": _build_objectives(per_ds, harness_dir),
+            # Held-out numbers are a REPORT, not a search scoreboard: record
+            # every axis regardless of what the search was told to optimize.
+            "objectives": _build_objectives(per_ds, harness_dir, list(KNOWN_METRICS)),
             "per_ds": per_ds,
         }
 

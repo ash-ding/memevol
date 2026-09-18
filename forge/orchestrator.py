@@ -148,6 +148,21 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     # `stages`/the family defaults either way).
     # CLI: --progressive / --no-progressive.
     "progressive": False,
+    # What this search optimizes. Every metric is always MEASURED and written
+    # to each harness's score.json — this only decides which axes the frontier
+    # (the scoreboard the proposer reads) carries, and what the proposer is
+    # told to optimize:
+    #   ["accuracy"]                — scores only; no cost axis on the
+    #                                 frontier, so a run can be compared
+    #                                 against a cost-aware one without the
+    #                                 proposer having seen cost at all.
+    #   ["accuracy", "efficiency"]  — also `cost_tokens_per_query_<ds>` and the
+    #                                 token totals; the proposer is told to
+    #                                 hold accuracy while spending less.
+    # There is no weighted sum and no budget: the proposer weighs the axes
+    # itself, the same way it already weighs accuracy against robustness.
+    # CLI: --metric accuracy,efficiency
+    "metrics": ["accuracy"],
     # When True, each search step samples a DIFFERENT (but still
     # deterministic + reproducible) subset per benchmark, via
     # common.sampling.derive_sample_seed(sampling_seed, step_index, dataset).
@@ -292,7 +307,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
 
 FORGE_REQUIRED_SCHEMA = {
     "steps": REQUIRED, "smoke_test": REQUIRED, "model": REQUIRED,
-    "judge_model": REQUIRED, "progressive": REQUIRED, "random_sample": REQUIRED,
+    "judge_model": REQUIRED, "progressive": REQUIRED, "metrics": REQUIRED,
+    "random_sample": REQUIRED,
     "sampling_seed": REQUIRED, "max_sample_concurrent": REQUIRED,
     "data_isolation": REQUIRED,
     "adopt_orphans": REQUIRED, "agent": REQUIRED,
@@ -369,7 +385,7 @@ def _forge_provided_tree(file_cfg: Dict[str, Any], args: argparse.Namespace) -> 
 
     NOTE (2026-07-26, doc-only): only the CLI flags explicitly overlaid below
     count as "provided" for strict-config purposes — steps/model/judge_model/
-    max_sample_concurrent/progressive/random_sample/sampling_seed/agent/
+    max_sample_concurrent/progressive/metrics/random_sample/sampling_seed/agent/
     proposer.max_turns/proposer.timeout_s/prompts.version/proposer.*.model.
     Other forge CLI flags that also mutate `cfg` in `_resolve_config` (e.g.
     --datasets, --smoke-test, --gpu, --no-data-isolation,
@@ -399,6 +415,7 @@ def _forge_provided_tree(file_cfg: Dict[str, Any], args: argparse.Namespace) -> 
     setpath(["judge_model"], getattr(args, "judge_model", None))
     setpath(["max_sample_concurrent"], getattr(args, "max_sample_concurrent", None))
     setpath(["progressive"], getattr(args, "progressive", None))
+    setpath(["metrics"], getattr(args, "metrics", None))
     setpath(["random_sample"], getattr(args, "random_sample", None))
     setpath(["sampling_seed"], getattr(args, "sampling_seed", None))
     setpath(["agent"], getattr(args, "agent", None))
@@ -567,6 +584,12 @@ def _resolve_config(args: argparse.Namespace, *,
     # DEFAULT_CONFIG's progressive=False stands.
     if getattr(args, "progressive", None) is not None:
         cfg["progressive"] = bool(args.progressive)
+
+    # metrics: CLI ("a,b") wins over the YAML list; both are normalised (and
+    # a typo'd metric raises here, before anything runs).
+    if getattr(args, "metrics", None):
+        cfg["metrics"] = args.metrics
+    cfg["metrics"] = _resolve_metrics(cfg.get("metrics"))
 
     if getattr(args, "random_sample", False):
         cfg["random_sample"] = True
@@ -803,6 +826,32 @@ def _resolve_claude_auth(cfg: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Id allocation
 # ---------------------------------------------------------------------------
+
+#: The metrics a run may optimize. "accuracy" is always on — a search with no
+#: score axis has nothing to climb.
+KNOWN_METRICS = ("accuracy", "efficiency")
+
+
+def _resolve_metrics(value: Any) -> List[str]:
+    """Normalise `metrics:` (YAML list or comma-separated CLI string).
+
+    Always includes "accuracy": dropping it would leave the proposer with no
+    score to improve. Raises ValueError naming the unknown metric rather than
+    silently ignoring a typo — a run that quietly stopped recording cost would
+    be indistinguishable from one that never had it.
+    """
+    if isinstance(value, str):
+        items = [v.strip() for v in value.split(",")]
+    else:
+        items = [str(v).strip() for v in (value or [])]
+    items = [v for v in items if v]
+    unknown = sorted(set(items) - set(KNOWN_METRICS))
+    if unknown:
+        raise ValueError(
+            f"unknown metric(s) {unknown}; known metrics: {list(KNOWN_METRICS)}"
+        )
+    return [m for m in KNOWN_METRICS if m in set(items) | {"accuracy"}]
+
 
 #: A harness is named by the content hash of its code, so the name says WHAT
 #: the harness is rather than when it arrived (order lives in history.json).
@@ -1155,6 +1204,7 @@ def _fmt_accuracies(objectives: Dict[str, Any]) -> str:
 def _build_objectives(
     per_dataset_metrics: Dict[str, Dict[str, Any]],
     harness_dir: Path,
+    metrics: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Aggregate per-dataset metrics + harness-level attrs into a frontier objectives dict.
 
@@ -1179,6 +1229,13 @@ def _build_objectives(
       - `tokens_total`           sum of total_tokens across all datasets and models
                                  (rough $-cost proxy; lower = cheaper)
 
+    `metrics` is the run's `metrics:` setting. Cost axes (`tokens_total`, the
+    phase splits, `cost_tokens_per_query_<dataset>`) are recorded here ONLY
+    when it contains "efficiency" — an accuracy-only run keeps a scoreboard
+    with no cost on it, so the proposer cannot optimize what that run does not
+    ask for. Nothing is lost by leaving them out: every metric is measured and
+    written to each harness's `<dataset>/score.json` regardless.
+
     There is NO cross-benchmark mean: each benchmark is recorded independently
     (a mean would reward imbalanced harnesses and mix scores from different
     gauntlet stages). A search run normally targets ONE dataset anyway. The
@@ -1186,6 +1243,7 @@ def _build_objectives(
     `accuracy_<ds>` at the same `stage_<ds>`; there is no algorithmic selection
     (Meta-Harness alignment), so no scalar objective is needed.
     """
+    want_cost = "efficiency" in set(metrics or ["accuracy"])
     out: Dict[str, Any] = {}
     total_tokens = 0
     # Phase-split cost, summed across datasets like tokens_total. Absent from
@@ -1207,7 +1265,7 @@ def _build_objectives(
         # the score AT that stage — compare candidates at the same stage_<ds>.
         if m.get("stage") is not None:
             out[f"stage_{ds}"] = float(m["stage"])
-        if m.get("cost_tokens_per_query") is not None:
+        if want_cost and m.get("cost_tokens_per_query") is not None:
             out[f"cost_tokens_per_query_{ds}"] = float(m["cost_tokens_per_query"])
         total_tokens += int(m.get("tokens", 0))
         if "tokens_build" in m:
@@ -1215,7 +1273,7 @@ def _build_objectives(
             phase_totals["tokens_build_total"] += int(m.get("tokens_build", 0))
             phase_totals["tokens_memory_total"] += int(m.get("tokens_memory", 0))
             phase_totals["llm_calls_total"] += int(m.get("llm_calls", 0))
-    if per_dataset_metrics:
+    if per_dataset_metrics and want_cost:
         # `tokens_total` keeps its ALL-PHASE meaning so entries recorded before
         # the phase split stay comparable; the build/memory split is additive.
         out["tokens_total"] = total_tokens
@@ -1530,6 +1588,7 @@ async def propose_eval_one(
                 timeout_s=cfg["proposer"]["timeout_s"],
                 sanity_enabled=sanity_enabled,
                 active_datasets=list(cfg.get("datasets", {}).keys()),
+                metrics=cfg.get("metrics"),
                 agent=agent,
                 agent_opts=agent_opts,
                 prompts_version=cfg["prompts"]["version"],
@@ -1606,6 +1665,7 @@ async def propose_eval_one(
                     timeout_s=cfg["proposer"]["timeout_s"],
                     sanity_enabled=sanity_enabled,
                     active_datasets=list(cfg.get("datasets", {}).keys()),
+                    metrics=cfg.get("metrics"),
                     agent=agent,
                     agent_opts=agent_opts,
                     prompts_version=cfg["prompts"]["version"],
@@ -1738,7 +1798,7 @@ async def search_loop(cfg: Dict[str, Any]) -> None:
             cfg, new_id=seed_pending_id, is_seed=True,
         )
         seed_dir = paths.harnesses_dir / seed_final_id
-        objectives = _build_objectives(per_ds, seed_dir)
+        objectives = _build_objectives(per_ds, seed_dir, cfg["metrics"])
         seed_meta = _read_meta(seed_dir)
         entry = Entry(
             id=seed_final_id, objectives=objectives, parent_ids=parent_ids,
@@ -1809,7 +1869,7 @@ async def search_loop(cfg: Dict[str, Any]) -> None:
             raise   # propagate to main() for sys.exit(2)
 
         new_dir = paths.harnesses_dir / final_id
-        objectives = _build_objectives(per_ds, new_dir)
+        objectives = _build_objectives(per_ds, new_dir, cfg["metrics"])
         new_meta = _read_meta(new_dir)
         entry = Entry(
             id=final_id, objectives=objectives, parent_ids=parent_ids,
@@ -1937,7 +1997,8 @@ def _classify_orphan(harness_dir: Path, dataset_names: List[str]) -> str:
     return "incomplete"
 
 
-def _build_adopted_entry(harness_dir: Path, per_ds: Dict[str, Dict[str, Any]]) -> Entry:
+def _build_adopted_entry(harness_dir: Path, per_ds: Dict[str, Dict[str, Any]],
+                         metrics: Optional[List[str]] = None) -> Entry:
     """Construct an Entry from per-dataset metrics + the dir's meta.json.
 
     Used by all three "successful adoption" paths (complete / sanity_passed /
@@ -1947,7 +2008,7 @@ def _build_adopted_entry(harness_dir: Path, per_ds: Dict[str, Dict[str, Any]]) -
     meta = _read_meta(harness_dir)
     return Entry(
         id=harness_dir.name,
-        objectives=_build_objectives(per_ds, harness_dir),
+        objectives=_build_objectives(per_ds, harness_dir, metrics),
         parent_ids=_read_parent_ids(harness_dir),
         content_hash=meta.get("content_hash"),
         created_at=meta.get("created_at"),
@@ -1999,7 +2060,7 @@ async def _adopt_orphan(
     if kind == "sanity_failed":
         log.info(f"adoption: harnesses/{name} → sanity_failed (no eval needed)")
         per_ds = {ds: _read_dataset_metrics(harness_dir, ds) for ds in dataset_names}
-        entry = _build_adopted_entry(harness_dir, per_ds)
+        entry = _build_adopted_entry(harness_dir, per_ds, cfg.get("metrics"))
         frontier.add(entry)
         _persist_sanity_status(name, "adopted_failed")
         return entry
@@ -2008,7 +2069,7 @@ async def _adopt_orphan(
     if kind == "complete":
         log.info(f"adoption: harnesses/{name} → complete (no eval needed)")
         per_ds = {ds: _read_dataset_metrics(harness_dir, ds) for ds in dataset_names}
-        entry = _build_adopted_entry(harness_dir, per_ds)
+        entry = _build_adopted_entry(harness_dir, per_ds, cfg.get("metrics"))
         frontier.add(entry)
         _persist_sanity_status(name, "adopted_complete")
         return entry
@@ -2041,7 +2102,7 @@ async def _adopt_orphan(
         for ds in dataset_names:
             _write_failure(_dataset_dir(harness_dir, ds), f"env_build_failed: {exc}")
         per_ds = {ds: _read_dataset_metrics(harness_dir, ds) for ds in dataset_names}
-        entry = _build_adopted_entry(harness_dir, per_ds)
+        entry = _build_adopted_entry(harness_dir, per_ds, cfg.get("metrics"))
         frontier.add(entry)
         _persist_sanity_status(name, "adopted_env_build_failed")
         return entry
@@ -2058,7 +2119,7 @@ async def _adopt_orphan(
         progressive=cfg["progressive"],
         data_isolation_binds=_isolation_binds(cfg),
     )
-    entry = _build_adopted_entry(harness_dir, per_ds)
+    entry = _build_adopted_entry(harness_dir, per_ds, cfg.get("metrics"))
     frontier.add(entry)
     _persist_sanity_status(name, "adopted_passed")
     return entry
@@ -2239,6 +2300,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
                         help="Debug escape hatch: bind FULL datasets (incl. "
                              "the test split) into search-mode containers "
                              "instead of the search-split-only overlay.")
+    parser.add_argument("--metric", dest="metrics", type=str, default=None,
+                        help="What this search optimizes: 'accuracy' (default) "
+                             "or 'accuracy,efficiency'. Everything is measured "
+                             "either way — this picks the axes the frontier "
+                             "carries and what the proposer is told to trade off.")
     parser.add_argument("--progressive", dest="progressive",
                         action="store_true", default=None,
                         help="Run the staged stage1→2→3 gauntlet, sized by "
