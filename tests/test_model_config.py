@@ -177,6 +177,47 @@ def test_sdk_patch_rewrites_a_real_create_call():
     assert sent["model"] == "gpt-5-mini"
 
 
+def test_the_sdk_patch_caps_how_many_calls_are_in_flight():
+    """Vendored clients have no concurrency gate of their own and several fan
+    out hard (simplemem's packaged config runs 16 parallel workers). Measured
+    with 16 in flight, calls that take seconds alone took 211 s — and then the
+    request budget fires and they all retry."""
+    import threading
+    import time
+
+    mc.install_openai_param_normalisation()
+    from openai.resources.chat.completions import Completions
+
+    live = [0]
+    peak = [0]
+    lock = threading.Lock()
+
+    class _SlowResource:
+        def _post(self, _path, *, body, **_kw):
+            with lock:
+                live[0] += 1
+                peak[0] = max(peak[0], live[0])
+            time.sleep(0.05)
+            with lock:
+                live[0] -= 1
+            return "ok"
+
+    def call():
+        Completions.create(_SlowResource(), model="gpt-4.1-mini",
+                           messages=[{"role": "user", "content": "hi"}])
+
+    threads = [threading.Thread(target=call) for _ in range(mc.VENDORED_MAX_CONCURRENT * 4)]
+    for th in threads:
+        th.start()
+    for th in threads:
+        th.join()
+
+    assert peak[0] <= mc.VENDORED_MAX_CONCURRENT, (
+        f"{peak[0]} calls were in flight at once, gate is "
+        f"{mc.VENDORED_MAX_CONCURRENT}")
+    assert peak[0] > 1, "the gate must not serialise every call"
+
+
 def test_sdk_patch_is_idempotent():
     from openai.resources.chat.completions import AsyncCompletions, Completions
 
