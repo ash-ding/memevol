@@ -77,6 +77,84 @@ _CURRENT_PHASE: contextvars.ContextVar[str] = contextvars.ContextVar(
 )
 
 
+# ---------------------------------------------------------------------------
+# Per-user tally — the cost of ONE user's run
+#
+# The tracker above is process-global and cumulative, which is right for
+# `token_usage.json` but wrong for "what did THIS user cost": users overlap on
+# worker threads, and the same user_dir is re-run by every progressive stage.
+# `tally_calls()` therefore hands out a FRESH tally per scope and binds it to
+# the caller's context, so every LLM call made inside — on this thread, in a
+# `to_thread` worker, or in a vendored ThreadPoolExecutor (see
+# `install_thread_context_propagation`) — lands in that scope's counters and
+# nowhere else. A scope's numbers are read once and dropped; nothing
+# accumulates across users, stages or runs.
+#
+# Embedding calls are deliberately NOT tallied: per-token they cost ~1% of an
+# LLM token, so adding the two together would misrepresent a system that
+# embeds a lot as an expensive one. They stay in the global tracker
+# (`token_usage.json`) where they can be read separately.
+# ---------------------------------------------------------------------------
+
+
+def is_embedding_model(model_name: Any) -> bool:
+    """True for OpenAI embedding model names (`text-embedding-*`)."""
+    return "text-embedding" in str(model_name or "").lower()
+
+
+class CallTally:
+    """Per-phase call/token counters for ONE bounded scope (one user's run)."""
+
+    def __init__(self) -> None:
+        self.by_phase: Dict[str, Dict[str, int]] = defaultdict(_new_entry)
+        self._lock = threading.Lock()
+
+    def add(self, phase_name: str, prompt: int, completion: int,
+            total: int, reasoning: int, calls: int = 1) -> None:
+        with self._lock:
+            entry = self.by_phase[phase_name]
+            entry["calls"] += int(calls)
+            entry["prompt_tokens"] += int(prompt)
+            entry["completion_tokens"] += int(completion)
+            entry["total_tokens"] += int(total)
+            entry["reasoning_tokens"] += int(reasoning)
+
+    def phase(self, phase_name: str) -> Dict[str, int]:
+        """This scope's counters for one phase (zeros when it never ran)."""
+        with self._lock:
+            return dict(self.by_phase.get(phase_name, _new_entry()))
+
+    def snapshot(self) -> Dict[str, Dict[str, int]]:
+        with self._lock:
+            return {ph: dict(c) for ph, c in self.by_phase.items()}
+
+
+_CURRENT_TALLY: contextvars.ContextVar[Optional["CallTally"]] = contextvars.ContextVar(
+    "memevol_call_tally", default=None
+)
+
+
+@contextlib.contextmanager
+def tally_calls() -> Iterator["CallTally"]:
+    """Tally every non-embedding LLM call made inside this block.
+
+    Yields the tally itself; read it after the block. Nesting is honoured (the
+    enclosing tally is restored on exit), and an inner scope does NOT feed its
+    calls to an outer one — a scope means "exactly this span".
+    """
+    tally = CallTally()
+    token = _CURRENT_TALLY.set(tally)
+    try:
+        yield tally
+    finally:
+        _CURRENT_TALLY.reset(token)
+
+
+def current_tally() -> Optional["CallTally"]:
+    """The tally LLM calls made right now are counted into (None outside a scope)."""
+    return _CURRENT_TALLY.get()
+
+
 def current_phase() -> str:
     """The phase LLM calls made right now are attributed to."""
     return _CURRENT_PHASE.get()
@@ -182,6 +260,14 @@ class TokenTracker:
             entry["completion_tokens"] += completion
             entry["total_tokens"] += total
             entry["reasoning_tokens"] += reasoning
+
+        # Per-user cost accounting (see CallTally): the ambient scope, if any.
+        # Embeddings are excluded by design; a replay (`calls` > 1, or an
+        # explicit `phase_name`) still counts — it is real usage by whoever is
+        # in scope.
+        tally = _CURRENT_TALLY.get()
+        if tally is not None and not is_embedding_model(model_name):
+            tally.add(ph, prompt, completion, total, reasoning, calls)
 
     async def aupdate(self, model_name: str, usage: Any,
                       phase_name: Optional[str] = None, calls: int = 1) -> None:

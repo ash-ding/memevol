@@ -1098,6 +1098,15 @@ def _build_objectives(
       - `score_max_<dataset>`    judge's max — so consumers can normalize themselves
       - `robustness_<dataset>`   stddev of per-user reward (lower = more reliable);
                                  omitted when fewer than 2 valid users (stddev undefined)
+      - `cost_tokens_per_query_<dataset>`  (build + retrieve + injected memory
+                                 tokens) per query, meaned over users — the
+                                 efficiency axis (lower = cheaper). PER
+                                 DATASET and per stage by construction: it is
+                                 an amortized mean over that stage's sizing,
+                                 so it is never summed across datasets the way
+                                 `tokens_total` is. Omitted for metrics
+                                 recorded before this field existed, so old
+                                 entries stay absent rather than look free.
 
     Harness-level fields (single value):
       - `code_length`            bytes of harness.py (rough simplicity proxy; lower = simpler)
@@ -1132,6 +1141,8 @@ def _build_objectives(
         # the score AT that stage — compare candidates at the same stage_<ds>.
         if m.get("stage") is not None:
             out[f"stage_{ds}"] = float(m["stage"])
+        if m.get("cost_tokens_per_query") is not None:
+            out[f"cost_tokens_per_query_{ds}"] = float(m["cost_tokens_per_query"])
         total_tokens += int(m.get("tokens", 0))
         if "tokens_build" in m:
             any_phase_data = True

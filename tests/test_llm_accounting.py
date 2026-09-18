@@ -421,6 +421,131 @@ def test_memory_token_aggregation_across_users():
 
 
 # ---------------------------------------------------------------------------
+# Per-user cost tally + the per-query cost metric
+# ---------------------------------------------------------------------------
+
+def test_each_user_is_charged_only_its_own_calls():
+    """Users overlap on one event loop; each recorder must carry ITS calls."""
+    _, records, _, _ = _run(users=("u1", "u2", "u3"), concurrent=3)
+    agent = _StubChat.USAGE["Agent"]
+    for rec in records:
+        assert rec.cost_build_calls == 1, rec.cost_build_calls
+        assert rec.cost_build_prompt_tokens == agent["prompt_tokens"]
+        assert rec.cost_retrieve_calls == _Workflow.N_QA
+        assert rec.cost_retrieve_completion_tokens == agent["completion_tokens"] * _Workflow.N_QA
+        # The QA agent and the judge are NOT the memory system's cost.
+        assert not hasattr(rec, "cost_answer_calls")
+        assert not hasattr(rec, "cost_judge_calls")
+
+
+def test_a_tally_counts_calls_made_on_worker_threads():
+    """Synchronous baselines run their hooks in a worker thread, and some fan
+    out over their own pool — both must stay inside the caller's scope."""
+    import concurrent.futures
+    T.install_thread_context_propagation()
+    tracker = _fresh_tracker()
+
+    async def go():
+        with T.tally_calls() as tally:
+            with T.phase(T.BUILD):
+                def _sync_hook():
+                    tracker.update("m", _usage(10, 1))
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
+                        for f in [pool.submit(tracker.update, "m", _usage(10, 1))
+                                  for _ in range(3)]:
+                            f.result()
+                await asyncio.to_thread(_sync_hook)
+        return tally
+
+    tally = asyncio.run(go())
+    assert tally.phase(T.BUILD)["calls"] == 4, tally.snapshot()
+    assert tally.phase(T.BUILD)["prompt_tokens"] == 40
+
+
+def test_embedding_calls_are_excluded_from_the_cost_tally():
+    """Embedding tokens cost ~1% of an LLM token, so summing them into one
+    number would misprice a system that embeds a lot. They stay visible in
+    token_usage.json."""
+    tracker = _fresh_tracker()
+    with T.tally_calls() as tally:
+        with T.phase(T.BUILD):
+            tracker.update("gpt-4o-mini", _usage(100, 10))
+            tracker.update("text-embedding-3-small", _usage(9999, 0))
+    assert tally.phase(T.BUILD)["prompt_tokens"] == 100
+    assert tally.phase(T.BUILD)["calls"] == 1
+    by_model = tracker.summary()["by_model"]
+    assert by_model["text-embedding-3-small"]["prompt_tokens"] == 9999
+
+
+def test_nested_tallies_do_not_leak_into_each_other():
+    tracker = _fresh_tracker()
+    with T.tally_calls() as outer:
+        with T.phase(T.BUILD):
+            tracker.update("m", _usage(1, 0))
+            with T.tally_calls() as inner:
+                tracker.update("m", _usage(10, 0))
+            tracker.update("m", _usage(100, 0))
+    assert inner.phase(T.BUILD)["prompt_tokens"] == 10
+    assert outer.phase(T.BUILD)["prompt_tokens"] == 101, "inner calls are not the outer's"
+
+
+def test_cost_per_query_is_amortized_and_meaned_over_users():
+    from common.evaluate import _cost_per_query_metrics
+    _, records, _, wf = _run(users=("u1", "u2"), concurrent=2)
+    agent = _StubChat.USAGE["Agent"]
+    call = agent["prompt_tokens"] + agent["completion_tokens"]
+    memory_per_query = _expected_delta(wf, MEMORY_TEXT)
+    n = _Workflow.N_QA
+    # per user: ONE build call amortized over n queries + one retrieve call
+    # per query + what the memory added to each prompt.
+    expected = (call + call * n + memory_per_query * n) / n
+
+    m = _cost_per_query_metrics(records)
+    assert abs(m["cost_tokens_per_query"] - expected) < 1e-9, m
+    assert abs(m["cost_build_per_query"] - call / n) < 1e-9
+    assert abs(m["cost_retrieve_per_query"] - call) < 1e-9
+    assert abs(m["cost_memory_tokens_per_query"] - memory_per_query) < 1e-9
+    assert abs(m["cost_prompt_tokens_per_query"] + m["cost_completion_tokens_per_query"]
+               - m["cost_tokens_per_query"]) < 1e-9, "the split must add up"
+    assert m["cost_n_users"] == 2 and m["cost_n_queries"] == 2 * n
+    assert m["cost_users_excluded"] == 0
+
+
+def test_cost_per_query_drops_users_that_answered_nothing():
+    """A user who crashed (no recorder) or was never prompted contributes no
+    per-query cost — the same users the score drops — and the count says so."""
+    from common.evaluate import _cost_per_query_metrics
+
+    class _Rec:
+        def __init__(self, n, build, memory):
+            self.memory_tokens_n = n
+            self.cost_build_prompt_tokens = build
+            self.cost_build_completion_tokens = 0
+            self.cost_retrieve_prompt_tokens = 0
+            self.cost_retrieve_completion_tokens = 0
+            self.memory_tokens_total = memory
+
+    m = _cost_per_query_metrics([
+        _Rec(2, 100, 20),          # (100 + 20) / 2 = 60
+        _Rec(0, 900, 0),           # built, never answered → dropped
+        RuntimeError("boom"),      # crashed → dropped
+    ])
+    assert m["cost_tokens_per_query"] == 60.0, m
+    assert m["cost_n_users"] == 1 and m["cost_users_excluded"] == 2
+
+
+def test_cost_metrics_are_absent_rather_than_zero_for_old_metrics():
+    """A pre-2026-09 metrics dict has no cost field; forge must not record it
+    as a free harness."""
+    from forge.orchestrator import _build_objectives
+    old = {"locomo": {"raw_score": 0.5, "score_max": 1, "tokens": 10}}
+    new = {"locomo": {"raw_score": 0.5, "score_max": 1, "tokens": 10,
+                      "cost_tokens_per_query": 123.5}}
+    assert "cost_tokens_per_query_locomo" not in _build_objectives(old, Path("/nope"))
+    assert _build_objectives(new, Path("/nope"))["cost_tokens_per_query_locomo"] == 123.5
+
+
+# ---------------------------------------------------------------------------
 # Per-stage accounting + schema
 # ---------------------------------------------------------------------------
 

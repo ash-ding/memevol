@@ -447,9 +447,17 @@ class BaseWorkflow(ABC):
         async def run_one(user_dir: str):
             async with semaphore:
                 try:
-                    return await self.run_single_user(
-                        user_dir, stage=stage, stage_spec=stage_spec, qa_tracker=qa_tracker
-                    )
+                    # One cost scope per user. Set inside this task, so it
+                    # covers exactly this user's LLM calls even though users
+                    # overlap (each asyncio task carries its own context, and
+                    # both `to_thread` and the patched ThreadPoolExecutor copy
+                    # it into worker threads).
+                    with tokens.tally_calls() as tally:
+                        recorder = await self.run_single_user(
+                            user_dir, stage=stage, stage_spec=stage_spec, qa_tracker=qa_tracker
+                        )
+                    self._stamp_cost(recorder, tally)
+                    return recorder
                 except Exception as exc:
                     user_tag = user_dir[-15:]
                     log.error(f"[ERROR] User {user_tag} failed: {exc}\n{traceback.format_exc()}")
@@ -506,6 +514,25 @@ class BaseWorkflow(ABC):
                 f"transport level — aborting eval instead of publishing a "
                 f"fake near-0 score (official protocol aborts on judge failure)"
             )
+
+    @staticmethod
+    def _stamp_cost(recorder: Basic_Recorder, tally: "tokens.CallTally") -> None:
+        """Record what THIS user's memory system cost, on their recorder.
+
+        Build and retrieve only — the two phases that are the memory system's
+        own work. `answer` is the shared QA agent (identical for every system,
+        so only the part the memory contributed is charged: `memory_tokens_*`,
+        measured at prompt assembly) and `judge` is evaluation overhead.
+        Embedding calls are not tallied at all (see common.tokens.CallTally).
+
+        A user who raised before returning a recorder is never stamped; those
+        users are dropped from the cost metric by `common.evaluate` exactly as
+        they are dropped from the score.
+        """
+        for phase_name in (tokens.BUILD, tokens.RETRIEVE):
+            counters = tally.phase(phase_name)
+            for counter, value in counters.items():
+                setattr(recorder, f"cost_{phase_name}_{counter}", int(value))
 
     # ---- Single-user execution ----
 
