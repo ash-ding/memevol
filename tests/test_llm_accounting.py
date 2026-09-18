@@ -536,13 +536,15 @@ def test_cost_per_query_drops_users_that_answered_nothing():
 
 def test_cost_metrics_are_absent_rather_than_zero_for_old_metrics():
     """A pre-2026-09 metrics dict has no cost field; forge must not record it
-    as a free harness."""
+    as a free harness. (Asked for the efficiency axis here — whether a run
+    records it at all is `metrics:`, covered in test_progressive_flags.)"""
     from forge.orchestrator import _build_objectives
+    want = ["accuracy", "efficiency"]
     old = {"locomo": {"raw_score": 0.5, "score_max": 1, "tokens": 10}}
     new = {"locomo": {"raw_score": 0.5, "score_max": 1, "tokens": 10,
                       "cost_tokens_per_query": 123.5}}
-    assert "cost_tokens_per_query_locomo" not in _build_objectives(old, Path("/nope"))
-    assert _build_objectives(new, Path("/nope"))["cost_tokens_per_query_locomo"] == 123.5
+    assert "cost_tokens_per_query_locomo" not in _build_objectives(old, Path("/nope"), want)
+    assert _build_objectives(new, Path("/nope"), want)["cost_tokens_per_query_locomo"] == 123.5
 
 
 # ---------------------------------------------------------------------------

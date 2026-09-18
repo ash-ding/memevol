@@ -154,6 +154,63 @@ def test_evaluate_memo_forwards_sample_seed_to_get_task_list():
 
 # ---------------- runner ----------------
 
+# ---------------- metrics ----------------
+
+def test_metrics_default_to_accuracy_only():
+    assert _resolve("datasets:\n  locomo: {}\n")["metrics"] == ["accuracy"]
+
+
+def test_metrics_from_yaml_and_cli():
+    from forge.orchestrator import _resolve_metrics
+    cfg = _resolve("datasets:\n  locomo: {}\nmetrics: [accuracy, efficiency]\n")
+    assert cfg["metrics"] == ["accuracy", "efficiency"]
+    # CLI wins over YAML, and accepts the comma-separated spelling.
+    cfg = _resolve("datasets:\n  locomo: {}\nmetrics: [accuracy]\n",
+                   ["--metric", "accuracy,efficiency"])
+    assert cfg["metrics"] == ["accuracy", "efficiency"]
+    # Order is canonical, and accuracy is never dropped.
+    assert _resolve_metrics(["efficiency"]) == ["accuracy", "efficiency"]
+    assert _resolve_metrics("efficiency,accuracy") == ["accuracy", "efficiency"]
+
+
+def test_an_unknown_metric_aborts_instead_of_being_ignored():
+    from forge.orchestrator import _resolve_metrics
+    try:
+        _resolve_metrics(["accuracy", "effciency"])   # typo
+    except ValueError as e:
+        assert "effciency" in str(e) and "efficiency" in str(e), str(e)
+    else:
+        raise AssertionError("a typo'd metric must abort the run")
+
+
+def test_cost_axes_reach_the_frontier_only_when_efficiency_is_asked_for():
+    """Everything is measured either way — this is about the scoreboard the
+    proposer reads."""
+    from pathlib import Path
+    from forge.orchestrator import _build_objectives
+    per_ds = {"locomo": {"raw_score": 0.5, "score_max": 1, "tokens": 1234,
+                         "tokens_build": 1000, "tokens_memory": 1100,
+                         "llm_calls": 9, "cost_tokens_per_query": 42.5}}
+
+    acc = _build_objectives(per_ds, Path("/nope"), ["accuracy"])
+    assert acc["accuracy_locomo"] == 0.5
+    assert not [k for k in acc if k.startswith("cost_") or k.startswith("tokens_")], acc
+
+    both = _build_objectives(per_ds, Path("/nope"), ["accuracy", "efficiency"])
+    assert both["cost_tokens_per_query_locomo"] == 42.5
+    assert both["tokens_total"] == 1234 and both["tokens_build_total"] == 1000
+
+
+def test_the_proposer_prompt_describes_only_the_axes_it_will_see():
+    from forge.prompts.renderer import build_proposer_system
+    acc = build_proposer_system(active_datasets=["locomo"], metrics=["accuracy"])
+    both = build_proposer_system(active_datasets=["locomo"],
+                                 metrics=["accuracy", "efficiency"])
+    assert "<<OBJECTIVE_AXES_BLOCK>>" not in acc and "<<OBJECTIVE_AXES_BLOCK>>" not in both
+    assert "cost_tokens_per_query" not in acc and "optimizes ACCURACY only" in acc
+    assert "cost_tokens_per_query" in both and "EFFICIENCY" in both
+
+
 def main():
     tests = [(n, f) for n, f in sorted(globals().items()) if n.startswith("test_")]
     failed = []

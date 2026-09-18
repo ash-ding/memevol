@@ -94,6 +94,7 @@ def build_proposer_system(
     *,
     sanity_enabled: bool = True,
     active_datasets: Optional[Iterable[str]] = None,
+    metrics: Optional[Iterable[str]] = None,
     version: Optional[str] = None,
 ) -> str:
     """Render the proposer SYSTEM prompt for a given prompt-template version.
@@ -101,6 +102,10 @@ def build_proposer_system(
     Args:
       sanity_enabled  — False when this run will NOT run the sanity layer
                         (cfg.sanity.enabled=false, or cfg.status=devtest).
+      metrics         — what this run optimizes (cfg["metrics"]), which
+                        decides which objective axes the frontier carries and
+                        therefore what the prompt may describe. None → the
+                        accuracy-only text.
       active_datasets — iterable of dataset registration names from
                         cfg["datasets"] keys (e.g. ["dynamicmem", "locomo",
                         "longmemeval_s"]). None / empty → render all known
@@ -116,11 +121,28 @@ def build_proposer_system(
     subs = {
         **(mod.SANITY_ON_SUBS if sanity_enabled else mod.SANITY_OFF_SUBS),
         **_build_dataset_subs(active, mod.DATASET_INFO),
+        "<<OBJECTIVE_AXES_BLOCK>>": _objective_axes_block(mod, metrics),
     }
     out = mod.SYSTEM_TEMPLATE
     for sentinel, replacement in subs.items():
         out = out.replace(sentinel, replacement)
     return out
+
+
+def _objective_axes_block(mod, metrics: Optional[Iterable[str]]) -> str:
+    """The objective-axes text for this run's `metrics:` setting.
+
+    The frontier only carries the axes the run records, so describing token
+    axes to a run that optimizes accuracy alone would point the proposer at
+    keys that are not there. An unknown combination falls back to the
+    accuracy-only text rather than failing the run — the prompt stays true to
+    the smaller scoreboard either way.
+    """
+    key = tuple(sorted(set(metrics or ("accuracy",))))
+    block = mod.OBJECTIVE_AXES_SUBS.get(key)
+    if block is None:
+        block = mod.OBJECTIVE_AXES_SUBS[("accuracy",)]
+    return block
 
 
 def proposer_task_prompt(

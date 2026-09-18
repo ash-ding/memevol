@@ -110,6 +110,18 @@ llm:
 # `progressive` always wins. New configs should just set `progressive:`.
 progressive: false
 
+# What this search optimizes. Everything is MEASURED either way (each harness's
+# <dataset>/score.json keeps the full record); this decides which axes land on
+# frontier.json — the scoreboard the proposer reads — and what it is told to
+# trade off. CLI: --metric accuracy,efficiency
+#   [accuracy]               — scores only, no cost axis on the frontier.
+#   [accuracy, efficiency]   — also cost_tokens_per_query_<dataset> (build +
+#                              retrieve tokens + the tokens the memory adds to
+#                              the QA prompt, per query, meaned over users) and
+#                              the token totals.
+# No weighted sum and no budget: the proposer weighs the axes itself.
+metrics: [accuracy]
+
 # When true, each search step samples a DIFFERENT (but still deterministic +
 # reproducible) subset per benchmark, derived from
 # (sampling_seed, step_index, dataset) via common.sampling.derive_sample_seed.
