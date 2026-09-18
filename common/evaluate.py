@@ -450,6 +450,85 @@ def _memory_token_metrics(recorder_list: List[Any]) -> Dict[str, Any]:
     }
 
 
+def _cost_per_query_metrics(recorder_list: List[Any]) -> Dict[str, Any]:
+    """What operating the memory cost, per query, averaged over users.
+
+    Per user: (BUILD + RETRIEVE tokens spent on that user) + (tokens the
+    memory added to that user's QA prompts), divided by the queries that user
+    was actually PROMPTED with. The mean over users is the headline
+    `cost_tokens_per_query`.
+
+    Why this shape:
+
+    * Amortized. Building is a one-off whose cost only makes sense spread over
+      the queries it serves — and without amortization a system could look
+      cheap by precomputing everything at build time.
+    * Per user first, then averaged. Users differ in history length and query
+      count; pooling the sums would let the longest conversation dominate.
+    * ANSWER contributes only the memory's own share. The QA agent is the same
+      for every system (prompt template, question, its own output), so
+      charging its full prompt would add a constant that hides the difference
+      between memories.
+    * JUDGE, the evolving agent's own calls and embeddings are not in here at
+      all (see `common.tokens.CallTally`).
+
+    Denominators and exclusions: a user who raised (no recorder) or answered
+    nothing contributes no value — the same users the score drops. The count
+    of those is reported as `cost_users_excluded` so a shrinking denominator
+    can never pass unnoticed.
+
+    Comparability: the number depends on how many queries were sampled per
+    user, so it is only comparable across runs of the SAME sizing, and never
+    across benchmarks (LongMemEval has exactly one query per user, so nothing
+    amortizes there; LoCoMo has dozens). `cost_n_queries` records the
+    denominator actually used.
+    """
+    per_user: List[float] = []
+    build_pq: List[float] = []
+    retrieve_pq: List[float] = []
+    memory_pq: List[float] = []
+    prompt_pq: List[float] = []
+    completion_pq: List[float] = []
+    n_queries = 0
+    excluded = 0
+    for rec in recorder_list:
+        if isinstance(rec, Exception):
+            excluded += 1
+            continue
+        n = int(getattr(rec, "memory_tokens_n", 0))
+        if n <= 0:                      # answered nothing: no per-query cost
+            excluded += 1
+            continue
+        g = lambda name: int(getattr(rec, name, 0))   # noqa: E731
+        build = g("cost_build_prompt_tokens") + g("cost_build_completion_tokens")
+        retrieve = g("cost_retrieve_prompt_tokens") + g("cost_retrieve_completion_tokens")
+        memory = g("memory_tokens_total")
+        n_queries += n
+        per_user.append((build + retrieve + memory) / n)
+        build_pq.append(build / n)
+        retrieve_pq.append(retrieve / n)
+        memory_pq.append(memory / n)
+        # Input/output split, kept separate because their prices differ by
+        # several times; whether to weight them is a reporting choice.
+        prompt_pq.append(
+            (g("cost_build_prompt_tokens") + g("cost_retrieve_prompt_tokens") + memory) / n)
+        completion_pq.append(
+            (g("cost_build_completion_tokens") + g("cost_retrieve_completion_tokens")) / n)
+
+    mean = lambda xs: (sum(xs) / len(xs)) if xs else 0.0    # noqa: E731
+    return {
+        "cost_tokens_per_query": mean(per_user),
+        "cost_build_per_query": mean(build_pq),
+        "cost_retrieve_per_query": mean(retrieve_pq),
+        "cost_memory_tokens_per_query": mean(memory_pq),
+        "cost_prompt_tokens_per_query": mean(prompt_pq),
+        "cost_completion_tokens_per_query": mean(completion_pq),
+        "cost_n_users": len(per_user),
+        "cost_n_queries": n_queries,
+        "cost_users_excluded": excluded,
+    }
+
+
 #: Cost fields accumulated ACROSS executed stages (cost accounting spans the
 #: whole gauntlet, not just the last stage). `phase_seconds` is merged
 #: separately — it is not a flat int.
@@ -515,6 +594,13 @@ async def evaluate_memo(
       phase_seconds              wall-clock per phase — the only cost signal
                                  that also covers local models
       memory_tokens_total        tokens the memory added to the QA prompts
+      cost_tokens_per_query      THE efficiency metric: (build + retrieve +
+                                 injected memory tokens) per query, meaned
+                                 over users — per stage, never summed
+      cost_build/retrieve/memory_tokens_per_query   its three components
+      cost_prompt/completion_tokens_per_query       its input/output split
+      cost_n_users / cost_n_queries / cost_users_excluded
+                                 what the mean was taken over
       memory_tokens_per_query    the recurring cost of USING the memory
       memory_tokens_n_queries    denominator: queries actually prompted
       memory_tokens_n_answered   stricter denominator (answer succeeded)
@@ -640,7 +726,12 @@ async def evaluate_memo(
             stage_usage = _diff_summary(tracker.summary(), usage_before)
 
         cost = {**_stage_cost_metrics(stage_usage),
-                **_memory_token_metrics(stage_records)}
+                **_memory_token_metrics(stage_records),
+                # Per-query cost is a mean over THIS stage's users on THIS
+                # stage's sizing — meaningless to add up across stages, so it
+                # is absent from _CUMULATIVE_COST_FIELDS: `m` keeps the
+                # reached stage's value and stages.json keeps every stage's.
+                **_cost_per_query_metrics(stage_records)}
         m: Dict[str, Any] = {
             "raw_score": raw_score,
             "score_max": workflow.judge_score_max,
