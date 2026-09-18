@@ -49,11 +49,11 @@ import argparse
 import datetime as _dt
 import json
 import pprint
-import re
 import shutil
+import subprocess
 import sys
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -67,32 +67,35 @@ HARNESS_DIR = PROJECT_ROOT / "baselines" / "harness"
 _SHARED_MODULES = ("model_config.py", "concurrency.py", "__init__.py")
 
 
-def _lock_requirements(lock_path: Path) -> List[str]:
-    """`name==version` for every package in a uv.lock, minus the project itself.
+#: The container: `pip install` there must not be handed Windows-only wheels.
+_CONTAINER_PLATFORM = "x86_64-unknown-linux-gnu"
 
-    Parsed by hand: `tomllib` is 3.11+, and this tool has to run wherever a
-    baseline's venv happens to be. The format is machine-generated and flat —
-    a `[[package]]` header followed by `name = ...` / `version = ...`.
+
+def _export_requirements(project_dir: Path) -> str:
+    """Pinned requirements for the container, from the baseline's uv.lock.
+
+    Exported by `uv` rather than read out of the lock by hand: the lock holds
+    every platform's resolution, and a naive read pins Windows-only packages
+    (portalocker pulls `pywin32`) which then fail the image build. `uv export`
+    resolves for one platform and keeps the environment markers.
     """
-    text = lock_path.read_text(encoding="utf-8")
-    out: List[str] = []
-    name = version = None
-    for line in text.splitlines():
-        line = line.strip()
-        if line == "[[package]]":
-            name = version = None
-            continue
-        m = re.match(r'^name = "([^"]+)"$', line)
-        if m and name is None:
-            name = m.group(1)
-            continue
-        m = re.match(r'^version = "([^"]+)"$', line)
-        if m and name is not None and version is None:
-            version = m.group(1)
-            if not name.startswith("memevol-baseline-"):   # the project itself
-                out.append(f"{name}=={version}")
-            name = version = None
-    return sorted(set(out))
+    cmd = [
+        "uv", "export", "--frozen", "--no-hashes", "--no-emit-project",
+        "--no-dev", "--python-platform", _CONTAINER_PLATFORM,
+        "--project", str(project_dir),
+    ]
+    try:
+        done = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+    except FileNotFoundError:
+        raise SystemExit(
+            "packaging needs `uv` on PATH: the baseline's pinned dependencies "
+            "come from `uv export` (reading uv.lock by hand pins Windows-only "
+            "wheels that break the image build). Run this on a machine with uv "
+            "— the same one that has the baseline's venv."
+        )
+    if done.returncode != 0:
+        raise SystemExit(f"`uv export` failed for {project_dir}:\n{done.stderr.strip()}")
+    return done.stdout
 
 
 def _resolved_config(name: str, arm: str, unified_models: Dict[str, str] | None) -> Dict[str, Any]:
@@ -179,11 +182,11 @@ def package(name: str, arm: str, unified_models: Dict[str, str] | None,
     (out / "harness.py").write_text(_harness_py(name, class_name, arm, config),
                                     encoding="utf-8")
 
-    lock = src / "uv.lock"
-    if lock.exists():
+    if (src / "uv.lock").exists():
         (out / "requirements.txt").write_text(
-            "# Pinned from %s — the exact set this baseline was tested with.\n" % lock.relative_to(PROJECT_ROOT)
-            + "\n".join(_lock_requirements(lock)) + "\n",
+            f"# Exported from baselines/harness/{name}/uv.lock for "
+            f"{_CONTAINER_PLATFORM} — the exact set this baseline was tested with.\n"
+            + _export_requirements(src),
             encoding="utf-8")
 
     with (out / "meta.json").open("w", encoding="utf-8") as f:

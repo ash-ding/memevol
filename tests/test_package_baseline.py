@@ -20,46 +20,30 @@ from pathlib import Path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("OPENAI_API_KEY", "test-dummy-key")
 
-from tools.package_baseline import _lock_requirements, package   # noqa: E402
+from tools.package_baseline import _export_requirements, package   # noqa: E402
 
-_LOCK = '''version = 1
-
-[[package]]
-name = "memevol-baseline-mem0"
-version = "0.0.0"
-
-[[package]]
-name = "qdrant-client"
-version = "1.16.1"
-source = { registry = "https://pypi.org/simple" }
-wheels = [
-    { url = "https://example/qdrant_client-1.16.1-py3-none-any.whl" },
-]
-
-[[package]]
-name = "openai"
-version = "1.107.3"
-'''
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_requirements_come_from_the_lock_not_the_pyproject():
-    """The lock is what the baseline was actually tested with; pyproject only
-    says `openai>=1.107`."""
-    with tempfile.TemporaryDirectory() as td:
-        lock = Path(td) / "uv.lock"
-        lock.write_text(_LOCK, encoding="utf-8")
-        reqs = _lock_requirements(lock)
-    assert reqs == ["openai==1.107.3", "qdrant-client==1.16.1"], reqs
-    assert not any(r.startswith("memevol-baseline") for r in reqs), \
+def _have_uv() -> bool:
+    return shutil.which("uv") is not None
+
+
+def test_exported_requirements_are_pinned_and_container_only():
+    """Read straight out of uv.lock, a Windows-only wheel (portalocker pulls
+    pywin32) would be pinned and fail the image build — so the export asks for
+    the container's platform."""
+    if not _have_uv():
+        print("    (skipped: needs uv on PATH)")
+        return
+    text = _export_requirements(PROJECT_ROOT / "baselines" / "harness" / "mem0")
+    pins = [l for l in text.splitlines()
+            if l.strip() and not l.startswith("#") and not l.startswith(" ")]
+    assert len(pins) > 10, pins[:5]
+    assert all("==" in p for p in pins), "every dependency is pinned"
+    assert not any(p.startswith("pywin32") for p in pins), pins
+    assert not any("memevol-baseline" in p for p in pins), \
         "the project itself is not a dependency"
-
-
-def test_the_real_locks_all_parse():
-    root = Path(__file__).resolve().parents[1] / "baselines" / "harness"
-    for lock in sorted(root.glob("*/uv.lock")):
-        reqs = _lock_requirements(lock)
-        assert len(reqs) > 10, f"{lock} produced {len(reqs)} pins"
-        assert all("==" in r for r in reqs), lock
 
 
 def test_packaging_produces_a_harness_forge_can_load():
@@ -121,6 +105,7 @@ def test_a_vendored_baseline_travels_with_its_src_and_resolved_config():
         assert (pkg / "src" / "mem0").is_dir(), "the vendored package travels with it"
         reqs = (out / "requirements.txt").read_text(encoding="utf-8")
         assert "qdrant-client==" in reqs and "openai==" in reqs
+        assert "pywin32" not in reqs, "a Windows-only wheel would fail the build"
 
         cls = load_harness_class(out)
         memo = cls()
