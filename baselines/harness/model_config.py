@@ -316,9 +316,10 @@ def install_embedder_factory() -> None:
 # Mirrors common/llm.py::_REASONING_MODEL_PREFIXES — keep the two in step.
 _RESTRICTED_MODEL_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 
-# Params the reasoning families reject outright. `max_tokens` is not dropped
-# but RENAMED, since the caller genuinely means to cap the generation.
-_DROPPED_PARAMS = ("temperature", "top_p", "presence_penalty", "frequency_penalty")
+# Params the reasoning families reject outright — dropped, `max_tokens`
+# included (see normalise_chat_params for why renaming it was worse).
+_DROPPED_PARAMS = ("temperature", "top_p", "presence_penalty", "frequency_penalty",
+                   "max_tokens")
 
 _params_patched = False
 
@@ -335,8 +336,20 @@ def normalise_chat_params(kwargs: Dict[str, Any]) -> Dict[str, Any]:
       * a repo-convention ``"model/effort"`` suffix (e.g. ``gpt-5-mini/low``)
         is split into ``model`` + ``reasoning_effort``. Vendored clients pass
         the configured string straight through and would 400 on the suffix;
-      * for a reasoning model, ``temperature``/``top_p``/the penalties are
-        dropped and ``max_tokens`` becomes ``max_completion_tokens``.
+      * for a reasoning model, ``temperature``/``top_p``/the penalties AND
+        ``max_tokens`` are dropped.
+
+    `max_tokens` used to be RENAMED to `max_completion_tokens`, on the
+    reasoning that the caller means to cap the generation. That was wrong, and
+    expensively so: on a reasoning model the cap covers reasoning AND output
+    together, so a vendored value chosen for a 4-series model (mem0 sends
+    2000) leaves nothing for the answer. Measured against gpt-5-mini with a
+    30 k-char extraction prompt and `response_format=json_object`: capped, the
+    request never returned (300 s timeout, and 30 min of retries in a real
+    run); with the cap dropped it answered in 4.2 s. A cap written for a
+    non-reasoning model has no equivalent meaning here, so the honest
+    translation is to drop it — a caller who really wants one can pass
+    `max_completion_tokens` itself, which is left untouched.
 
     Returns a new dict; the caller's is left alone.
     """
@@ -354,10 +367,6 @@ def normalise_chat_params(kwargs: Dict[str, Any]) -> Dict[str, Any]:
 
     for name in _DROPPED_PARAMS:
         out.pop(name, None)
-    if "max_tokens" in out:
-        # Only rename when the caller did not already set the new name.
-        out.setdefault("max_completion_tokens", out.pop("max_tokens"))
-        out.pop("max_tokens", None)
     return out
 
 

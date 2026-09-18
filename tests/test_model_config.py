@@ -69,17 +69,30 @@ def test_normalise_drops_sampling_params_for_reasoning_models():
     assert out["model"] == "gpt-5-mini"
 
 
-def test_normalise_renames_max_tokens_for_reasoning_models():
+def test_normalise_drops_max_tokens_for_reasoning_models():
+    """It used to be renamed to max_completion_tokens. On a reasoning model
+    that cap covers reasoning AND output, so a value chosen for a 4-series
+    model (mem0 sends 2000) leaves nothing for the answer: measured against
+    gpt-5-mini with a 30k-char json_object prompt, the capped request never
+    returned (300 s), the uncapped one answered in 4.2 s."""
     out = mc.normalise_chat_params({"model": "gpt-5-mini", "max_tokens": 1000})
     assert "max_tokens" not in out
-    assert out["max_completion_tokens"] == 1000
+    assert "max_completion_tokens" not in out, "a 4-series cap is not a reasoning cap"
 
 
-def test_normalise_does_not_clobber_an_explicit_max_completion_tokens():
+def test_normalise_keeps_a_cap_the_caller_wrote_for_this_model():
+    """`max_completion_tokens` is the reasoning models' own parameter — the
+    caller meant it, so it stands."""
     out = mc.normalise_chat_params(
         {"model": "o3", "max_tokens": 10, "max_completion_tokens": 99})
     assert out["max_completion_tokens"] == 99
     assert "max_tokens" not in out
+
+
+def test_normalise_leaves_the_four_series_alone():
+    out = mc.normalise_chat_params(
+        {"model": "gpt-4o-mini", "max_tokens": 1000, "temperature": 0.7})
+    assert out["max_tokens"] == 1000 and out["temperature"] == 0.7
 
 
 def test_normalise_splits_the_effort_suffix():
