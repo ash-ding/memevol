@@ -100,7 +100,7 @@ async def run_evaluation(
     MEMEVOL_ANTHROPIC_TRANSPORT + the official Vertex env vars and RO-binds
     the GCP credentials json at /gcp/credentials.json. NOTE: in-container
     vertex requires google-auth in the image — eval-base images built before
-    2026-07-08 lack it (see containers/base_requirements_cpu.txt).
+    2026-07-08 lack it (see containers/base_requirements.txt).
 
     `plan` is the whole-evaluation plan launch.py forwards to evaluate_memo:
     {"progressive": bool, "smoke": bool, "stages": dict|None,
