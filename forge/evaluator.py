@@ -142,6 +142,14 @@ async def run_evaluation(
     cmd = [
         "singularity", "exec",
         "--containall",
+        # Do NOT let the runtime auto-mount the invoking user's home.
+        # --containall already replaces it with an empty one, but Apptainer
+        # still has to resolve a path for it, and on a ZFS home it resolves to
+        # "" — `failed to add  as session directory: path . is not an absolute
+        # path`, before a single bind is applied. Nothing here wants that
+        # mount: HF_HOME is pointed at the
+        # /hf-cache bind, and nothing else writes to HOME.
+        "--no-home",
     ]
     if gpu:
         # Bind-mounts host NVIDIA driver libs (libcuda, libnvidia-ml, ...) so
