@@ -181,6 +181,23 @@ class CachedBGEReranker(BGERerankerClient):
 # network/9p mounts → "redis-server process failed to start". Default to the
 # system temp dir (ext4 on WSL2, tmpfs/local on Linux); override via cfg["db_root"].
 # NOT the repo's outputs/ (that sits on /mnt/c under WSL).
+#: Read timeout for the embedded FalkorDB connection, in seconds.
+#:
+#: redis-py 8.1.0 defaults `socket_timeout` to 5 — older versions defaulted to
+#: None, i.e. block until the server answers. Five seconds is fine for a
+#: key-value GET and far too little for a graph traversal: on a LoCoMo
+#: conversation (419 episodes) zep lost 3 of 5 queries to
+#: `TimeoutError: Timeout reading from /tmp/.../redis.socket`, each one scored
+#: 0, which is why the same harness came out at 0.800 one run and 0.200 the
+#: next. The graph query was not failing — the client stopped waiting.
+#:
+#: Generous on purpose: a retrieval that genuinely takes a minute is a real
+#: (and reportable) cost of this method, while a truncated one is a silent
+#: zero. The connect timeout keeps redis-py's default; a local unix socket
+#: either connects at once or is not there.
+FALKORDB_SOCKET_TIMEOUT_SECONDS = 120
+
+
 def _db_root(cfg: Dict) -> Path:
     return Path(cfg["db_root"] or tempfile.gettempdir()) / "zep_falkordb"
 
@@ -358,7 +375,8 @@ class ZepMemo(MemoClass):
         base = _db_root(self.config)   # native POSIX FS — see _db_root (NOT /mnt/c under WSL)
         base.mkdir(parents=True, exist_ok=True)
         self._db_path = str(base / f"{self._instance_id}.db")
-        self._falkor_db = AsyncFalkorDB(dbfilename=self._db_path)
+        self._falkor_db = AsyncFalkorDB(dbfilename=self._db_path,
+                                        socket_timeout=FALKORDB_SOCKET_TIMEOUT_SECONDS)
         driver = FalkorDriver(falkor_db=self._falkor_db)
 
         device = resolve_device(self.config["device"])   # None → cuda if visible, else cpu
