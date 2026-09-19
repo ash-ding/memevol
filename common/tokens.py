@@ -241,16 +241,26 @@ class TokenTracker:
         should pass anything but 1.
         """
         ph = phase_name or current_phase()
-        prompt = _get(usage, "prompt_tokens")
-        completion = _get(usage, "completion_tokens")
+        # Two usage shapes reach this function. Chat Completions says
+        # prompt/completion; the Responses API says input/output for the same
+        # two numbers, and nests reasoning under output_tokens_details. Both
+        # carry total_tokens, which is why a Responses-only baseline used to
+        # report the right total with a 0/0 split — and why its per-query cost,
+        # which sums prompt+completion, came out ZERO. zep did exactly that:
+        # 3,059,840 build tokens, cost_build_per_query 0.0, first place on the
+        # efficiency axis.
+        prompt = _get(usage, "prompt_tokens") or _get(usage, "input_tokens")
+        completion = _get(usage, "completion_tokens") or _get(usage, "output_tokens")
         total = _get(usage, "total_tokens")
         # Some SDK paths omit total_tokens; derive it so the headline number is
         # never silently short.
         if not total:
             total = prompt + completion
-        # Live OpenAI usage nests reasoning under completion_tokens_details;
-        # a replayed summary entry carries it flat.
-        details = _get(usage, "completion_tokens_details")
+        # Live OpenAI usage nests reasoning under completion_tokens_details
+        # (Responses: output_tokens_details); a replayed summary entry carries
+        # it flat.
+        details = (_get(usage, "completion_tokens_details")
+                   or _get(usage, "output_tokens_details"))
         reasoning = _get(details, "reasoning_tokens") if details else _get(usage, "reasoning_tokens")
 
         with self._lock:

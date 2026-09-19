@@ -581,6 +581,48 @@ def test_read_total_tokens_accepts_the_pre_phase_schema():
     assert T.read_total_tokens(tracker.summary()) == 100
 
 
+def test_the_responses_api_usage_shape_is_understood():
+    """Chat Completions says prompt/completion; the Responses API says
+    input/output for the same two numbers. Both carry total_tokens, so a
+    Responses-only baseline reported the right total with a 0/0 split — and
+    its per-query cost, which sums prompt+completion, came out ZERO. zep did
+    exactly that: 3,059,840 build tokens, cost_build_per_query 0.0, first
+    place on the efficiency axis with the most expensive method."""
+    from common.tokens import TokenTracker
+
+    class _Details:
+        reasoning_tokens = 5
+
+    class _ResponsesUsage:
+        input_tokens = 100
+        output_tokens = 20
+        total_tokens = 120
+        output_tokens_details = _Details()
+
+    tracker = TokenTracker()
+    tracker.update("gpt-4.1-mini", _ResponsesUsage())
+    entry = tracker.summary()["by_model"]["gpt-4.1-mini"]
+    assert entry["prompt_tokens"] == 100, "input_tokens must count as prompt"
+    assert entry["completion_tokens"] == 20, "output_tokens must count as completion"
+    assert entry["total_tokens"] == 120
+    assert entry["reasoning_tokens"] == 5, "reasoning nests under output_tokens_details"
+
+
+def test_the_chat_completions_usage_shape_still_wins():
+    """The older spelling must not be disturbed by the fallback."""
+    from common.tokens import TokenTracker
+
+    class _ChatUsage:
+        prompt_tokens = 7
+        completion_tokens = 3
+        total_tokens = 10
+
+    tracker = TokenTracker()
+    tracker.update("gpt-4.1-mini", _ChatUsage())
+    entry = tracker.summary()["by_model"]["gpt-4.1-mini"]
+    assert (entry["prompt_tokens"], entry["completion_tokens"]) == (7, 3)
+
+
 def test_a_call_with_no_usage_block_still_counts_as_a_call():
     tracker = _fresh_tracker()
     with T.phase(T.ANSWER):
