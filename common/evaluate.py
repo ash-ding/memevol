@@ -376,27 +376,41 @@ def _per_user_stddev(score: Dict[str, Any]) -> Optional[float]:
     return (sum((r - mean) ** 2 for r in rewards) / len(rewards)) ** 0.5
 
 
-def _warn_on_cost_attribution_gap(cost: Dict[str, Any]) -> None:
+def _warn_on_cost_attribution_gap(cost: Dict[str, Any],
+                                  stage_usage: Dict[str, Any]) -> None:
     """Shout when the two token counters disagree about the same work.
 
     `tokens_*` comes from the global tracker; `cost_*_per_query` comes from
     each user's own tally, stamped on their recorder. They measure the same
     calls from two directions, so the memory system cannot have burned build
-    tokens while every user reports a build cost of zero.
+    tokens on an LLM while every user reports a build cost of zero.
 
     That exact disagreement shipped: zep recorded 3,059,840 build tokens and
     `cost_build_per_query: 0.0`, which put the most expensive baseline at the
     TOP of the efficiency axis. Nothing failed and no field was missing — the
     number was just wrong in the flattering direction, which is the one shape
     of bug a metric must never keep quiet about.
+
+    EMBEDDINGS ARE EXCLUDED on purpose, on both sides of the comparison: the
+    per-user tally never counts them (`common.tokens.CallTally`), so a phase
+    whose only tokens are embeddings — every vector-search retrieval, which is
+    most of them — is not a gap. Comparing raw `tokens_retrieve` here made the
+    warning fire on mem0, LightMem and zep alike for 41 embedding tokens.
     """
+    from common.tokens import is_embedding_model
+
+    by_model_phase = (stage_usage or {}).get("by_model_phase") or {}
     for phase in ("build", "retrieve"):
-        measured = int(cost.get(f"tokens_{phase}", 0) or 0)
+        measured = sum(
+            int((phases.get(phase) or {}).get("total_tokens", 0) or 0)
+            for model, phases in by_model_phase.items()
+            if not is_embedding_model(model)
+        )
         attributed = float(cost.get(f"cost_{phase}_per_query", 0.0) or 0.0)
         if measured > 0 and attributed == 0.0 and int(cost.get("cost_n_users", 0) or 0) > 0:
             log.warning(
-                f"[cost] {phase} tokens were measured ({measured}) but attributed to "
-                f"no user (cost_{phase}_per_query=0 over {cost.get('cost_n_users')} "
+                f"[cost] {phase} LLM tokens were measured ({measured}) but attributed "
+                f"to no user (cost_{phase}_per_query=0 over {cost.get('cost_n_users')} "
                 f"user(s)). The efficiency metric for this run understates the "
                 f"memory system's cost — treat cost_tokens_per_query as invalid."
             )
@@ -766,7 +780,7 @@ async def evaluate_memo(
                 # is absent from _CUMULATIVE_COST_FIELDS: `m` keeps the
                 # reached stage's value and stages.json keeps every stage's.
                 **_cost_per_query_metrics(stage_records)}
-        _warn_on_cost_attribution_gap(cost)
+        _warn_on_cost_attribution_gap(cost, stage_usage)
         m: Dict[str, Any] = {
             "raw_score": raw_score,
             "score_max": workflow.judge_score_max,

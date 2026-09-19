@@ -672,10 +672,10 @@ def _main():
 
 
 def test_a_cost_attribution_gap_is_reported():
-    """The two counters measure the same calls from two directions, so build
-    tokens with no per-user build cost is a contradiction. It shipped once:
-    zep recorded 3,059,840 build tokens against cost_build_per_query 0.0,
-    which put the most expensive baseline first on the efficiency axis."""
+    """The two counters measure the same LLM calls from two directions, so
+    build tokens with no per-user build cost is a contradiction. It shipped
+    once: zep recorded 3,059,840 build tokens against cost_build_per_query
+    0.0, which put the most expensive baseline first on the efficiency axis."""
     import logging
     from common import evaluate as E
 
@@ -687,29 +687,28 @@ def test_a_cost_attribution_gap_is_reported():
 
     handler = _Handler()
     E.log.addHandler(handler)
+    chat = {"by_model_phase": {"gpt-4.1-mini": {"build": {"total_tokens": 3059840}}}}
     try:
-        E._warn_on_cost_attribution_gap({
-            "tokens_build": 3059840, "cost_build_per_query": 0.0,
-            "tokens_retrieve": 0, "cost_retrieve_per_query": 0.0,
-            "cost_n_users": 1,
-        })
-        assert any("build tokens were measured" in m for m in records), records
+        E._warn_on_cost_attribution_gap(
+            {"cost_build_per_query": 0.0, "cost_retrieve_per_query": 0.0,
+             "cost_n_users": 1}, chat)
+        assert any("build LLM tokens were measured" in m for m in records), records
 
         records.clear()
-        E._warn_on_cost_attribution_gap({
-            "tokens_build": 3059840, "cost_build_per_query": 1529920.0,
-            "tokens_retrieve": 0, "cost_retrieve_per_query": 0.0,
-            "cost_n_users": 1,
-        })
+        E._warn_on_cost_attribution_gap(
+            {"cost_build_per_query": 1529920.0, "cost_retrieve_per_query": 0.0,
+             "cost_n_users": 1}, chat)
         assert not records, f"attributed cost must not warn: {records}"
 
-        # A run where nothing was measured is not a gap either.
-        E._warn_on_cost_attribution_gap({
-            "tokens_build": 0, "cost_build_per_query": 0.0,
-            "tokens_retrieve": 0, "cost_retrieve_per_query": 0.0,
-            "cost_n_users": 1,
-        })
-        assert not records, f"a zero-cost run must not warn: {records}"
+        # Embeddings never enter the per-user tally (CallTally excludes them),
+        # so a vector-search retrieval — mem0, LightMem, zep — is not a gap.
+        # Comparing raw tokens_retrieve made this warn on 41 embedding tokens.
+        E._warn_on_cost_attribution_gap(
+            {"cost_build_per_query": 1.0, "cost_retrieve_per_query": 0.0,
+             "cost_n_users": 1},
+            {"by_model_phase": {"text-embedding-3-small":
+                                {"retrieve": {"total_tokens": 41}}}})
+        assert not records, f"embedding-only retrieval must not warn: {records}"
     finally:
         E.log.removeHandler(handler)
 

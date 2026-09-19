@@ -72,6 +72,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from common.logger import get_logger
+from forge.codetree import _copy_harness_code
 from forge.paths import PROJECT_ROOT, SEEDS_DIR
 
 log = get_logger("main")
@@ -176,9 +177,8 @@ def lookup(harness_id: str, key: str) -> Optional[Path]:
 
 
 def _copy_code(harness_dir: Path, dst: Path) -> None:
-    """Code in, results out — see `forge.orchestrator._copy_harness_code`,
-    which owns the rule (a harness can be one file or a whole package tree)."""
-    from forge.orchestrator import _copy_harness_code
+    """Code in, results out — see `forge.codetree._copy_harness_code`, which
+    owns the rule (a harness can be one file or a whole package tree)."""
     _copy_harness_code(harness_dir, dst)
 
 
