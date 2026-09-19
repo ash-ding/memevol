@@ -167,7 +167,7 @@ proposer:
   claude_code:
     # Anthropic model id. opus-4-7 is the strongest available; sonnet variants
     # are cheaper but produce simpler harnesses.
-    model: claude-opus-4-7
+    model: claude-opus-4-8
 
     # Reasoning effort: low / medium / high / xhigh / max. Higher = deeper
     # reasoning + slower + costlier. "medium" is the CC default.

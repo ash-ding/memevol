@@ -210,7 +210,15 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         # own model + agent-specific knobs. Fields set to null (None) fall back
         # to the agent's CLI default (no flag passed).
         "claude_code": {
-            "model": "claude-opus-4-7",
+            # A dateless Claude id from the 4.6 generation on IS a pinned
+            # snapshot, not a floating alias — `claude-opus-4-8` names one
+            # model and keeps naming it. (An alias like "opus" would drift:
+            # the CLI resolves it to whatever is current.)
+            # THE default. Three copies mirror it and must move together:
+            #   forge/proposer.py::propose / propose_with_fix (signature defaults)
+            #   forge/propose_in_container.py (argparse fallback; that script
+            #     runs inside the container and cannot import from forge)
+            "model": "claude-opus-4-8",
             # low / medium / high / xhigh / max  (CC --effort)
             "effort": "medium",
             # Tools the agent CLI is told not to consider. Defense-in-depth

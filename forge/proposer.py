@@ -719,7 +719,8 @@ def _render_and_stage_prompts(
 async def propose(
     new_id: str,
     *,
-    model: str = "claude-opus-4-7",
+    # Mirrors forge/orchestrator.py::DEFAULT_CONFIG; keep in step.
+    model: str = "claude-opus-4-8",
     max_turns: int = 80,
     timeout_s: int = 25 * 60,
     sanity_enabled: bool = True,
@@ -814,7 +815,8 @@ async def propose_with_fix(
     new_id: str,
     error_trace: str,
     *,
-    model: str = "claude-opus-4-7",
+    # Mirrors forge/orchestrator.py::DEFAULT_CONFIG; keep in step.
+    model: str = "claude-opus-4-8",
     max_turns: int = 80,
     timeout_s: int = 25 * 60,
     sanity_enabled: bool = True,

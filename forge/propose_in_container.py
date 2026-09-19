@@ -438,7 +438,11 @@ def main() -> None:
     p.add_argument("--agent", default="claude_code",
                    choices=list(_AGENT_DISPATCH.keys()),
                    help="Coding agent backend to drive (default claude_code).")
-    p.add_argument("--model", default="claude-opus-4-7")
+    # Mirrors forge/orchestrator.py::DEFAULT_CONFIG. This script runs inside the
+    # container and imports nothing from forge, so the value is repeated
+    # rather than shared. The orchestrator always passes --model explicitly;
+    # this default only covers running the script by hand.
+    p.add_argument("--model", default="claude-opus-4-8")
     p.add_argument("--max-turns", type=int, default=80,
                    help="Soft turn budget. NOT enforced — wall-clock --timeout-s "
                         "is the hard limit. Kept for backward compat with old "
