@@ -171,7 +171,7 @@ proposer:
 
     # Reasoning effort: low / medium / high / xhigh / max. Higher = deeper
     # reasoning + slower + costlier. "medium" is the CC default.
-    effort: medium
+    effort: xhigh
 
     # Tools blocked inside CC. Filesystem isolation is enforced by the
     # Singularity bind list, so this is only about CC's *behavioral* surface.

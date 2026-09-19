@@ -59,7 +59,7 @@ def _forge_min_cfg(agent="claude_code"):
         "proposer": {
             "max_turns": 80, "timeout_s": 1500,
             "claude_code": {
-                "model": "claude-opus-4-8", "effort": "medium",
+                "model": "claude-opus-4-8", "effort": "xhigh",
                 "disallowed_tools": ["mcp__*"], "auth": "subscription",
                 "vertex": {"project_id": "p", "region": "r", "credentials": None},
             },

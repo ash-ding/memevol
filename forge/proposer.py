@@ -146,6 +146,63 @@ def _resolve_anthropic_api_key() -> str:
     return dotenv_values(str(PROJECT_ROOT / ".env")).get("ANTHROPIC_API_KEY", "") or ""
 
 
+def _resolve_vertex_project(vertex_cfg: Optional[Dict[str, Any]] = None) -> str:
+    """The GCP project for claude_auth=vertex.
+
+    Precedence mirrors _resolve_gcp_credentials: explicit `vertex.project_id`
+    → $ANTHROPIC_VERTEX_PROJECT_ID → the project named inside the resolved
+    credentials json (`project_id` on a service-account key,
+    `quota_project_id` on an ADC file).
+
+    Inferring beats hardcoding because the right project is a property of the
+    machine's credentials: a service account issued for one project cannot
+    mint tokens for another, so a stale constant fails at propose time with a
+    permission error that says nothing about the real cause.
+    """
+    explicit = (vertex_cfg or {}).get("project_id")
+    if explicit:
+        return str(explicit)
+    env_project = os.environ.get("ANTHROPIC_VERTEX_PROJECT_ID", "").strip()
+    if env_project:
+        return env_project
+    creds = _resolve_gcp_credentials(vertex_cfg)
+    try:
+        with creds.open(encoding="utf-8") as fh:
+            blob = json.load(fh)
+    except (OSError, ValueError) as exc:
+        raise ProposerLaunchError(
+            f"claude_auth=vertex: could not read {creds} to infer the GCP "
+            f"project ({type(exc).__name__}: {exc}). Set "
+            f"cfg.proposer.claude_code.vertex.project_id explicitly."
+        ) from exc
+    inferred = blob.get("project_id") or blob.get("quota_project_id")
+    if not inferred:
+        raise ProposerLaunchError(
+            f"claude_auth=vertex: {creds} names no project (no `project_id` "
+            f"or `quota_project_id`). Set ANTHROPIC_VERTEX_PROJECT_ID, or "
+            f"cfg.proposer.claude_code.vertex.project_id."
+        )
+    return str(inferred)
+
+
+def _resolve_vertex_region(vertex_cfg: Optional[Dict[str, Any]] = None) -> str:
+    """Region for claude_auth=vertex: explicit config → $CLOUD_ML_REGION.
+
+    A region is a deployment choice, not a property of the credentials, so
+    there is nothing to infer from them — an unset one is an error.
+    """
+    explicit = (vertex_cfg or {}).get("region")
+    if explicit:
+        return str(explicit)
+    env_region = os.environ.get("CLOUD_ML_REGION", "").strip()
+    if env_region:
+        return env_region
+    raise ProposerLaunchError(
+        "claude_auth=vertex: no region. Set "
+        "cfg.proposer.claude_code.vertex.region, or CLOUD_ML_REGION."
+    )
+
+
 def _resolve_gcp_credentials(vertex_cfg: Optional[Dict[str, Any]] = None) -> Path:
     """Locate the GCP credentials json for claude_auth=vertex.
 
@@ -398,8 +455,8 @@ def _agent_auth_extra_env(
         # _build_singularity_cmd; here we only point CC at the container path.
         return {
             "SINGULARITYENV_CLAUDE_CODE_USE_VERTEX": "1",
-            "SINGULARITYENV_ANTHROPIC_VERTEX_PROJECT_ID": str(vc.get("project_id", "")),
-            "SINGULARITYENV_CLOUD_ML_REGION": str(vc.get("region", "")),
+            "SINGULARITYENV_ANTHROPIC_VERTEX_PROJECT_ID": _resolve_vertex_project(vc),
+            "SINGULARITYENV_CLOUD_ML_REGION": _resolve_vertex_region(vc),
             "SINGULARITYENV_GOOGLE_APPLICATION_CREDENTIALS": _VERTEX_CREDS_IN_CONTAINER,
         }
 

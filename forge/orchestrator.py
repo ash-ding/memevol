@@ -220,7 +220,16 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             #     runs inside the container and cannot import from forge)
             "model": "claude-opus-4-8",
             # low / medium / high / xhigh / max  (CC --effort)
-            "effort": "medium",
+            # Anthropic's guidance for Opus 4.7/4.8: "Start with xhigh for
+            # coding and agentic use cases", high for other
+            # intelligence-sensitive work, and step down to medium or low only
+            # once evals show the lower level holds. The API default is high.
+            # Proposing a harness is exploratory agentic coding — read the
+            # history, diagnose a failure, write a new system — and 4.7/4.8
+            # honour effort more strictly than 4.6 did: at medium the model
+            # scopes work to what was asked instead of exploring. That is the
+            # opposite of what a proposer is for.
+            "effort": "xhigh",
             # Tools the agent CLI is told not to consider. Defense-in-depth
             # only — actual filesystem isolation is the Singularity bind list.
             # Default ["mcp__*"] keeps CC from listing host MCP servers (which
@@ -236,7 +245,14 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             # model enabled in that GCP project (e.g. claude-opus-4-6;
             # @YYYYMMDD pins are supported by Vertex).
             "vertex": {
-                "project_id": "itpc-gcp-ai-eng-claude",
+                # None → inferred at launch: ANTHROPIC_VERTEX_PROJECT_ID, then
+                # the project_id/quota_project_id of the resolved credentials
+                # json. A hardcoded project is wrong on any machine whose
+                # service account belongs to another one, and that failure
+                # only shows up at propose time.
+                "project_id": None,
+                # None → CLOUD_ML_REGION. Unlike the project, a region cannot
+                # be derived from credentials, so this keeps a default.
                 "region": "us-east5",
                 # Explicit path to a GCP credentials json (service-account or
                 # ADC). None → auto-detect: $GOOGLE_APPLICATION_CREDENTIALS,
