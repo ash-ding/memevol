@@ -110,12 +110,26 @@ def _wrap_async(method):
     return wrapper
 
 
+#: Every entrypoint that issues a billable request. `create` is the obvious
+#: one; `parse` is the structured-output variant, and it is NOT a wrapper
+#: around `create` — it posts on its own, so hooking `create` alone misses it
+#: entirely. zep measured the cost of that gap: graphiti calls
+#: `client.responses.parse` for every entity and edge extraction, so a build
+#: that made thousands of LLM calls recorded 2223 embeddings and zero chat
+#: tokens, and the baseline came out looking 20x CHEAPER than the rest —
+#: silently, since the install line still said it was tracking Responses.
+_TRACKED_METHODS = ("create", "parse")
+
+
 def _patch(cls, is_async: bool) -> bool:
-    method = getattr(cls, "create", None)
-    if method is None or getattr(method, "__wrapped_by_memevol__", False):
-        return False
-    cls.create = _wrap_async(method) if is_async else _wrap_sync(method)
-    return True
+    patched_any = False
+    for name in _TRACKED_METHODS:
+        method = getattr(cls, name, None)
+        if method is None or getattr(method, "__wrapped_by_memevol__", False):
+            continue
+        setattr(cls, name, _wrap_async(method) if is_async else _wrap_sync(method))
+        patched_any = True
+    return patched_any
 
 
 def install() -> bool:
@@ -147,6 +161,10 @@ def install() -> bool:
         ("openai.resources.embeddings", "AsyncEmbeddings", True),
         ("openai.resources.responses", "Responses", False),
         ("openai.resources.responses", "AsyncResponses", True),
+        # The beta namespace is where structured outputs lived before they
+        # graduated; graphiti's Azure path still calls it.
+        ("openai.resources.beta.chat.completions", "Completions", False),
+        ("openai.resources.beta.chat.completions", "AsyncCompletions", True),
     )
     for module_path, cls_name, is_async in targets:
         try:
