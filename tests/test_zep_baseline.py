@@ -196,7 +196,9 @@ def test_ensure_passes_embedding_width_concurrency_and_models_explicitly():
     seen = {}
 
     class _FakeDB:
-        def __init__(self, dbfilename): seen["db"] = dbfilename
+        def __init__(self, dbfilename, **kw):
+            seen["db"] = dbfilename
+            seen["db_kwargs"] = kw
 
     class _FakeEmbedder:
         def __init__(self, config): seen["embedder_config"] = config
@@ -226,6 +228,13 @@ def test_ensure_passes_embedding_width_concurrency_and_models_explicitly():
         assert g["llm_client"].config.model == "gpt-5-mini"
         assert g["llm_client"].config.small_model == "gpt-5-mini"
         assert g["cross_encoder"] == "reranker"
+        # redis-py 8.1.0 defaults socket_timeout to 5 s (older versions blocked
+        # until the server answered). Five seconds is a key-value timeout, not
+        # a graph-traversal one: on a 419-episode LoCoMo conversation zep lost
+        # 3 of 5 queries to "Timeout reading from .../redis.socket", each
+        # scored 0 — which is why one run came out 0.800 and the next 0.200.
+        assert seen["db_kwargs"]["socket_timeout"] == zm.FALKORDB_SOCKET_TIMEOUT_SECONDS
+        assert zm.FALKORDB_SOCKET_TIMEOUT_SECONDS >= 60
     finally:
         for obj, name, value in saved:
             setattr(obj, name, value)
