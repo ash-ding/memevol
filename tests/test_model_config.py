@@ -519,10 +519,10 @@ def _baseline_dirs():
 #: Baselines that call no model at all, so there is nothing for `arm: unified`
 #: to switch and no llm/embedding role to declare. Named explicitly rather than
 #: inferred from "declares no model keys": a baseline that simply FORGOT its
-#: roles must keep failing the two tests below, and `full_context` showed that
+#: roles must keep failing the two tests below, and `icl` showed that
 #: "no models" no longer implies "no config" — it carries a real method knob
 #: (`max_tokens`) while still calling nothing.
-MODEL_FREE_BASELINES = {"no_memory", "full_context"}
+MODEL_FREE_BASELINES = {"no_memory", "icl"}
 
 
 def test_registry_names_every_baseline_dir_and_nothing_else():

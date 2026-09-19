@@ -1,4 +1,0 @@
-{
-  "parent_ids": [],
-  "description": "Seed: full-context baseline. Phase 1 renders every visible unit to text and keeps it; Phase 2 returns as much as the token budget allows, newest-first in chronological order. No selection, no compression, no model calls. The cost-axis ceiling that brackets the frontier with no_memory."
-}
