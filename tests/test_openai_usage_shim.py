@@ -109,6 +109,42 @@ def test_embedding_calls_are_captured_too():
     assert entry["calls"] == 1 and entry["prompt_tokens"] == 17
 
 
+def test_a_structured_output_call_is_captured():
+    """`parse` is not a wrapper around `create` — it posts on its own — so
+    hooking `create` alone misses it entirely. zep measured the cost of that
+    gap: graphiti calls `responses.parse` for every entity and edge
+    extraction, so a build with thousands of LLM calls recorded 2223
+    embeddings and ZERO chat tokens, and the baseline came out looking 20x
+    cheaper than the rest."""
+    setup_module()
+    tracker = _fresh_tracker()
+    with T.phase(T.BUILD):
+        _client(CHAT_BODY).chat.completions.parse(
+            model="gpt-4o-mini", messages=[{"role": "user", "content": "hi"}])
+
+    usage = tracker.summary()
+    assert usage["by_phase"]["build"]["calls"] == 1, \
+        "a structured-output call must be counted once"
+    assert usage["by_phase"]["build"]["total_tokens"] == 128
+
+
+def test_a_structured_output_call_is_not_counted_twice():
+    """Both `create` and `parse` are wrapped. If `parse` ever starts routing
+    through `create`, this catches the double count before it silently
+    inflates every efficiency number."""
+    setup_module()
+    tracker = _fresh_tracker()
+    client = _client(CHAT_BODY)
+    with T.phase(T.BUILD):
+        client.chat.completions.parse(
+            model="gpt-4o-mini", messages=[{"role": "user", "content": "hi"}])
+        client.chat.completions.create(
+            model="gpt-4o-mini", messages=[{"role": "user", "content": "hi"}])
+
+    calls = tracker.summary()["by_phase"]["build"]["calls"]
+    assert calls == 2, f"expected 2 calls, got {calls}"
+
+
 def test_our_own_client_is_not_double_counted():
     """common.llm reports its own usage. If the shim also counted it, every
     QA and judge call would be doubled."""

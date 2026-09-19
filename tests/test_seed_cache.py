@@ -159,6 +159,8 @@ def test_every_input_that_can_change_a_number_changes_the_key():
     assert changed(random_sample=True) != key
     assert changed(sizing={"n_conversations": 4, "n_qa": 20}) != key, \
         "per-query cost is amortized over the sampled queries — sizing matters"
+    assert changed(gpu={"enabled": True}) != key, \
+        "zep's reranker and LightMem's compressor are not bit-identical across devices"
     # ... and the evaluation code itself.
     assert SC.eval_key({**base, "repo_version": "deadbeef"}) != key
 

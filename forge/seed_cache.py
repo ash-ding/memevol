@@ -26,6 +26,21 @@ of everything that can change a number:
                                 score
   * progressive                 stage sizes differ from the single pass
   * random_sample, sampling_seed  which subset each step drew
+  * gpu                         whether local models ran on a GPU. Only two
+                                baselines have any — zep's bge reranker,
+                                LightMem's LLMLingua-2 compressor — but a
+                                cross-encoder's scores are not guaranteed
+                                bit-identical across devices, and a different
+                                rerank order is a different retrieval, so a
+                                different answer. Included UNCONDITIONALLY
+                                even though most harnesses are unaffected:
+                                whether a harness touches a local model is
+                                only known AFTER it runs, and the key has to
+                                be computable before. The cost is re-running
+                                harnesses that would not have changed; the
+                                alternative is serving CPU numbers for a GPU
+                                run, silently, for the two baselines where it
+                                matters most
   * the repo's git commit       the evaluation code itself — judging, prompts,
                                 token accounting. Cheap to include and the
                                 only honest way to avoid serving numbers that
@@ -138,6 +153,7 @@ def eval_inputs(cfg: Dict[str, Any], dataset: str) -> Dict[str, Any]:
         "judge_model": ds_cfg.get("judge_model") or cfg.get("judge_model"),
         "random_sample": bool(cfg.get("random_sample", False)),
         "sampling_seed": cfg.get("sampling_seed") if cfg.get("random_sample") else None,
+        "gpu": bool((cfg.get("gpu") or {}).get("enabled", False)),
         "repo_version": repo_version(),
     }
 
