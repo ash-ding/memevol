@@ -376,6 +376,32 @@ def _per_user_stddev(score: Dict[str, Any]) -> Optional[float]:
     return (sum((r - mean) ** 2 for r in rewards) / len(rewards)) ** 0.5
 
 
+def _warn_on_cost_attribution_gap(cost: Dict[str, Any]) -> None:
+    """Shout when the two token counters disagree about the same work.
+
+    `tokens_*` comes from the global tracker; `cost_*_per_query` comes from
+    each user's own tally, stamped on their recorder. They measure the same
+    calls from two directions, so the memory system cannot have burned build
+    tokens while every user reports a build cost of zero.
+
+    That exact disagreement shipped: zep recorded 3,059,840 build tokens and
+    `cost_build_per_query: 0.0`, which put the most expensive baseline at the
+    TOP of the efficiency axis. Nothing failed and no field was missing — the
+    number was just wrong in the flattering direction, which is the one shape
+    of bug a metric must never keep quiet about.
+    """
+    for phase in ("build", "retrieve"):
+        measured = int(cost.get(f"tokens_{phase}", 0) or 0)
+        attributed = float(cost.get(f"cost_{phase}_per_query", 0.0) or 0.0)
+        if measured > 0 and attributed == 0.0 and int(cost.get("cost_n_users", 0) or 0) > 0:
+            log.warning(
+                f"[cost] {phase} tokens were measured ({measured}) but attributed to "
+                f"no user (cost_{phase}_per_query=0 over {cost.get('cost_n_users')} "
+                f"user(s)). The efficiency metric for this run understates the "
+                f"memory system's cost — treat cost_tokens_per_query as invalid."
+            )
+
+
 def _stage_cost_metrics(stage_usage: Dict[str, Any]) -> Dict[str, Any]:
     """Cost block for one stage's metrics dict, from that stage's usage delta.
 
@@ -740,6 +766,7 @@ async def evaluate_memo(
                 # is absent from _CUMULATIVE_COST_FIELDS: `m` keeps the
                 # reached stage's value and stages.json keeps every stage's.
                 **_cost_per_query_metrics(stage_records)}
+        _warn_on_cost_attribution_gap(cost)
         m: Dict[str, Any] = {
             "raw_score": raw_score,
             "score_max": workflow.judge_score_max,
