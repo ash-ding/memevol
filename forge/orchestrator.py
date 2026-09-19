@@ -203,16 +203,42 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
     "proposer": {
         # Generic propose-time controls (shared by both agents).
+        # SOFT budget: not plumbed to either agent CLI, so nothing enforces
+        # it. Kept because the prompt quotes it and for backward compat.
         "max_turns": 80,
-        "timeout_s": 25 * 60,
+        # THE hard limit — wall clock, enforced by SIGTERM/SIGKILL on the
+        # singularity exec process group. Raised from 25min when effort moved
+        # to xhigh, which Anthropic defines as "long-running agentic and
+        # coding tasks (over 30 minutes)": a 25-minute cap sat under the floor
+        # of the setting's own definition, and with max_turns inert this is
+        # the only thing that stops a run — a proposer killed mid-write leaves
+        # a half-written harness, not a shorter one.
+        "timeout_s": 45 * 60,
         # Per-agent subsections. Only the subsection matching cfg["agent"] is
         # consumed at propose-time; the other is ignored. Each agent has its
         # own model + agent-specific knobs. Fields set to null (None) fall back
         # to the agent's CLI default (no flag passed).
         "claude_code": {
-            "model": "claude-opus-4-7",
+            # A dateless Claude id from the 4.6 generation on IS a pinned
+            # snapshot, not a floating alias — `claude-opus-4-8` names one
+            # model and keeps naming it. (An alias like "opus" would drift:
+            # the CLI resolves it to whatever is current.)
+            # THE default. Three copies mirror it and must move together:
+            #   forge/proposer.py::propose / propose_with_fix (signature defaults)
+            #   forge/propose_in_container.py (argparse fallback; that script
+            #     runs inside the container and cannot import from forge)
+            "model": "claude-opus-4-8",
             # low / medium / high / xhigh / max  (CC --effort)
-            "effort": "medium",
+            # Anthropic's guidance for Opus 4.7/4.8: "Start with xhigh for
+            # coding and agentic use cases", high for other
+            # intelligence-sensitive work, and step down to medium or low only
+            # once evals show the lower level holds. The API default is high.
+            # Proposing a harness is exploratory agentic coding — read the
+            # history, diagnose a failure, write a new system — and 4.7/4.8
+            # honour effort more strictly than 4.6 did: at medium the model
+            # scopes work to what was asked instead of exploring. That is the
+            # opposite of what a proposer is for.
+            "effort": "xhigh",
             # Tools the agent CLI is told not to consider. Defense-in-depth
             # only — actual filesystem isolation is the Singularity bind list.
             # Default ["mcp__*"] keeps CC from listing host MCP servers (which
@@ -228,7 +254,14 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             # model enabled in that GCP project (e.g. claude-opus-4-6;
             # @YYYYMMDD pins are supported by Vertex).
             "vertex": {
-                "project_id": "itpc-gcp-ai-eng-claude",
+                # None → inferred at launch: ANTHROPIC_VERTEX_PROJECT_ID, then
+                # the project_id/quota_project_id of the resolved credentials
+                # json. A hardcoded project is wrong on any machine whose
+                # service account belongs to another one, and that failure
+                # only shows up at propose time.
+                "project_id": None,
+                # None → CLOUD_ML_REGION. Unlike the project, a region cannot
+                # be derived from credentials, so this keeps a default.
                 "region": "us-east5",
                 # Explicit path to a GCP credentials json (service-account or
                 # ADC). None → auto-detect: $GOOGLE_APPLICATION_CREDENTIALS,

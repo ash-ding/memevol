@@ -160,18 +160,20 @@ proposer:
 
   # Wall-clock cap for ONE propose() call (in seconds). If hit, the orchestrator
   # logs TimeoutError and aborts (fail-fast). 1500s (25 min) ≈ 80 turns ×
-  # ~20s/turn — sized to the max_turns budget.
-  timeout_s: 1500
+  # The hard limit (max_turns is NOT enforced — nothing plumbs it to the
+  # agent CLI). 45min matches effort: xhigh, which Anthropic scopes to
+  # "long-running agentic and coding tasks (over 30 minutes)".
+  timeout_s: 2700
 
   # ----- claude_code agent-specific config -----
   claude_code:
     # Anthropic model id. opus-4-7 is the strongest available; sonnet variants
     # are cheaper but produce simpler harnesses.
-    model: claude-opus-4-7
+    model: claude-opus-4-8
 
     # Reasoning effort: low / medium / high / xhigh / max. Higher = deeper
     # reasoning + slower + costlier. "medium" is the CC default.
-    effort: medium
+    effort: xhigh
 
     # Tools blocked inside CC. Filesystem isolation is enforced by the
     # Singularity bind list, so this is only about CC's *behavioral* surface.
