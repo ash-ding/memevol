@@ -682,10 +682,19 @@ def _resolve_config(args: argparse.Namespace, *,
         )
     if cc_auth == "vertex":
         vc = cc_cfg.get("vertex") or {}
-        if not vc.get("project_id") or not vc.get("region"):
+        # region only. project_id is resolved at launch by
+        # forge.proposer._resolve_vertex_project — explicit config, then
+        # $ANTHROPIC_VERTEX_PROJECT_ID, then the project named inside the
+        # credentials json. Demanding it here would defeat that: the whole
+        # point is that one config works on machines whose service accounts
+        # belong to different projects. A region cannot be derived from
+        # credentials, so it stays required.
+        if not vc.get("region"):
             raise ValueError(
                 "proposer.claude_code.auth=vertex requires proposer."
-                "claude_code.vertex.{project_id, region} to be set."
+                "claude_code.vertex.region to be set (project_id may be null "
+                "— it is inferred from $ANTHROPIC_VERTEX_PROJECT_ID or the "
+                "credentials json)."
             )
 
     # Mandatory-complete config gate (2026-07-26): only when --config was

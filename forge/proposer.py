@@ -272,13 +272,14 @@ def _check_environment(
                 )
         elif claude_auth == "vertex":
             vc = vertex_cfg or {}
-            if not vc.get("project_id") or not vc.get("region"):
-                raise ProposerLaunchError(
-                    "claude_auth=vertex requires cfg.proposer.claude_code.vertex."
-                    "{project_id, region} to be set (e.g. project_id: "
-                    "itpc-gcp-ai-eng-claude, region: us-east5)."
-                )
-            _resolve_gcp_credentials(vc)  # raises with instructions if absent
+            # Preflight through the SAME resolvers the launch path uses rather
+            # than a second, weaker copy of the rule. project_id may be null —
+            # it is inferred — and a copy that demands one turns the inference
+            # into a lie. Both resolvers raise with the fix in the message, and
+            # _resolve_vertex_project resolves the credentials json on its way
+            # to the project, so an absent one is still reported here.
+            _resolve_vertex_region(vc)
+            _resolve_vertex_project(vc)
     elif agent == "codex":
         if not _HOST_CODEX_BIN.exists():
             raise ProposerLaunchError(
