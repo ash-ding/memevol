@@ -516,6 +516,15 @@ def _baseline_dirs():
     return sorted(HARNESS_DIR / name for name in MEMOS)
 
 
+#: Baselines that call no model at all, so there is nothing for `arm: unified`
+#: to switch and no llm/embedding role to declare. Named explicitly rather than
+#: inferred from "declares no model keys": a baseline that simply FORGOT its
+#: roles must keep failing the two tests below, and `full_context` showed that
+#: "no models" no longer implies "no config" — it carries a real method knob
+#: (`max_tokens`) while still calling nothing.
+MODEL_FREE_BASELINES = {"no_memory", "full_context"}
+
+
 def test_registry_names_every_baseline_dir_and_nothing_else():
     from baselines.harness.eval_harness import MEMOS
     on_disk = {d.name for d in HARNESS_DIR.iterdir() if (d / "memo.py").exists()}
@@ -562,8 +571,9 @@ def test_unified_model_keys_are_declared_defaults_with_known_roles():
     for d in _baseline_dirs():
         defaults, model_keys = _module_data(d / "memo.py")
         assert set(model_keys) <= MODEL_ROLES, f"{d.name}: {sorted(model_keys)}"
-        if not defaults and not model_keys:
-            continue        # no_memory: calls no model, so there is none to unify
+        if d.name in MODEL_FREE_BASELINES:
+            assert not model_keys, f"{d.name}: model-free, so it must map no roles"
+            continue
         assert {"llm", "embedding"} <= set(model_keys), f"{d.name}: must map both models"
         keys = {k for ks in model_keys.values() for k in ks}
         assert keys <= set(defaults), f"{d.name}: undeclared {sorted(keys - set(defaults))}"
@@ -575,8 +585,8 @@ def test_unified_arm_is_one_llm_and_one_embedder_and_nothing_else():
     from baselines.harness.eval_harness import resolve_memo_config
     for d in _baseline_dirs():
         defaults, model_keys = _module_data(d / "memo.py")
-        if not defaults and not model_keys:
-            continue        # no_memory: no models, so no arm difference to check
+        if d.name in MODEL_FREE_BASELINES:
+            continue        # calls no model, so there is no arm difference to check
         faithful = resolve_memo_config(defaults, model_keys, arm="faithful")
         unified = resolve_memo_config(defaults, model_keys, arm="unified", unified_models=EXAMPLE_UNIFIED)
         for key in model_keys["llm"]:
