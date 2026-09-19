@@ -83,7 +83,7 @@ from forge.paths import (
     ensure_dirs,
     paths,
 )
-from forge.prompts import PromptVersionError, load_template_module, resolve_version
+from forge.prompts import PromptVersionError, load_prompt_parts, resolve_version
 from forge.proposer import propose, propose_with_fix
 from forge import seed_cache
 from forge.selection import Entry, Frontier
@@ -2573,7 +2573,7 @@ def main() -> None:
         resolved_prompts_version = resolve_version(cfg["prompts"]["version"])
         # Load now so missing file / missing exports surface at startup, not
         # halfway through the search loop. Result is cached in loader._MODULE_CACHE.
-        load_template_module(resolved_prompts_version)
+        load_prompt_parts(resolved_prompts_version)
     except PromptVersionError as exc:
         log.error(f"prompts: {exc}")
         sys.exit(2)
