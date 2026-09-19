@@ -120,6 +120,12 @@ def _build_cmd_cc(
         # makes the prompt visible to forensic diffs at <harness>/.prompt_system.txt.
         "--system-prompt-file", system_prompt_file,
         "--permission-mode", "bypassPermissions",
+        # `--disallowed-tools mcp__*` filters the TOOLS; this stops the CLI
+        # consulting any MCP config at all. Inert today — --containall gives
+        # the agent a scratch /root with no config to read — but it pins the
+        # intent so a future bind of a real home cannot quietly reintroduce
+        # host MCP servers.
+        "--strict-mcp-config",
     ]
     disallowed = agent_opts.get("disallowed_tools") or []
     if disallowed:
@@ -447,7 +453,10 @@ def main() -> None:
                    help="Soft turn budget. NOT enforced — wall-clock --timeout-s "
                         "is the hard limit. Kept for backward compat with old "
                         "callers; no longer plumbed to the agent CLI.")
-    p.add_argument("--timeout-s", type=int, default=25 * 60)
+    # Mirrors forge/orchestrator.py::DEFAULT_CONFIG. This script cannot
+    # import from forge, so the value is repeated; the orchestrator always
+    # passes --timeout-s explicitly and this only covers a hand-run.
+    p.add_argument("--timeout-s", type=int, default=45 * 60)
     p.add_argument("--agent-opts", default="{}",
                    help="JSON dict of agent-specific options. Recognized keys: "
                         "{claude_code: effort, disallowed_tools} {codex: reasoning_effort}. "

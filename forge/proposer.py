@@ -779,7 +779,8 @@ async def propose(
     # Mirrors forge/orchestrator.py::DEFAULT_CONFIG; keep in step.
     model: str = "claude-opus-4-8",
     max_turns: int = 80,
-    timeout_s: int = 25 * 60,
+    # Mirrors forge/orchestrator.py::DEFAULT_CONFIG; keep in step.
+    timeout_s: int = 45 * 60,
     sanity_enabled: bool = True,
     active_datasets: Optional[List[str]] = None,
     metrics: Optional[List[str]] = None,
@@ -875,7 +876,8 @@ async def propose_with_fix(
     # Mirrors forge/orchestrator.py::DEFAULT_CONFIG; keep in step.
     model: str = "claude-opus-4-8",
     max_turns: int = 80,
-    timeout_s: int = 25 * 60,
+    # Mirrors forge/orchestrator.py::DEFAULT_CONFIG; keep in step.
+    timeout_s: int = 45 * 60,
     sanity_enabled: bool = True,
     active_datasets: Optional[List[str]] = None,
     metrics: Optional[List[str]] = None,

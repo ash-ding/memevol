@@ -160,8 +160,10 @@ proposer:
 
   # Wall-clock cap for ONE propose() call (in seconds). If hit, the orchestrator
   # logs TimeoutError and aborts (fail-fast). 1500s (25 min) ≈ 80 turns ×
-  # ~20s/turn — sized to the max_turns budget.
-  timeout_s: 1500
+  # The hard limit (max_turns is NOT enforced — nothing plumbs it to the
+  # agent CLI). 45min matches effort: xhigh, which Anthropic scopes to
+  # "long-running agentic and coding tasks (over 30 minutes)".
+  timeout_s: 2700
 
   # ----- claude_code agent-specific config -----
   claude_code:

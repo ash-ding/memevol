@@ -203,8 +203,17 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
     "proposer": {
         # Generic propose-time controls (shared by both agents).
+        # SOFT budget: not plumbed to either agent CLI, so nothing enforces
+        # it. Kept because the prompt quotes it and for backward compat.
         "max_turns": 80,
-        "timeout_s": 25 * 60,
+        # THE hard limit — wall clock, enforced by SIGTERM/SIGKILL on the
+        # singularity exec process group. Raised from 25min when effort moved
+        # to xhigh, which Anthropic defines as "long-running agentic and
+        # coding tasks (over 30 minutes)": a 25-minute cap sat under the floor
+        # of the setting's own definition, and with max_turns inert this is
+        # the only thing that stops a run — a proposer killed mid-write leaves
+        # a half-written harness, not a shorter one.
+        "timeout_s": 45 * 60,
         # Per-agent subsections. Only the subsection matching cfg["agent"] is
         # consumed at propose-time; the other is ignored. Each agent has its
         # own model + agent-specific knobs. Fields set to null (None) fall back
