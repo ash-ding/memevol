@@ -121,6 +121,21 @@ def _write_error(out_dir: Path, err: str) -> None:
 
 async def _async_main(args: argparse.Namespace) -> None:
     from common.evaluate import evaluate_memo
+    from common.openai_usage import install as install_usage_tracking
+
+    # Token accounting BEFORE the harness is imported — a vendored module that
+    # does `from openai import OpenAI` at import time still lands on the
+    # patched resource classes, and, more importantly, a harness that never
+    # asks for accounting still gets it.
+    #
+    # This used to be opt-in: the seven hand-written baseline adapters each
+    # called install() themselves, and nothing else did. A harness that did
+    # not — an evolved candidate using the SDK directly — reported ZERO tokens
+    # for every phase, so its cost_tokens_per_query was 0 and it topped the
+    # efficiency axis while scoring normally on accuracy. Measured with a
+    # three-call probe baseline: tokens_build 0, no usage line in the log, no
+    # error anywhere.
+    install_usage_tracking()
 
     harness_dir = Path(args.harness_dir)
     out_dir = Path(args.out_dir)
