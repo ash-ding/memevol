@@ -82,7 +82,9 @@ llm:
   #            eval-base.sif built after 2026-07-08 (anthropic[vertex] extra).
   anthropic_transport: api
   vertex:
-    project_id: itpc-gcp-ai-eng-claude
+    # null → inferred from $ANTHROPIC_VERTEX_PROJECT_ID, then the project
+    # named inside the credentials json. Pin it only to override that.
+    project_id: null
     region: us-east5
     credentials: null
 
@@ -201,7 +203,9 @@ proposer:
     # ~/.config/gcloud/application_default_credentials.json (the file
     # `gcloud auth application-default login` writes).
     vertex:
-      project_id: itpc-gcp-ai-eng-claude
+      # null → inferred from $ANTHROPIC_VERTEX_PROJECT_ID, then the project
+      # named inside the credentials json. Pin it only to override that.
+      project_id: null
       region: us-east5
       credentials: null
 
