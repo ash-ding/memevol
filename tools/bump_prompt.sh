@@ -1,36 +1,59 @@
 #!/usr/bin/env bash
 # Versioned-prompt bookkeeping. Does NOT edit prompt content — that's your job.
 #
+# A prompt version is FIVE files under forge/prompts/parts/ sharing one stem:
+#   evolving_<stem>.md   how to run the search (mechanical)
+#   design_<stem>.md     how to design a memory system (the search direction)
+#   task_<stem>.md       per-iteration task prompt
+#   fix_<stem>.md        post-sanity-failure fix prompt
+#   fragments_<stem>.py  keyed substitution data
+#
 #   tools/bump_prompt.sh new [--from <stem>]
-#       Copy the current default (or --from <stem>) template to
-#       forge/prompts/templates/_draft.py. Then edit _draft.py yourself.
+#       Copy the current default (or --from <stem>) parts to _draft_* files.
+#       Then edit whichever halves you mean to change — editing only
+#       _draft_design.md is a supported, common case.
 #
 #   tools/bump_prompt.sh finalize [--set-default] [--git-add]
-#       Read _draft.py, compute sha256[:8] of the file, rename to
-#       <YYYYMMDD>_<HHMM>_<hash8>.py, and update the PROMPT_VERSION constant
-#       inside to match. With --set-default, also overwrite _default.
-#       With --git-add, stage the new file (and _default if changed).
+#       Hash the draft set, rename every file to <kind>_<YYYYMMDD>_<HHMM>_<hash8>,
+#       patch PROMPT_VERSION inside fragments, and smoke-load via the loader.
+#       With --set-default, also overwrite _default.
+#       With --git-add, stage the new files (and _default if changed).
 #
 #   tools/bump_prompt.sh status
-#       Print resolved default stem + whether a _draft.py exists.
+#       Print resolved default stem, draft state, and available stems.
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TPL_DIR="${ROOT}/forge/prompts/templates"
-DEFAULT_FILE="${TPL_DIR}/_default"
-DRAFT_FILE="${TPL_DIR}/_draft.py"
+PARTS_DIR="${ROOT}/forge/prompts/parts"
+DEFAULT_FILE="${PARTS_DIR}/_default"
+
+# kind:extension — the full set that makes one version.
+KINDS=(evolving:md design:md task:md fix:md fragments:py)
 
 STEM_RX='^[0-9]{8}_[0-9]{4}_[0-9a-f]{8}$'
 
 die() { echo "bump_prompt: $*" >&2; exit 1; }
 
+draft_path() { echo "${PARTS_DIR}/_draft_${1}.${2}"; }
+part_path()  { echo "${PARTS_DIR}/${1}_${3}.${2}"; }
+
 resolve_default() {
     [ -f "$DEFAULT_FILE" ] || die "missing $DEFAULT_FILE"
     local stem
     stem=$(<"$DEFAULT_FILE")
+    stem="${stem//[$'\t\r\n ']/}"
     [ -n "$stem" ] || die "$DEFAULT_FILE is empty"
     echo "$stem"
+}
+
+existing_drafts() {
+    local kind ext found=()
+    for pair in "${KINDS[@]}"; do
+        kind="${pair%%:*}"; ext="${pair##*:}"
+        [ -f "$(draft_path "$kind" "$ext")" ] && found+=("_draft_${kind}.${ext}")
+    done
+    echo "${found[@]:-}"
 }
 
 cmd_new() {
@@ -43,17 +66,29 @@ cmd_new() {
     done
     [ -n "$src_stem" ] || src_stem=$(resolve_default)
     [[ "$src_stem" =~ $STEM_RX ]] || die "source stem '$src_stem' doesn't match $STEM_RX"
-    local src_file="${TPL_DIR}/${src_stem}.py"
-    [ -f "$src_file" ] || die "source file not found: $src_file"
-    [ ! -f "$DRAFT_FILE" ] || die "draft already exists at $DRAFT_FILE — finalize or rm it first"
-    cp "$src_file" "$DRAFT_FILE"
-    echo "created draft: $DRAFT_FILE  (from $src_stem)"
-    echo "next: edit $DRAFT_FILE, then run:  tools/bump_prompt.sh finalize [--set-default]"
+
+    local existing
+    existing=$(existing_drafts)
+    [ -z "$existing" ] || die "draft already exists ($existing) — finalize or rm it first"
+
+    local kind ext src dst
+    for pair in "${KINDS[@]}"; do
+        kind="${pair%%:*}"; ext="${pair##*:}"
+        src=$(part_path "$kind" "$ext" "$src_stem")
+        [ -f "$src" ] || die "source file not found: $src"
+        dst=$(draft_path "$kind" "$ext")
+        cp "$src" "$dst"
+    done
+    echo "created draft set from $src_stem:"
+    for pair in "${KINDS[@]}"; do
+        kind="${pair%%:*}"; ext="${pair##*:}"
+        echo "  $(basename "$(draft_path "$kind" "$ext")")"
+    done
+    echo "next: edit the halves you mean to change, then:  tools/bump_prompt.sh finalize [--set-default]"
 }
 
 cmd_finalize() {
-    local set_default=0
-    local git_add=0
+    local set_default=0 git_add=0
     while [ $# -gt 0 ]; do
         case "$1" in
             --set-default) set_default=1; shift;;
@@ -61,51 +96,75 @@ cmd_finalize() {
             *) die "unknown option: $1";;
         esac
     done
-    [ -f "$DRAFT_FILE" ] || die "no draft at $DRAFT_FILE — run 'new' first"
 
-    local ts hash8 new_stem new_file
+    local kind ext d
+    for pair in "${KINDS[@]}"; do
+        kind="${pair%%:*}"; ext="${pair##*:}"
+        d=$(draft_path "$kind" "$ext")
+        [ -f "$d" ] || die "incomplete draft: missing $(basename "$d") — run 'new' first"
+    done
+
+    # Hash over the whole set, so any half changing yields a new stem.
+    local ts hash8 new_stem
     ts=$(date -u +%Y%m%d_%H%M)
-    hash8=$(sha256sum "$DRAFT_FILE" | cut -c1-8)
+    hash8=$(for pair in "${KINDS[@]}"; do
+                kind="${pair%%:*}"; ext="${pair##*:}"
+                cat "$(draft_path "$kind" "$ext")"
+            done | sha256sum | cut -c1-8)
     new_stem="${ts}_${hash8}"
-    new_file="${TPL_DIR}/${new_stem}.py"
 
-    [ ! -e "$new_file" ] || die "target $new_file already exists (rare collision — wait 60s and retry, or edit one more char)"
+    for pair in "${KINDS[@]}"; do
+        kind="${pair%%:*}"; ext="${pair##*:}"
+        [ ! -e "$(part_path "$kind" "$ext" "$new_stem")" ] \
+            || die "target $(part_path "$kind" "$ext" "$new_stem") already exists (rare collision — wait 60s and retry)"
+    done
 
-    mv "$DRAFT_FILE" "$new_file"
-    # Patch the PROMPT_VERSION constant inside. Tolerant of any prior value.
-    # `sed -i` wants a backup suffix on BSD/macOS and rejects one on GNU, so
-    # write through a temp file instead of editing in place.
-    sed -E "s/^PROMPT_VERSION = \".*\"$/PROMPT_VERSION = \"${new_stem}\"/" "$new_file" > "${new_file}.tmp"
-    mv "${new_file}.tmp" "$new_file"
-    grep -q "^PROMPT_VERSION = \"${new_stem}\"$" "$new_file" \
-        || die "failed to update PROMPT_VERSION inside $new_file (no matching line?)"
+    local target
+    for pair in "${KINDS[@]}"; do
+        kind="${pair%%:*}"; ext="${pair##*:}"
+        target=$(part_path "$kind" "$ext" "$new_stem")
+        mv "$(draft_path "$kind" "$ext")" "$target"
+    done
 
-    # Smoke-load via the existing loader so missing exports / syntax errors
-    # surface here, not later in a search run. `uv` is how this repo runs
-    # python, but the tool has to work on a laptop that only has python3 —
-    # the loader itself has no third-party imports.
+    # Patch PROMPT_VERSION inside fragments. `sed -i` wants a backup suffix on
+    # BSD/macOS and rejects one on GNU, so write through a temp file instead.
+    local frag
+    frag=$(part_path fragments py "$new_stem")
+    sed -E "s/^PROMPT_VERSION = \".*\"$/PROMPT_VERSION = \"${new_stem}\"/" "$frag" > "${frag}.tmp"
+    mv "${frag}.tmp" "$frag"
+    grep -q "^PROMPT_VERSION = \"${new_stem}\"$" "$frag" \
+        || die "failed to update PROMPT_VERSION inside $frag (no matching line?)"
+
+    # Smoke-load via the real loader so a missing sentinel, missing export, or
+    # syntax error surfaces here rather than mid-run. `uv` is how this repo runs
+    # python, but the tool has to work on a laptop that only has python3 — the
+    # loader itself has no third-party imports.
     local runner="python3"
     command -v uv >/dev/null 2>&1 && runner="uv run python"
     ( cd "$ROOT" && $runner -c "
-from forge.prompts import load_template_module
-mod = load_template_module('${new_stem}')
-assert mod.PROMPT_VERSION == '${new_stem}', mod.PROMPT_VERSION
-print('  load OK — exports present, PROMPT_VERSION matches stem')
-" ) || die "module $new_file failed to load (see error above) — fix and retry"
+from forge.prompts import load_prompt_parts
+parts = load_prompt_parts('${new_stem}')
+assert parts.PROMPT_VERSION == '${new_stem}', parts.PROMPT_VERSION
+assert parts.SYSTEM_TEMPLATE and parts.TASK_PROMPT_TEMPLATE and parts.FIX_PROMPT_TEMPLATE
+print('  load OK — parts assembled, PROMPT_VERSION matches stem')
+" ) || die "version $new_stem failed to load (see error above) — fix and retry"
 
-    echo "finalized: ${new_stem}.py"
+    echo "finalized: $new_stem"
 
     if [ "$set_default" -eq 1 ]; then
-        echo -n "$new_stem" > "$DEFAULT_FILE"
+        echo "$new_stem" > "$DEFAULT_FILE"
         echo "set _default → $new_stem"
     else
         echo "_default unchanged (still $(resolve_default)).  Re-run with --set-default to switch."
     fi
 
     if [ "$git_add" -eq 1 ]; then
-        ( cd "$ROOT" && git add "forge/prompts/templates/${new_stem}.py" \
-                              "forge/prompts/templates/_default" 2>/dev/null || true )
-        echo "git: staged new template + _default"
+        ( cd "$ROOT" && for pair in "${KINDS[@]}"; do
+              kind="${pair%%:*}"; ext="${pair##*:}"
+              git add "forge/prompts/parts/${kind}_${new_stem}.${ext}" 2>/dev/null || true
+          done
+          git add "forge/prompts/parts/_default" 2>/dev/null || true )
+        echo "git: staged new parts + _default"
     fi
 }
 
@@ -113,14 +172,23 @@ cmd_status() {
     local stem
     stem=$(resolve_default)
     echo "default version: $stem"
-    echo "default path:    ${TPL_DIR}/${stem}.py"
-    if [ -f "$DRAFT_FILE" ]; then
-        echo "draft:           $DRAFT_FILE  (exists — finalize or rm)"
+    echo "parts dir:       $PARTS_DIR"
+    local kind ext p
+    for pair in "${KINDS[@]}"; do
+        kind="${pair%%:*}"; ext="${pair##*:}"
+        p=$(part_path "$kind" "$ext" "$stem")
+        printf "  %-10s %s\n" "$kind" "$([ -f "$p" ] && echo "$(basename "$p")" || echo "MISSING: $(basename "$p")")"
+    done
+    local existing
+    existing=$(existing_drafts)
+    if [ -n "$existing" ]; then
+        echo "draft:           $existing  (finalize or rm)"
     else
         echo "draft:           (none)"
     fi
     echo "available stems:"
-    ( cd "$TPL_DIR" && ls *.py 2>/dev/null | grep -E '^[0-9]{8}_[0-9]{4}_[0-9a-f]{8}\.py$' | sed 's/^/  /' )
+    ( cd "$PARTS_DIR" && ls evolving_*.md 2>/dev/null \
+        | sed -E 's/^evolving_(.*)\.md$/  \1/' )
 }
 
 [ $# -gt 0 ] || die "usage: bump_prompt.sh {new|finalize|status} [opts]   (see comments at top)"
@@ -128,6 +196,6 @@ case "$1" in
     new)      shift; cmd_new "$@";;
     finalize) shift; cmd_finalize "$@";;
     status)   shift; cmd_status "$@";;
-    -h|--help) sed -n '2,18p' "$0"; exit 0;;
+    -h|--help) sed -n '2,26p' "$0"; exit 0;;
     *) die "unknown subcommand: $1";;
 esac

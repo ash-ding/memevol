@@ -1,7 +1,7 @@
 """Prompt rendering: turn a (version, sanity_enabled, active_datasets)
 tuple into final system / task / fix prompt strings.
 
-All the version-specific text lives in `forge/prompts/templates/<stem>.py` —
+All the version-specific text lives in `forge/prompts/parts/*_<stem>.*` —
 this module only contains the version-agnostic helper logic for sentinel
 substitution, dataset filtering, and fix-trace truncation.
 """
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Iterable, List, Optional
 
-from .loader import load_template_module
+from .loader import load_prompt_parts
 
 
 def _normalize_active_datasets(
@@ -111,9 +111,9 @@ def build_proposer_system(
                         "longmemeval_s"]). None / empty → render all known
                         shape groups (back-compat).
       version         — prompt template version stem. None / "latest" /
-                        "" → resolve via templates/_default.
+                        "" → resolve via parts/_default.
     """
-    mod = load_template_module(version)
+    mod = load_prompt_parts(version)
 
     active = _normalize_active_datasets(
         active_datasets, mod.DATASET_INFO, mod.DATASET_RENDER_ORDER
@@ -151,7 +151,7 @@ def proposer_task_prompt(
     version: Optional[str] = None,
 ) -> str:
     """Per-iteration TASK prompt. All paths are workspace-relative."""
-    mod = load_template_module(version)
+    mod = load_prompt_parts(version)
     return mod.TASK_PROMPT_TEMPLATE.format(new_dir_rel=new_dir_rel)
 
 
@@ -169,7 +169,7 @@ def proposer_fix_prompt(
             + "\n... [truncated] ...\n"
             + "\n".join(lines[-30:])
         )
-    mod = load_template_module(version)
+    mod = load_prompt_parts(version)
     return mod.FIX_PROMPT_TEMPLATE.format(
         new_dir_rel=new_dir_rel, error_trace=error_trace
     )

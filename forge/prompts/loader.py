@@ -1,11 +1,26 @@
-"""Prompt template loading + version resolution.
+"""Prompt part loading + version resolution.
 
-A "version stem" is a filename under `forge/prompts/templates/`, without the
-`.py` extension — `<YYYYMMDD>_<HHMM>_<8 hex chars>`. The special name
-`"latest"` (or `None` / empty string) resolves to whatever stem is written
-in `forge/prompts/templates/_default`.
+A prompt version is a set of files under `forge/prompts/parts/`, all sharing
+one version stem — `<YYYYMMDD>_<HHMM>_<8 hex chars>`:
 
-Once loaded, a template module is cached by stem — subsequent calls within
+    evolving_<stem>.md     HOW TO EVOLVE: the loop, the workspace layout, the
+                           harness contract, the rules. Carries the
+                           `<<DESIGN_KNOWLEDGE_BLOCK>>` sentinel.
+    design_<stem>.md       HOW TO DESIGN A MEMORY SYSTEM: the search
+                           direction. Substituted into that sentinel.
+    task_<stem>.md         the per-iteration task prompt
+    fix_<stem>.md          the post-sanity-failure fix prompt
+    fragments_<stem>.py    keyed substitution data (see that file's docstring)
+
+The special name `"latest"` (or `None` / empty string) resolves to whatever
+stem is written in `forge/prompts/parts/_default`.
+
+The two prose halves are separate files on purpose: `evolving_` is mechanical
+and follows the loop's own file organization, while `design_` is the part that
+should eventually be derived from evidence rather than hand-written. Swapping
+`design_` alone is therefore a supported, one-file change.
+
+Once loaded, a version's parts are cached by stem — subsequent calls within
 the same process are free.
 """
 
@@ -13,9 +28,9 @@ from __future__ import annotations
 
 import importlib
 import re
+from dataclasses import dataclass
 from pathlib import Path
-from types import ModuleType
-from typing import Dict, Optional
+from typing import Any, Dict, List, Optional
 
 
 class PromptVersionError(RuntimeError):
@@ -24,29 +39,44 @@ class PromptVersionError(RuntimeError):
 
 
 _HERE = Path(__file__).resolve().parent
-_TEMPLATES_DIR = _HERE / "templates"
-_DEFAULT_POINTER = _TEMPLATES_DIR / "_default"
+_PARTS_DIR = _HERE / "parts"
+_DEFAULT_POINTER = _PARTS_DIR / "_default"
 
-# Filename stem regex: YYYYMMDD_HHMM_hash8 (UTC date, hour:minute, 8 hex)
+# Version stem: YYYYMMDD_HHMM_hash8 (UTC date, hour:minute, 8 hex)
 _VERSION_STEM_RX = re.compile(r"^\d{8}_\d{4}_[0-9a-f]{8}$")
 
-# Required exports on every template module — checked at load time so a
-# malformed template fails fast with a clear message instead of crashing
+# Where the design half is spliced into the evolving half.
+DESIGN_SENTINEL = "<<DESIGN_KNOWLEDGE_BLOCK>>\n"
+
+# Exports every fragments_<stem>.py must provide — checked at load time so a
+# malformed fragments file fails fast with a clear message instead of crashing
 # the renderer with an AttributeError somewhere deep.
-_REQUIRED_EXPORTS = (
-    "PROMPT_VERSION",
-    "SYSTEM_TEMPLATE",
+_REQUIRED_FRAGMENTS = (
+    "OBJECTIVE_AXES_SUBS",
     "SANITY_ON_SUBS",
     "SANITY_OFF_SUBS",
-    "OBJECTIVE_AXES_SUBS",
     "DATASET_INFO",
     "DATASET_RENDER_ORDER",
-    "TASK_PROMPT_TEMPLATE",
-    "FIX_PROMPT_TEMPLATE",
 )
 
 
-_MODULE_CACHE: Dict[str, ModuleType] = {}
+@dataclass(frozen=True)
+class PromptParts:
+    """One prompt version, assembled. Attribute names match what the renderer
+    reads, so the renderer stays version-agnostic."""
+
+    PROMPT_VERSION: str
+    SYSTEM_TEMPLATE: str
+    TASK_PROMPT_TEMPLATE: str
+    FIX_PROMPT_TEMPLATE: str
+    OBJECTIVE_AXES_SUBS: Dict[Any, str]
+    SANITY_ON_SUBS: Dict[str, str]
+    SANITY_OFF_SUBS: Dict[str, str]
+    DATASET_INFO: Dict[str, Dict[str, str]]
+    DATASET_RENDER_ORDER: List[str]
+
+
+_PARTS_CACHE: Dict[str, PromptParts] = {}
 
 
 def resolve_version(version: Optional[str]) -> str:
@@ -84,46 +114,83 @@ def resolve_version(version: Optional[str]) -> str:
     return version
 
 
-def load_template_module(version: Optional[str]) -> ModuleType:
-    """Import the template module for a given (or default-resolved) version.
+def _available_versions() -> List[str]:
+    return sorted(
+        p.name[len("evolving_"):-len(".md")]
+        for p in _PARTS_DIR.glob("evolving_*.md")
+    )
+
+
+def _read_part(stem: str, kind: str) -> str:
+    path = _PARTS_DIR / f"{kind}_{stem}.md"
+    if not path.exists():
+        raise PromptVersionError(
+            f"prompts: {kind} part for version {stem!r} not found at {path}. "
+            f"Available versions: {_available_versions()}"
+        )
+    return path.read_text(encoding="utf-8")
+
+
+def load_prompt_parts(version: Optional[str]) -> PromptParts:
+    """Assemble the parts for a given (or default-resolved) version.
 
     Caches by stem, so repeated calls within a process are free.
 
     Raises PromptVersionError on any of:
-      - version stem doesn't resolve to a file under templates/
-      - module's PROMPT_VERSION attribute doesn't equal the stem
-      - module is missing any of `_REQUIRED_EXPORTS`
+      - a part file for the stem is missing
+      - the evolving half does not carry exactly one design sentinel
+      - the fragments module declares a mismatched PROMPT_VERSION
+      - the fragments module is missing any of `_REQUIRED_FRAGMENTS`
     """
     stem = resolve_version(version)
-    if stem in _MODULE_CACHE:
-        return _MODULE_CACHE[stem]
+    if stem in _PARTS_CACHE:
+        return _PARTS_CACHE[stem]
 
-    file_path = _TEMPLATES_DIR / f"{stem}.py"
-    if not file_path.exists():
-        available = sorted(
-            p.stem for p in _TEMPLATES_DIR.glob("*.py")
-            if not p.stem.startswith("_")
-        )
+    evolving = _read_part(stem, "evolving")
+    design = _read_part(stem, "design")
+
+    n = evolving.count(DESIGN_SENTINEL)
+    if n != 1:
         raise PromptVersionError(
-            f"prompts: template {stem!r} not found at {file_path}. "
-            f"Available: {available}"
+            f"prompts: evolving_{stem}.md carries the design sentinel "
+            f"{DESIGN_SENTINEL.strip()} {n} times; expected exactly 1. "
+            f"Without it the memory-system design knowledge is dropped."
         )
+    system_template = evolving.replace(DESIGN_SENTINEL, design)
 
-    module = importlib.import_module(f"forge.prompts.templates.{stem}")
+    try:
+        fragments = importlib.import_module(f"forge.prompts.parts.fragments_{stem}")
+    except ModuleNotFoundError as exc:
+        raise PromptVersionError(
+            f"prompts: fragments module for version {stem!r} not importable "
+            f"({exc}). Expected {_PARTS_DIR / f'fragments_{stem}.py'}. "
+            f"Available versions: {_available_versions()}"
+        ) from exc
 
-    declared = getattr(module, "PROMPT_VERSION", None)
+    declared = getattr(fragments, "PROMPT_VERSION", None)
     if declared != stem:
         raise PromptVersionError(
-            f"prompts: template {stem}.py declares PROMPT_VERSION={declared!r}, "
+            f"prompts: fragments_{stem}.py declares PROMPT_VERSION={declared!r}, "
             f"but the filename stem is {stem!r}. Fix the file so they match."
         )
 
-    missing = [name for name in _REQUIRED_EXPORTS if not hasattr(module, name)]
+    missing = [name for name in _REQUIRED_FRAGMENTS if not hasattr(fragments, name)]
     if missing:
         raise PromptVersionError(
-            f"prompts: template {stem}.py is missing required exports: "
-            f"{missing}. See forge/prompts/loader.py::_REQUIRED_EXPORTS."
+            f"prompts: fragments_{stem}.py is missing required exports: "
+            f"{missing}. See forge/prompts/loader.py::_REQUIRED_FRAGMENTS."
         )
 
-    _MODULE_CACHE[stem] = module
-    return module
+    parts = PromptParts(
+        PROMPT_VERSION=stem,
+        SYSTEM_TEMPLATE=system_template,
+        TASK_PROMPT_TEMPLATE=_read_part(stem, "task"),
+        FIX_PROMPT_TEMPLATE=_read_part(stem, "fix"),
+        OBJECTIVE_AXES_SUBS=fragments.OBJECTIVE_AXES_SUBS,
+        SANITY_ON_SUBS=fragments.SANITY_ON_SUBS,
+        SANITY_OFF_SUBS=fragments.SANITY_OFF_SUBS,
+        DATASET_INFO=fragments.DATASET_INFO,
+        DATASET_RENDER_ORDER=fragments.DATASET_RENDER_ORDER,
+    )
+    _PARTS_CACHE[stem] = parts
+    return parts
