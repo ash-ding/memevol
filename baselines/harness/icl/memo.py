@@ -1,4 +1,4 @@
-"""full_context baseline — the calibration ceiling on the cost axis.
+"""icl (in-context learning) baseline — the calibration ceiling on the cost axis.
 
 BUILD renders every visible unit to text and keeps it. RETRIEVE hands back as
 much of it as the token budget allows, newest-first, restored to chronological
@@ -30,7 +30,7 @@ models, no API calls — so the repo-root venv runs it (there is no `--project`
 to pass, unlike the vendored baselines).
 
     uv run python -m baselines.harness.eval_harness \\
-        --config baselines/harness/config.example.yaml     # harness: full_context
+        --config baselines/harness/config.example.yaml     # harness: icl
 """
 from __future__ import annotations
 
@@ -110,7 +110,7 @@ def _render_session(session: Dict) -> str:
     return f"[{session.get('session_id', '?')}] {session.get('date', '')}\n{body}"
 
 
-class FullContextMemo(MemoClass):
+class ICLMemo(MemoClass):
 
     def __init__(self, config=None):
         super().__init__(config)
@@ -169,7 +169,7 @@ class FullContextMemo(MemoClass):
         if len(kept_reversed) < len(self._blocks) and not self._truncation_logged:
             total = sum(self._token_counts)
             log.info(
-                "full_context: budget %d tokens kept %d/%d blocks (%d/%d tokens, "
+                "icl: budget %d tokens kept %d/%d blocks (%d/%d tokens, "
                 "%.1f%%) — this run is full text AT THE BUDGET, not full text",
                 budget, len(kept_reversed), len(self._blocks), used, total,
                 100.0 * used / total if total else 0.0,

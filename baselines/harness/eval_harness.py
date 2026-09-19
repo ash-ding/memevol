@@ -75,11 +75,12 @@ HARNESS_DIR = Path(__file__).resolve().parent
 # this file unimportable in every one of them.
 MEMOS: Dict[str, str] = {
     "amem":      "baselines.harness.amem.memo:AMemMemo",
-    # The calibration CEILING on the cost axis: keeps every visible unit and
-    # hands back as much as the token budget allows. Like no_memory it calls
-    # no model and needs no venv of its own — run it from the repo-root one.
-    "full_context": "baselines.harness.full_context.memo:FullContextMemo",
     "hipporag2": "baselines.harness.hipporag2.memo:HippoRAGMemo",
+    # In-context learning: the calibration CEILING on the cost axis. Keeps
+    # every visible unit and hands back as much as the token budget allows —
+    # no memory system, just the window. Like no_memory it calls no model and
+    # needs no venv of its own; run it from the repo-root one.
+    "icl": "baselines.harness.icl.memo:ICLMemo",
     "lightmem":  "baselines.harness.lightmem.memo:LightMemMemo",
     "mem0":      "baselines.harness.mem0.memo:Mem0Memo",
     "memoryos":  "baselines.harness.memoryos.memo:MemoryOSMemo",
